@@ -1,0 +1,271 @@
+/* Design system — the tokens and primitives every surface inherits.
+ *
+ * Kept separate from globals.css so the *system* is legible on its own: what
+ * follows is the vocabulary (scales, elevation, motion), not one-off styling.
+ *
+ * Motion principle: animation here exists to explain a change — where a thing
+ * came from, that it is loading, that it responded to you. Nothing decorative,
+ * nothing that draws attention to itself, nothing longer than it takes to
+ * perceive. Durations sit at 120-260ms because past ~300ms an interface starts
+ * to feel like it is waiting on you rather than responding to you.
+ */
+
+:root {
+  /* ---- Spacing: 4px base. One scale, so rhythm stays consistent ---- */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+
+  /* ---- Type: ~1.2 ratio. Sized for reading, not for filling space ---- */
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-md: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.25rem;
+
+  --leading-tight: 1.25;
+  --leading-snug: 1.4;
+  --leading-normal: 1.6;
+  --leading-relaxed: 1.75;
+
+  --tracking-tight: -0.015em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.02em;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* ---- Radii ---- */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 999px;
+
+  /* ---- Elevation: warm-tinted shadows. Neutral grey shadows read as dirt
+         against a beige surface, which is what makes a warm palette look
+         cheap when it is lifted from a cool design. ---- */
+  --shadow-xs: 0 1px 2px rgba(60, 52, 38, 0.05);
+  --shadow-sm: 0 1px 3px rgba(60, 52, 38, 0.07), 0 1px 2px rgba(60, 52, 38, 0.04);
+  --shadow-md: 0 4px 12px rgba(60, 52, 38, 0.08), 0 1px 3px rgba(60, 52, 38, 0.05);
+  --shadow-lg: 0 12px 28px rgba(60, 52, 38, 0.11), 0 2px 6px rgba(60, 52, 38, 0.06);
+  --shadow-xl: 0 24px 56px rgba(60, 52, 38, 0.16), 0 4px 12px rgba(60, 52, 38, 0.08);
+
+  /* ---- Motion ---- */
+  --duration-instant: 90ms;
+  --duration-fast: 140ms;
+  --duration-base: 200ms;
+  --duration-slow: 260ms;
+  --duration-slower: 400ms;
+
+  /* Standard: general state changes. Decelerate: things entering (fast in,
+     gentle settle). Accelerate: things leaving (no reason to linger).
+     Spring: a restrained overshoot for direct manipulation only. */
+  --ease-standard: cubic-bezier(0.2, 0, 0.2, 1);
+  --ease-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-accelerate: cubic-bezier(0.3, 0, 1, 1);
+  --ease-spring: cubic-bezier(0.34, 1.35, 0.64, 1);
+
+  /* ---- Semantic colour ---- */
+  --color-danger: #B4342B;
+  --color-danger-soft: #F7E4E2;
+  --color-success: #2F6F44;
+  --color-success-soft: #E3F0E8;
+  --color-warning: #9A6B1F;
+  --color-warning-soft: #F7EEDC;
+
+  /* ---- Layout ---- */
+  --sidebar-width: 17.5rem;
+  --content-max: 46rem;
+  --header-height: 3.5rem;
+  --z-dropdown: 100;
+  --z-drawer: 200;
+  --z-modal: 300;
+  --z-toast: 400;
+}
+
+/* ---- Focus: one visible, consistent ring everywhere ---------------------- */
+:where(a, button, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--claude-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ---- Primitives ---------------------------------------------------------- */
+
+.ds-surface {
+  background: var(--claude-surface);
+  border: 1px solid var(--claude-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.ds-pressable {
+  transition:
+    transform var(--duration-instant) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
+}
+/* Scale, not translate: a button that moves leaves a visible gap against its
+   neighbours. 0.97 is felt more than seen, which is the point. */
+.ds-pressable:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.ds-pressable:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ds-lift {
+  transition:
+    transform var(--duration-base) var(--ease-decelerate),
+    box-shadow var(--duration-base) var(--ease-decelerate);
+}
+.ds-lift:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+/* ---- Entrances ----------------------------------------------------------- */
+
+@keyframes ds-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 6px, not 20px. A long travel distance reads as a slideshow transition; a
+   short one reads as the element settling into place. */
+@keyframes ds-rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes ds-scale-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes ds-slide-in-left {
+  from { transform: translateX(-100%); }
+  to { transform: none; }
+}
+
+.ds-animate-fade { animation: ds-fade-in var(--duration-base) var(--ease-standard) both; }
+.ds-animate-rise { animation: ds-rise-in var(--duration-slow) var(--ease-decelerate) both; }
+.ds-animate-scale { animation: ds-scale-in var(--duration-base) var(--ease-decelerate) both; }
+
+/* ---- Loading ------------------------------------------------------------- */
+
+/* Skeletons beat spinners: they show the shape of what is coming, so the
+   layout does not jump when content lands. */
+@keyframes ds-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+.ds-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--claude-surface-2) 25%,
+    var(--claude-border) 50%,
+    var(--claude-surface-2) 75%
+  );
+  background-size: 200% 100%;
+  animation: ds-shimmer 1.6s linear infinite;
+  border-radius: var(--radius-sm);
+}
+
+/* Staggered rather than synchronous — three dots pulsing in unison reads as a
+   progress bar, offset reads as thinking. */
+@keyframes ds-thinking {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
+
+.ds-thinking-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: var(--claude-muted);
+  animation: ds-thinking 1.3s var(--ease-standard) infinite;
+}
+.ds-thinking-dot:nth-child(2) { animation-delay: 0.16s; }
+.ds-thinking-dot:nth-child(3) { animation-delay: 0.32s; }
+
+/* The block cursor trailing a streaming answer. Steps, not a fade — a real
+   terminal cursor does not dim. */
+@keyframes ds-caret {
+  50% { opacity: 0; }
+}
+.ds-caret {
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--claude-accent);
+  border-radius: 1px;
+  animation: ds-caret 1s steps(2, start) infinite;
+}
+
+/* ---- Scrollbars: present when used, invisible when not ------------------- */
+.ds-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color var(--duration-slow) var(--ease-standard);
+}
+.ds-scroll:hover { scrollbar-color: var(--claude-border-strong) transparent; }
+.ds-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.ds-scroll::-webkit-scrollbar-track { background: transparent; }
+.ds-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  border: 3px solid transparent;
+  border-radius: var(--radius-full);
+  background-clip: content-box;
+  transition: background-color var(--duration-base) var(--ease-standard);
+}
+.ds-scroll:hover::-webkit-scrollbar-thumb { background-color: var(--claude-border-strong); background-clip: content-box; }
+
+/* ---- Touch --------------------------------------------------------------- */
+
+/* 44px is the smallest reliably tappable target. Applied via padding so it
+   does not force visual bulk on desktop. */
+@media (pointer: coarse) {
+  .ds-tap { min-height: 44px; min-width: 44px; }
+}
+
+.ds-safe-bottom { padding-bottom: max(var(--space-3), env(safe-area-inset-bottom)); }
+.ds-safe-top { padding-top: max(var(--space-3), env(safe-area-inset-top)); }
+
+/* ---- Reduced motion ------------------------------------------------------
+ * Honoured as a real preference, not a token gesture: motion sickness and
+ * vestibular disorders are the reason this setting exists. Opacity survives
+ * so state changes remain visible; movement does not.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .ds-pressable:active:not(:disabled),
+  .ds-lift:hover {
+    transform: none;
+  }
+  .ds-skeleton { animation: none; background: var(--claude-surface-2); }
+  .ds-thinking-dot { animation: none; opacity: 0.6; }
+  .ds-caret { animation: none; }
+}

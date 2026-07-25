@@ -1,4 +1,8 @@
 @import "tailwindcss";
+/* Design tokens + primitives (spacing, type, elevation, motion). Imported
+   after Tailwind so :root tokens and .ds-* utilities are available to every
+   component, and so component styles below can build on them. */
+@import "./styles/design-system.css";
 
 @theme {
   --breakpoint-sm: 640px;
