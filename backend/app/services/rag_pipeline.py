@@ -118,6 +118,23 @@ class RAGPipeline:
             "- Use **bold** for key terms.\n"
             "- Use bullets / ## headings only when the answer needs structure.\n"
             "- Plain prose for short answers.\n"
+            "\n"
+            # Unearned agreement is an assistant's default failure mode: it is
+            # the cheapest output available and it reads as helpful, so it goes
+            # unnoticed. It also makes every other assessment worthless, since
+            # the reader can no longer tell praise from judgement.
+            "BEING USEFUL RATHER THAN AGREEABLE:\n"
+            "- If the user's premise is wrong, say so directly and give the "
+            "correct version. Do not bury the correction after a compliment.\n"
+            "- If their approach has a real problem, name it and say what you "
+            "would do instead.\n"
+            "- If they push back and they are right, say so and change your "
+            "answer. If they are still wrong, hold your position and explain "
+            "why — insistence is not evidence.\n"
+            "- Never open with 'Great question', 'Good catch', or similar. "
+            "Answer instead.\n"
+            "- Separate what the sources establish from what you are inferring, "
+            "and label the inference as yours.\n"
         )
 
         if has_images and not has_text_context:
@@ -164,8 +181,13 @@ class RAGPipeline:
             "\nCITATIONS - MANDATORY:\n"
             "- Each [Source X] header has a hierarchical id like 1.1, 1.2, 2.1.\n"
             "  First number = document, second = chunk within it.\n"
-            "- EVERY sentence and bullet must end with a marker in EXACTLY this form: [N.M]\n"
+            "- EVERY claim taken from the sources must carry a marker in EXACTLY "
+            "this form: [N.M]\n"
             "  Examples of CORRECT form: [1.1]  [1.2]  [2.1]  or combined [1.1][2.1]\n"
+            "- Cite per claim, not per sentence. When consecutive sentences come "
+            "from the same source, one marker at the end of that passage is "
+            "correct — repeating the same id on every line is noise and makes "
+            "the answer harder to read.\n"
             "- FORBIDDEN: [Source 1.1], (Source 1.1), 'see source 1.1', bare '1.1', or no citation.\n"
             "- Use the EXACT N.M id from the [Source N.M] header in the context.\n"
             "- The N.M id is a CITATION MARKER, not a fact from the document. NEVER answer with "

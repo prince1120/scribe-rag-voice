@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(npx tsc *)",
-      "Bash(timeout 90 npx eslint app/VoiceCall.tsx)"
+      "Bash(timeout 90 npx eslint app/VoiceCall.tsx)",
+      "Bash(\"../venv/Scripts/python.exe\" -)",
+      "Bash(../venv/Scripts/python.exe -c ' *)",
+      "Bash(\"../venv/Scripts/python.exe\" -m pip install asyncpg)",
+      "Bash(\"../venv/Scripts/python.exe\" -m pip install pytest-asyncio)",
+      "Bash(\"../venv/Scripts/python.exe\" -m pytest -q)"
     ]
   }
 }

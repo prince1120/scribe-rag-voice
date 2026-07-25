@@ -18,8 +18,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from livekit.api import AccessToken, RoomAgentDispatch, RoomConfiguration, VideoGrants
 
-from app.auth import verify_api_key
+from app.auth import verify_api_key, verify_internal_api_key
 from app.config import settings
+from app.identity import Identity, get_identity
 from app.models.schemas import (
     VoicePreviewRequest,
     VoiceRetrieveRequest,
@@ -134,7 +135,7 @@ async def voice_preview(
     return {"audio_base64": audios[0], "mime_type": "audio/mpeg"}
 
 
-@router.post("/retrieve", dependencies=[Depends(verify_api_key)])
+@router.post("/retrieve", dependencies=[Depends(verify_internal_api_key)])
 async def voice_retrieve(body: VoiceRetrieveRequest) -> dict:
     """Retrieval-only endpoint the voice worker calls each turn when RAG is
     enabled. Reuses the exact same embeddings / hybrid search / reranker as
@@ -158,11 +159,15 @@ async def voice_retrieve(body: VoiceRetrieveRequest) -> dict:
         run_in_threadpool(embedding_service.encode_query, query),
         run_in_threadpool(sparse_encoder.encode_query, query),
     )
+    # Narrower over-fetch than text chat's `max(top_k * 3, 20)`. Every extra
+    # candidate is another cross-encoder pass, and this runs inside the pause
+    # between the user finishing a sentence and the assistant speaking — where
+    # text chat can absorb the cost behind a streaming cursor, voice cannot.
     hybrid = await run_in_threadpool(
         vector_store.search,
         query_vector=query_embedding,
         sparse_vector=sparse_query,
-        limit=max(top_k * 3, 20),
+        limit=max(top_k * 3, 10),
         tenant_id=body.tenant_id,
     )
     results = await run_in_threadpool(reranker.rerank, query, hybrid, top_k=top_k)
@@ -172,20 +177,13 @@ async def voice_retrieve(body: VoiceRetrieveRequest) -> dict:
     return {"chunks": [c for c in chunks if c]}
 
 
-@router.get("/history", dependencies=[Depends(verify_api_key)])
-async def voice_history(
-    conversation_id: str,
-    tenant_id: str = "default",
-    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
-    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
-    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
-) -> dict:
+@router.get("/history", dependencies=[Depends(verify_internal_api_key)])
+async def voice_history(conversation_id: str) -> dict:
     """Recent text-chat history for a conversation, so a voice call can be
     seeded with what was already discussed. Reuses the same conversation
     store as text chat."""
-    from app.api.routes import conversation_service, _effective_tenant
+    from app.api.routes import conversation_service
 
-    tenant_id = _effective_tenant(tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
     msgs = conversation_service.get_conversation_history(conversation_id)
     return {
         "messages": [
@@ -199,9 +197,9 @@ async def voice_history(
 @router.post("/token", response_model=VoiceTokenResponse, dependencies=[Depends(verify_api_key)])
 async def create_voice_token(
     body: VoiceTokenRequest,
+    identity: Identity = Depends(get_identity),
     x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
     x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
-    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
     x_user_custom_llm_key: Optional[str] = Header(default=None, alias="X-User-Custom-LLM-Key"),
 ) -> VoiceTokenResponse:
     """Issue a LiveKit access token so a client can join a voice room.
@@ -236,9 +234,7 @@ async def create_voice_token(
     room_name = body.room_name or f"voice-{uuid4().hex[:12]}"
     participant_identity = f"user-{uuid4().hex[:8]}"
 
-    from app.api.routes import _effective_tenant
-
-    tenant_id = _effective_tenant(body.tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+    tenant_id = identity.tenant_id
 
     # Detect gender of selected voice
     gender = "female"

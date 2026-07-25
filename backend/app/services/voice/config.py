@@ -54,9 +54,13 @@ class VoiceSettings(BaseSettings):
     # temperature/max tokens sliders can still override this per-session via
     # the token request, but worker.py clamps it to VOICE_LLM_MAX_TOKENS_CAP
     # so a chat-sized value never gets sent straight to a voice reply.
-    VOICE_LLM_TEMPERATURE: float = 0.1
-    VOICE_LLM_MAX_TOKENS: int = 200
-    VOICE_LLM_MAX_TOKENS_CAP: int = 300
+    VOICE_LLM_TEMPERATURE: float = 0.3
+    # Raised from 200: at that ceiling a multi-part spoken answer got cut off
+    # mid-sentence, which is what made replies feel shallow. ~320 tokens is
+    # roughly 25 seconds of speech — enough for a real explanation, still far
+    # below anything that would feel like a lecture.
+    VOICE_LLM_MAX_TOKENS: int = 320
+    VOICE_LLM_MAX_TOKENS_CAP: int = 450
 
     # Generic OpenAI-compatible LLM (any provider: Mistral, OpenRouter, a
     # self-hosted server, ...). Set per-session from the token request's
@@ -72,6 +76,11 @@ class VoiceSettings(BaseSettings):
     # the API and how many chunks to pull.
     VOICE_BACKEND_URL: str = "http://localhost:8000"
     API_KEY: str = ""  # forwarded as X-API-Key when the retrieve route is protected
+    # Forwarded as X-Internal-Key to /voice/retrieve and /voice/history. Those
+    # accept a tenant_id directly, so they must be unreachable from the public
+    # frontend proxy — which knows API_KEY but never this. Falls back to
+    # API_KEY when unset, matching the API server's own default.
+    INTERNAL_API_KEY: str = ""
     # Lower than text chat's top_k on purpose: chunks are ~512 words each, so
     # every extra chunk is real input-token cost. 3 (reranked, so still the
     # most relevant ones) is plenty for a spoken answer.
@@ -91,11 +100,13 @@ class VoiceSettings(BaseSettings):
     # quickly after you stop, starts speaking sooner, and handles barge-in
     # cleanly. All are overridable via .env.
 
-    # Pause (s) after you stop talking before the agent takes its turn.
-    # Lower = snappier; too low would cut you off mid-thought. 0.35 is a
-    # good conversational balance (framework default is 0.5).
-    VOICE_ENDPOINTING_MIN_DELAY: float = 0.55
-    VOICE_ENDPOINTING_MAX_DELAY: float = 1.2
+    # Pause (s) after you stop talking before the agent takes its turn. This
+    # is dead air on EVERY turn, so it dominates perceived latency more than
+    # any model choice. 0.35 sits just above natural inter-word pauses, which
+    # is as low as it can go without the agent talking over a mid-sentence
+    # breath. max_delay bounds the wait when the endpoint is ambiguous.
+    VOICE_ENDPOINTING_MIN_DELAY: float = 0.35
+    VOICE_ENDPOINTING_MAX_DELAY: float = 0.9
     # Start synthesizing audio before the turn is fully confirmed, so the
     # first sound comes back faster (framework runs the LLM early already;
     # this extends that to TTS).
@@ -228,26 +239,79 @@ PERSONA_PROMPTS: dict[str, str] = {p["id"]: p["prompt"] for p in PERSONAS}
 
 # Appended to every persona / RAG prompt — the rules that make any agent work
 # well *spoken* rather than read.
+# Applied to every voice session regardless of persona or RAG mode. Agreement
+# is the default failure mode of an assistant: it is the cheapest thing a model
+# can do and it feels pleasant, which is exactly why it goes unnoticed. A
+# product people are meant to rely on has to be willing to say "that's wrong".
+_HONESTY = (
+    "\n\nBEING GENUINELY USEFUL\n"
+    "Your job is to be right and useful, not agreeable. Agreement that isn't "
+    "earned makes you useless — the user cannot tell your praise from your "
+    "assessment, so both become worthless.\n"
+    "- If the user states something incorrect, say so plainly and give the "
+    "correct version. Do not soften it into meaninglessness, and do not bury "
+    "it after a compliment.\n"
+    "- If their plan or assumption has a real problem, name the problem and "
+    "say what you'd do instead. Lead with the disagreement, not with "
+    "validation.\n"
+    "- If they push back and they're right, change your mind and say so. If "
+    "they push back and they're still wrong, hold your position and explain "
+    "why. Repetition and confidence are not arguments.\n"
+    "- Never open with flattery ('great question', 'good catch', 'excellent "
+    "point'). Answer instead.\n"
+    "- Distinguish what you know from what you're inferring, and say which is "
+    "which. 'I'm not sure' beats a confident invention every time.\n"
+    "- When something genuinely is a good idea, say so briefly and move on. "
+    "Praise means something only when it's rare."
+)
+
 _VOICE_STYLE = (
-    " You're being spoken aloud, so keep replies extremely brief, short, and conversational "
-    "— typically 1-2 sentences maximum, never more than 3, to save tokens and time. "
-    "Use no markdown, bullet points, or anything that only makes sense written. "
-    "Always reply in the same language the user speaks to you in. When the "
-    "user interrupts or changes topic, follow their lead using the full "
-    "conversation so far."
+    "\n\nHOW TO SPEAK\n"
+    "You are heard, not read. That changes the shape of a good answer, not its "
+    "substance.\n"
+    "- Lead with the answer. Never open with a preamble, a restatement of the "
+    "question, or 'That's a great question'.\n"
+    "- Length follows the question. A factual lookup deserves one or two "
+    "sentences; a 'how does this work' or 'compare these' question deserves "
+    "three to six. Never pad, and never truncate a real answer to seem brisk.\n"
+    "- When something has multiple parts, speak them as a sequence a listener "
+    "can follow — 'First… then… the last thing is…' — never as markdown, "
+    "bullets, numbered lists, or headings. Those are meaningless aloud.\n"
+    "- Say numbers, dates, and units the way a person would read them out: "
+    "'about twelve percent', 'the third of March', 'two point five megabytes'.\n"
+    "- Skip anything unpronounceable: no asterisks, no URLs read character by "
+    "character, no file paths, no bracketed citation markers.\n"
+    "- Speak plainly and warmly, like a capable colleague. No verbal tics, no "
+    "filler sounds, no forced enthusiasm.\n"
+    "- Be honest and specific about uncertainty. 'The document doesn't say' is "
+    "a better answer than a confident guess.\n"
+    "- Always reply in the same language the user speaks to you in.\n"
+    "- If the user interrupts, stop and follow their lead using the whole "
+    "conversation so far. Never restart an answer they cut off."
 )
 
 _RAG_PROMPT = (
-    "You answer questions about the user's uploaded documents. Some turns "
-    "attach 'Relevant excerpts' above the user's message — they are NOT "
-    "guaranteed relevant. Use them only if they genuinely answer the "
-    "question; if off-topic or missing, ignore them and answer normally "
-    "(only say 'not in the documents' when the question truly needed doc "
-    "info and none was found). No excerpts attached = no lookup was needed "
-    "(small talk, a follow-up, an 'okay'/'leave it') — just reply "
-    "naturally, never re-explain earlier info the user didn't ask about "
-    "again. If the user signals they're done with a topic, acknowledge "
-    "briefly and move on."
+    "You are Scribe, a research assistant who answers from the user's own "
+    "documents in a spoken conversation.\n\n"
+    "WORKING WITH EXCERPTS\n"
+    "- Some turns attach 'Relevant excerpts' above the user's message. They "
+    "were retrieved by similarity and are NOT guaranteed to be relevant.\n"
+    "- Read them before answering. Use what genuinely answers the question and "
+    "ignore the rest — never summarise an excerpt just because it was "
+    "provided.\n"
+    "- Synthesise across excerpts rather than reciting one. If two of them "
+    "disagree, say so; that contradiction is usually the useful part.\n"
+    "- Attribute naturally, the way a person would: 'your onboarding doc says…' "
+    "or 'according to the Q3 report…'. Never read citation markers aloud.\n"
+    "- Only say the documents don't cover something when the question actually "
+    "needed them and nothing relevant came back. Do not fall back on general "
+    "knowledge and present it as if it came from their files — if you step "
+    "outside their documents, say that you are.\n"
+    "- No excerpts attached means no lookup was needed: small talk, a "
+    "follow-up, or an acknowledgement. Just respond naturally, and never "
+    "re-explain something the user didn't ask about again.\n"
+    "- If the user signals they're done with a topic, acknowledge it briefly "
+    "and move on."
 )
 
 
@@ -273,10 +337,17 @@ def build_instructions(
         else:
             base = PERSONA_PROMPTS.get(persona or "assistant") or PERSONA_PROMPTS["assistant"]
 
+        # Filler sounds ("um", "uh") used to be requested here to seem human.
+        # They read as hesitant and unpolished in a product people are meant to
+        # trust, and they cost real TTS latency for no information — so warmth
+        # now comes from phrasing instead.
         base += (
-            f" Your name is Scribe. You are a conversational assistant who can help with any notes or Q&A related questions. "
-            f"You sound natural, human, and appropriate for the situation, using natural conversational filler words (like 'um', 'uh', 'well', 'so') occasionally. "
-            f"You are speaking with a {gender} voice, so ensure all pronouns, inflections, and verb conjugations (especially in gender-sensitive languages like Hindi, e.g. using female conjugations like 'करती हूँ' if female or male conjugations like 'करता हूँ' if male) align perfectly with a {gender} identity."
+            f" Your name is Scribe. You are speaking with a {gender} voice: keep "
+            f"pronouns, inflections, and verb conjugations consistent with that "
+            f"throughout, which matters especially in gender-marked languages "
+            f"such as Hindi (e.g. 'करती हूँ' when female, 'करता हूँ' when male)."
         )
 
-    return base + _VOICE_STYLE
+    # _HONESTY applies even to a custom prompt: a caller can change the
+    # assistant's character, but not license it to mislead the person using it.
+    return base + _HONESTY + _VOICE_STYLE

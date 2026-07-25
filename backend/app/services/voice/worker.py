@@ -114,7 +114,7 @@ async def _seed_chat_context(params: SessionParams) -> Optional[llm.ChatContext]
         params.conversation_id,
         tenant_id=params.tenant_id,
         backend_url=params.settings.VOICE_BACKEND_URL,
-        api_key=params.settings.API_KEY,
+        api_key=params.settings.INTERNAL_API_KEY or params.settings.API_KEY,
     )
     if not messages:
         return None

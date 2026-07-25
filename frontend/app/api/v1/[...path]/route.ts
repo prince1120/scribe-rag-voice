@@ -26,13 +26,29 @@ const HOP_BY_HOP = new Set([
   "content-length",
 ]);
 
+// Routes the voice worker calls server-to-server. They accept a tenant_id
+// from the caller, so they must never be reachable from a browser — this
+// proxy is public and attaches BACKEND_API_KEY to every request, which would
+// otherwise authenticate an anonymous visitor straight into them. The backend
+// also guards these with a separate internal key; this is the second lock.
+const INTERNAL_ONLY_PATHS = new Set(["voice/retrieve", "voice/history"]);
+
 async function proxy(
   req: NextRequest,
   ctx: { params: Promise<{ path: string[] }> }
 ): Promise<Response> {
   const { path } = await ctx.params;
+  const joined = (path || []).join("/");
+
+  if (INTERNAL_ONLY_PATHS.has(joined)) {
+    return new Response(JSON.stringify({ error: "Not found" }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
   const search = new URL(req.url).search;
-  const upstream = `${BACKEND}/api/v1/${(path || []).join("/")}${search}`;
+  const upstream = `${BACKEND}/api/v1/${joined}${search}`;
 
   const headers = new Headers();
   for (const [k, v] of req.headers.entries()) {
@@ -74,7 +90,15 @@ async function proxy(
   // pass through `content-type` so SSE (`text/event-stream`) is preserved.
   const respHeaders = new Headers();
   for (const [k, v] of upstreamResponse.headers.entries()) {
+    // set-cookie is handled below: iterating entries() joins duplicates into
+    // one comma-separated string, which browsers reject.
+    if (k.toLowerCase() === "set-cookie") continue;
     if (!HOP_BY_HOP.has(k.toLowerCase())) respHeaders.set(k, v);
+  }
+  // The session cookie is minted by the backend and must reach the browser
+  // intact, or login silently succeeds and then every later request is 401.
+  for (const cookie of upstreamResponse.headers.getSetCookie()) {
+    respHeaders.append("set-cookie", cookie);
   }
   // Discourage any intermediate buffering of SSE.
   respHeaders.set("cache-control", "no-cache, no-transform");

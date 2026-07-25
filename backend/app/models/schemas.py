@@ -38,7 +38,6 @@ class DocumentChunk(BaseModel):
 
 class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=4000)
-    tenant_id: str = "default"
     conversation_id: Optional[str] = None
     top_k: Optional[int] = Field(default=None, ge=1, le=50)
     filters: Optional[Dict[str, Any]] = None
@@ -79,7 +78,6 @@ class QueryResponse(BaseModel):
 class PasteTextRequest(BaseModel):
     title: str = Field(default="Pasted text", max_length=200)
     content: str = Field(..., min_length=1, max_length=2_000_000)
-    tenant_id: str = "default"
 
     @field_validator("content")
     @classmethod
@@ -123,7 +121,6 @@ class DocumentContentResponse(BaseModel):
 
 class DocumentContentUpdate(BaseModel):
     content: str = Field(..., max_length=2_000_000)
-    tenant_id: str = "default"
 
 
 class HealthResponse(BaseModel):
@@ -165,9 +162,8 @@ class VoiceTokenRequest(BaseModel):
         if v and len(v.split()) > 1000:
             raise ValueError("custom_prompt must be 1000 words or fewer")
         return v
-    # Tenant whose documents / history this session should use, and the text
-    # conversation to continue (so voice knows what was already discussed).
-    tenant_id: str = "default"
+    # The text conversation to continue, so voice knows what was already
+    # discussed. Tenancy is resolved server-side from the session, never here.
     conversation_id: Optional[str] = Field(default=None, max_length=128)
 
 

@@ -16,9 +16,10 @@ from app.models.schemas import (
 )
 from app.config import settings
 from app.auth import verify_api_key
+from app.identity import Identity, get_identity
 from app.rate_limit import limiter
 from app import repositories
-from app.utils import sanitize_filename, assign_display_numbers, derive_demo_tenant_id
+from app.utils import sanitize_filename, assign_display_numbers
 from app.services import content_editor
 from app.services.document_processor import DocumentProcessor
 from app.services.embedding_service import EmbeddingService
@@ -28,7 +29,6 @@ from app.services.reranker import Reranker
 from app.services.rag_pipeline import RAGPipeline
 from app.services.vision_ocr import VisionOCR
 from app.services.conversation_service import ConversationService
-from app.services.tenant_service import resolve_tenant_context, get_tenant_context, TenantContext
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -65,26 +65,10 @@ document_processor = DocumentProcessor(
 )
 
 
-def _effective_tenant(
-    tenant_id: str = "default",
-    x_user_groq_key: Optional[str] = None,
-    x_user_sarvam_key: Optional[str] = None,
-    x_client_id: Optional[str] = None,
-) -> str:
-    """Resolve isolated cryptographic tenant ID using tenant_service."""
-    ctx = resolve_tenant_context(
-        tenant_id=tenant_id,
-        x_user_groq_key=x_user_groq_key,
-        x_user_sarvam_key=x_user_sarvam_key,
-        x_client_id=x_client_id,
-    )
-    return ctx.tenant_id
-
-
-async def _enforce_demo_document_cap(tenant_id: str, x_user_groq_key: Optional[str]):
-    if not x_user_groq_key:
+async def _enforce_demo_document_cap(identity: Identity):
+    if identity.is_owner:
         return
-    existing = await repositories.list_documents(tenant_id)
+    existing = await repositories.list_documents(identity.tenant_id)
     if len(existing) >= settings.DEMO_MAX_DOCUMENTS:
         raise HTTPException(
             status_code=403,
@@ -236,14 +220,12 @@ async def _ingest_file(
 )
 @limiter.limit(f"{settings.RATE_LIMIT_UPLOAD_PER_MINUTE}/minute")
 async def upload_document(
-    request: Request, file: UploadFile = File(...), tenant_id: str = "default",
-    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
-    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
-    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    request: Request, file: UploadFile = File(...),
+    identity: Identity = Depends(get_identity),
 ):
     """Upload and process a document."""
-    tenant_id = _effective_tenant(tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
-    await _enforce_demo_document_cap(tenant_id, x_user_groq_key)
+    tenant_id = identity.tenant_id
+    await _enforce_demo_document_cap(identity)
 
     safe_name = sanitize_filename(file.filename)
     ext = os.path.splitext(safe_name)[1].lower()
@@ -292,13 +274,11 @@ async def upload_document(
 @limiter.limit(f"{settings.RATE_LIMIT_UPLOAD_PER_MINUTE}/minute")
 async def paste_text(
     request: Request, body: PasteTextRequest,
-    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
-    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
-    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    identity: Identity = Depends(get_identity),
 ):
     """Ingest pasted text as a document, through the same pipeline as a file upload."""
-    tenant_id = _effective_tenant(body.tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
-    await _enforce_demo_document_cap(tenant_id, x_user_groq_key)
+    tenant_id = identity.tenant_id
+    await _enforce_demo_document_cap(identity)
 
     document_id = str(uuid4())
     safe_name = sanitize_filename(body.title) or "pasted-text"
@@ -332,9 +312,7 @@ async def paste_text(
 @limiter.limit(f"{settings.RATE_LIMIT_QUERY_PER_MINUTE}/minute")
 async def query_documents(
     request: Request, body: QueryRequest,
-    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
-    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
-    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    identity: Identity = Depends(get_identity),
     x_custom_llm_base_url: Optional[str] = Header(default=None, alias="X-Custom-LLM-Base-URL"),
     x_custom_llm_key: Optional[str] = Header(default=None, alias="X-Custom-LLM-Key"),
 ):
@@ -343,7 +321,8 @@ async def query_documents(
         import time
         start_time = time.time()
 
-        tenant_id = _effective_tenant(body.tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+        tenant_id = identity.tenant_id
+        x_user_groq_key = identity.groq_key
 
         # Get conversation history if available
         conversation_history = None
@@ -458,9 +437,7 @@ async def query_documents(
 @limiter.limit(f"{settings.RATE_LIMIT_QUERY_PER_MINUTE}/minute")
 async def query_stream(
     request: Request, body: QueryRequest,
-    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
-    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
-    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    identity: Identity = Depends(get_identity),
     x_custom_llm_base_url: Optional[str] = Header(default=None, alias="X-Custom-LLM-Base-URL"),
     x_custom_llm_key: Optional[str] = Header(default=None, alias="X-Custom-LLM-Key"),
 ):
@@ -469,7 +446,8 @@ async def query_stream(
         import time
         request_start = time.time()
 
-        tenant_id = _effective_tenant(body.tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+        tenant_id = identity.tenant_id
+        x_user_groq_key = identity.groq_key
 
         # Get conversation history
         _t = time.time()
@@ -614,13 +592,10 @@ async def query_stream(
 
 @router.get("/documents", response_model=List[DocumentUploadResponse], dependencies=[Depends(verify_api_key)])
 async def get_documents(
-    tenant_id: str = "default",
-    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
-    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
-    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    identity: Identity = Depends(get_identity),
 ):
     """List previously uploaded documents for a tenant (persisted, survives restarts)."""
-    tenant_id = _effective_tenant(tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+    tenant_id = identity.tenant_id
     records = await repositories.list_documents(tenant_id)
     return [
         DocumentUploadResponse(
@@ -636,13 +611,10 @@ async def get_documents(
 
 @router.get("/conversations", response_model=List[Conversation], dependencies=[Depends(verify_api_key)])
 async def list_conversations(
-    tenant_id: str = "default",
-    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
-    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
-    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    identity: Identity = Depends(get_identity),
 ):
     """List conversations for a tenant."""
-    tenant_id = _effective_tenant(tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+    tenant_id = identity.tenant_id
     records = await repositories.list_conversations(tenant_id)
     return [
         Conversation(
@@ -666,13 +638,10 @@ async def list_conversations(
 
 @router.post("/conversations", response_model=dict, dependencies=[Depends(verify_api_key)])
 async def create_conversation(
-    tenant_id: str = "default",
-    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
-    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
-    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    identity: Identity = Depends(get_identity),
 ):
     """Create a new conversation."""
-    tenant_id = _effective_tenant(tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+    tenant_id = identity.tenant_id
     conversation_id = conversation_service.create_conversation(tenant_id)
     await repositories.get_or_create_conversation(conversation_id, tenant_id)
     return {"conversation_id": conversation_id, "status": "created"}
@@ -680,13 +649,11 @@ async def create_conversation(
 
 @router.delete("/documents/{document_id}", dependencies=[Depends(verify_api_key)])
 async def delete_document(
-    document_id: str, tenant_id: str = "default",
-    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
-    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
-    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    document_id: str,
+    identity: Identity = Depends(get_identity),
 ):
     """Delete a document and its chunks."""
-    tenant_id = _effective_tenant(tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+    tenant_id = identity.tenant_id
     record = await repositories.get_document_record(document_id, tenant_id)
     if not record:
         raise HTTPException(status_code=404, detail="Document not found or access denied")
@@ -739,13 +706,10 @@ def _find_upload_file(document_id: str) -> Optional[tuple]:
 @router.get("/documents/{document_id}/file", dependencies=[Depends(verify_api_key)])
 async def get_document_file(
     document_id: str,
-    tenant_id: str = "default",
-    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
-    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
-    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    identity: Identity = Depends(get_identity),
 ):
     """Serve the original uploaded file inline, with strict DB tenant ownership validation."""
-    tenant_id = _effective_tenant(tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+    tenant_id = identity.tenant_id
     record = await repositories.get_document_record(document_id, tenant_id)
     if not record:
         raise HTTPException(status_code=404, detail="Document file not found or access denied")
@@ -787,14 +751,12 @@ def _strip_image_header(text: str) -> str:
     dependencies=[Depends(verify_api_key)],
 )
 async def get_document_content(
-    document_id: str, tenant_id: str = "default",
-    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
-    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
-    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    document_id: str,
+    identity: Identity = Depends(get_identity),
 ):
     """Return an editable plain-text representation of a document's content
     (view/edit without downloading)."""
-    tenant_id = _effective_tenant(tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+    tenant_id = identity.tenant_id
     record = await repositories.get_document_record(document_id, tenant_id)
     if not record:
         raise HTTPException(status_code=404, detail="Document not found or access denied")
@@ -839,12 +801,10 @@ async def get_document_content(
 @limiter.limit(f"{settings.RATE_LIMIT_UPLOAD_PER_MINUTE}/minute")
 async def update_document_content(
     request: Request, document_id: str, body: DocumentContentUpdate,
-    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
-    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
-    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    identity: Identity = Depends(get_identity),
 ):
     """Edit a document's text content in place and re-index it so chat reflects the edit immediately."""
-    tenant_id = _effective_tenant(body.tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+    tenant_id = identity.tenant_id
     record = await repositories.get_document_record(document_id, tenant_id)
     if not record:
         raise HTTPException(status_code=404, detail="Document not found or access denied")

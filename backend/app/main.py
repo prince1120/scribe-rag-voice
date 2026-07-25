@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 # Imported after logging is configured so any startup-time log lines from
 # these modules (model loading, service init) come out in the same format.
 from app.api.routes import router as api_router  # noqa: E402
+from app.api.session_routes import router as session_router  # noqa: E402
 from app.api.voice_routes import router as voice_router  # noqa: E402
 from app.database import init_db  # noqa: E402
 from app.services.voice.worker_supervisor import ensure_worker_running  # noqa: E402
@@ -82,6 +83,15 @@ if not settings.API_KEY:
         "Set API_KEY in .env before exposing this service outside localhost."
     )
 
+if not settings.APP_ACCESS_PASSCODE:
+    logger.warning(
+        "APP_ACCESS_PASSCODE is not set — every visitor is treated as the "
+        "owner and can read, download, and DELETE all documents. Note that "
+        "API_KEY does not protect against this: the frontend proxy supplies "
+        "it on behalf of anonymous callers. Set APP_ACCESS_PASSCODE and "
+        "SESSION_SECRET before deploying anywhere public."
+    )
+
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
@@ -98,6 +108,7 @@ app.add_middleware(
 )
 
 # Include API routes
+app.include_router(session_router, prefix="/api/v1/session", tags=["session"])
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(voice_router, prefix="/api/v1/voice", tags=["voice"])
 

@@ -119,7 +119,7 @@ class VoiceAssistant(Agent):
                 query,
                 tenant_id=self._tenant_id,
                 backend_url=self._settings.VOICE_BACKEND_URL,
-                api_key=self._settings.API_KEY,
+                api_key=self._settings.INTERNAL_API_KEY or self._settings.API_KEY,
                 top_k=self._settings.VOICE_RAG_TOP_K,
             )
         )

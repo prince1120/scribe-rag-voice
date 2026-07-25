@@ -79,6 +79,28 @@ class Settings(BaseSettings):
     # Empty = auth disabled (local/dev only) — a warning is logged at startup.
     API_KEY: str = ""
 
+    # Passcode gate. This — not API_KEY — is what protects the owner's
+    # documents: API_KEY is supplied by the frontend proxy on behalf of every
+    # anonymous visitor, so it authenticates the proxy, not the person.
+    # Empty = gate disabled (local/dev only), warned about loudly at startup.
+    APP_ACCESS_PASSCODE: str = ""
+    # Shared secret for voice-worker -> API calls (/voice/retrieve, /voice/history).
+    # Deliberately NOT the same value as API_KEY, and never given to the
+    # frontend proxy. Falls back to API_KEY when unset so existing local setups
+    # keep working.
+    INTERNAL_API_KEY: str = ""
+    # HMAC key for session cookies. Required whenever APP_ACCESS_PASSCODE is
+    # set; startup fails otherwise rather than signing with a guessable key.
+    # Rotating it invalidates every existing session.
+    SESSION_SECRET: str = ""
+    SESSION_TTL_DAYS: int = 30
+
+    # Honour X-Forwarded-For when resolving the client IP for rate limiting.
+    # Only enable behind a proxy that overwrites the header — if anything can
+    # reach this service directly, a caller can forge the header and mint a
+    # fresh rate-limit bucket per request.
+    TRUST_PROXY_HEADERS: bool = False
+
     # Rate limiting (requests per window, per client IP)
     RATE_LIMIT_ENABLED: bool = True
     RATE_LIMIT_QUERY_PER_MINUTE: int = 20
@@ -99,3 +121,11 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+if settings.APP_ACCESS_PASSCODE and not settings.SESSION_SECRET:
+    raise RuntimeError(
+        "SESSION_SECRET must be set when APP_ACCESS_PASSCODE is set — session "
+        "cookies would otherwise be signed with an empty key, making them "
+        "trivial to forge. Generate one with: python -c \"import secrets; "
+        "print(secrets.token_urlsafe(48))\""
+    )
