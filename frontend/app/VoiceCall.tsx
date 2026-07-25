@@ -744,7 +744,7 @@ export function VoiceCallModal({
                 <VoiceSpectrum
                   getAnalyser={getActiveAnalyser}
                   color={orbCore}
-                  size={240}
+                  size={260}
                   active={agentActive || (userActive && !muted)}
                 />
               )}

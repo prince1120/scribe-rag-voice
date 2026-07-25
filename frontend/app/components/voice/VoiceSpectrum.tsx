@@ -1,71 +1,57 @@
 "use client";
 
-// A ring of bars around the orb, driven by the real frequency spectrum of
-// whoever is currently speaking.
+// The reactive ring around the orb.
 //
-// The orb already reacts to overall volume, which conveys *how loud* but not
-// *what* — a flat tone and a spoken sentence push it identically. Frequency
-// data gives the texture back: vowels, consonants and pitch all move different
-// bars, so the ring visibly tracks speech rather than looping an animation
-// that happens to be playing while someone talks.
+// The first version drew 64 radial bars — a literal audio spectrum. It read as
+// a music visualiser: spiky, busy, and lifted from a media player rather than
+// belonging to a conversation. Every voice agent people compare this to
+// (ChatGPT, Gemini Live, Siri) uses smooth continuous deformation instead, and
+// they are right to: speech is fluid, and a serious assistant should look
+// composed rather than excitable.
 //
-// Canvas rather than DOM nodes: 64 bars re-styled every frame is 64 layout
-// invalidations per frame, which is exactly the kind of thing that turns a
-// 60fps animation into a janky one on a mid-range phone.
+// So the same audio drives a closed Catmull-Rom curve. Frequency bands still
+// push control points outward, but the curve through them is continuous, so
+// the shape swells and settles like something breathing instead of flickering
+// bar by bar.
 
 import { useEffect, useRef } from "react";
 
-const BAR_COUNT = 64;
-// The top of the FFT range is mostly silence for speech, and including it
-// leaves a third of the ring permanently flat.
-const USABLE_SPECTRUM = 0.62;
+// Few points, heavily smoothed: more points means more high-frequency wobble,
+// which is exactly the busyness being avoided.
+const POINTS = 12;
+const USABLE_SPECTRUM = 0.55;
 
 export interface VoiceSpectrumProps {
-  /** Read at each frame rather than passed as a value: the analyser is
-   *  swapped when the agent's track is published or the mic is replaced, and
-   *  a stale reference would freeze the ring. */
+  /** Read per frame: analysers are swapped when the agent's track is
+   *  published or the mic changes, so a captured reference goes stale. */
   getAnalyser: () => AnalyserNode | null;
   color: string;
   size: number;
-  /** Inner edge of the bars, as a fraction of half the canvas. */
-  radiusRatio?: number;
   active: boolean;
 }
 
-export function VoiceSpectrum({
-  getAnalyser,
-  color,
-  size,
-  radiusRatio = 0.52,
-  active,
-}: VoiceSpectrumProps) {
+export function VoiceSpectrum({ getAnalyser, color, size, active }: VoiceSpectrumProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frameRef = useRef(0);
-  // Smoothed per-bar heights, so bars ease rather than snap between frames.
-  const levelsRef = useRef<Float32Array>(new Float32Array(BAR_COUNT));
+  const levelsRef = useRef<Float32Array>(new Float32Array(POINTS));
+  const phaseRef = useRef(0);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
-    // Honour the OS setting: this is continuous peripheral motion, exactly
-    // what reduced-motion exists to suppress.
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
     const context = canvas.getContext("2d");
     if (!context) return;
 
-    // Match the backing store to device pixels or the bars are blurry on any
-    // HiDPI screen.
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     canvas.width = size * dpr;
     canvas.height = size * dpr;
     context.scale(dpr, dpr);
 
     const center = size / 2;
-    const innerRadius = center * radiusRatio;
-    const maxBarLength = center - innerRadius - 2;
+    const baseRadius = center * 0.72;
+    const maxSwell = center * 0.2;
     let spectrum: Uint8Array | null = null;
 
     const draw = () => {
@@ -74,6 +60,8 @@ export function VoiceSpectrum({
 
       const analyser = getAnalyser();
       const levels = levelsRef.current;
+      // Slow rotation so the shape never looks frozen between utterances.
+      phaseRef.current += 0.0022;
 
       if (analyser && active) {
         if (!spectrum || spectrum.length !== analyser.frequencyBinCount) {
@@ -81,56 +69,75 @@ export function VoiceSpectrum({
         }
         analyser.getByteFrequencyData(spectrum as Uint8Array<ArrayBuffer>);
 
-        const usableBins = Math.floor(spectrum.length * USABLE_SPECTRUM);
-        const binsPerBar = Math.max(1, Math.floor(usableBins / BAR_COUNT));
+        const usable = Math.floor(spectrum.length * USABLE_SPECTRUM);
+        const perPoint = Math.max(1, Math.floor(usable / POINTS));
 
-        for (let i = 0; i < BAR_COUNT; i++) {
+        for (let i = 0; i < POINTS; i++) {
           let sum = 0;
-          for (let j = 0; j < binsPerBar; j++) {
-            sum += spectrum[i * binsPerBar + j] ?? 0;
-          }
-          const target = sum / binsPerBar / 255;
-          // Asymmetric smoothing: rise quickly so an attack reads as sharp,
-          // fall slowly so the ring settles instead of flickering.
-          const current = levels[i];
-          levels[i] = target > current
-            ? current + (target - current) * 0.5
-            : current + (target - current) * 0.12;
+          for (let j = 0; j < perPoint; j++) sum += spectrum[i * perPoint + j] ?? 0;
+          const target = Math.min(1, sum / perPoint / 190);
+          // Ease both ways, and slower than the bar version: the goal is a
+          // swell, not a twitch.
+          levels[i] += (target - levels[i]) * (target > levels[i] ? 0.22 : 0.08);
         }
       } else {
-        // Decay to rest when nobody is speaking.
-        for (let i = 0; i < BAR_COUNT; i++) levels[i] *= 0.9;
+        for (let i = 0; i < POINTS; i++) levels[i] *= 0.94;
       }
 
-      context.save();
-      context.translate(center, center);
+      // Control points, then a closed curve through them.
+      const points: Array<{ x: number; y: number }> = [];
+      for (let i = 0; i < POINTS; i++) {
+        const angle = (i / POINTS) * Math.PI * 2 + phaseRef.current;
+        // A gentle idle undulation keeps the ring alive while silent, without
+        // implying someone is speaking.
+        const idle = Math.sin(phaseRef.current * 2.4 + i * 1.7) * 0.035;
+        const radius = baseRadius + (levels[i] + idle) * maxSwell;
+        points.push({
+          x: center + Math.cos(angle) * radius,
+          y: center + Math.sin(angle) * radius,
+        });
+      }
+
+      context.beginPath();
+      for (let i = 0; i < POINTS; i++) {
+        const p0 = points[(i - 1 + POINTS) % POINTS];
+        const p1 = points[i];
+        const p2 = points[(i + 1) % POINTS];
+        const p3 = points[(i + 2) % POINTS];
+        // Catmull-Rom expressed as a cubic Bézier, so the curve passes through
+        // every control point with continuous tangents — no visible seams.
+        const cp1x = p1.x + (p2.x - p0.x) / 6;
+        const cp1y = p1.y + (p2.y - p0.y) / 6;
+        const cp2x = p2.x - (p3.x - p1.x) / 6;
+        const cp2y = p2.y - (p3.y - p1.y) / 6;
+        if (i === 0) context.moveTo(p1.x, p1.y);
+        context.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+      }
+      context.closePath();
+
+      const energy = levels.reduce((a, b) => a + b, 0) / POINTS;
+
+      // Soft fill inside the curve, brightest at the rim.
+      const gradient = context.createRadialGradient(
+        center, center, baseRadius * 0.55,
+        center, center, baseRadius + maxSwell
+      );
+      gradient.addColorStop(0, "transparent");
+      gradient.addColorStop(1, color);
+      context.globalAlpha = 0.1 + energy * 0.22;
+      context.fillStyle = gradient;
+      context.fill();
+
+      context.globalAlpha = 0.35 + energy * 0.5;
       context.strokeStyle = color;
-      context.lineCap = "round";
-      context.lineWidth = Math.max(1.5, (size / BAR_COUNT) * 0.5);
-
-      for (let i = 0; i < BAR_COUNT; i++) {
-        const level = levels[i];
-        if (level < 0.01) continue;
-
-        // Start at 12 o'clock so the ring reads as symmetric.
-        const angle = (i / BAR_COUNT) * Math.PI * 2 - Math.PI / 2;
-        const cos = Math.cos(angle);
-        const sin = Math.sin(angle);
-        const length = 2 + level * maxBarLength;
-
-        context.globalAlpha = 0.25 + level * 0.75;
-        context.beginPath();
-        context.moveTo(cos * innerRadius, sin * innerRadius);
-        context.lineTo(cos * (innerRadius + length), sin * (innerRadius + length));
-        context.stroke();
-      }
-
-      context.restore();
+      context.lineWidth = 1.5;
+      context.stroke();
+      context.globalAlpha = 1;
     };
 
     draw();
     return () => cancelAnimationFrame(frameRef.current);
-  }, [getAnalyser, color, size, radiusRatio, active]);
+  }, [getAnalyser, color, size, active]);
 
   return (
     <canvas

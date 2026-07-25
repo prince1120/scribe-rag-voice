@@ -41,6 +41,7 @@ import { ToastStack, type ToastItem, type ToastType } from "./Toast";
 // FastAPI backend. This way the browser only talks to the page's own origin,
 // which makes ngrok / Vercel / any public deployment work without touching code.
 import { Message as ChatMessageView } from "./components/chat/Message";
+import { useDrawer } from "./components/useDrawer";
 
 const API_BASE = "/api/v1";
 // Mirrors backend DEMO_MAX_DOCUMENTS / DEMO_TOP_K (app/config.py) — display
@@ -130,6 +131,7 @@ export default function Home() {
   const [newKeyInput, setNewKeyInput] = useState("");
   const [voiceCallOpen, setVoiceCallOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer
+  const sidebarRef = useRef<HTMLElement>(null);
 
   const handleOpenVoiceCall = useCallback(() => {
     setVoiceCallOpen(true);
@@ -1062,6 +1064,9 @@ export default function Home() {
   // the first paint. Rendering nothing decisive until that effect has run
   // means we never show the wrong screen, even briefly — same output on
   // server and first client paint, so no hydration mismatch either.
+  // Above every early return — hook order must be identical on each render.
+  useDrawer({ open: sidebarOpen, onClose: () => setSidebarOpen(false), panelRef: sidebarRef });
+
   if (!mounted) {
     return (
       <div
@@ -1243,23 +1248,28 @@ export default function Home() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: "var(--claude-bg)" }}>
+    <div className="flex overflow-hidden" style={{ background: "var(--claude-bg)", height: "100dvh" }}>
       {/* Mobile drawer backdrop */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 z-30 md:hidden"
-          style={{ background: "rgba(20, 20, 18, 0.35)" }}
+          className="fixed inset-0 z-30 md:hidden ds-animate-fade"
+          style={{ background: "rgba(20, 20, 18, 0.35)", backdropFilter: "blur(2px)" }}
           onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
         />
       )}
 
       {/* ============ Sidebar ============ */}
       <aside
-        className={`w-80 max-w-[85vw] flex flex-col border-r fixed md:static inset-y-0 left-0 z-40 transition-transform duration-300 md:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        ref={sidebarRef}
+        id="app-sidebar"
+        aria-label="Documents and conversations"
+        className={`w-80 max-w-[85vw] flex flex-col border-r fixed md:static inset-y-0 left-0 z-40 md:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"
           }`}
         style={{
           background: "var(--claude-sidebar)",
           borderColor: "var(--claude-border)",
+          transition: "transform var(--duration-slow) var(--ease-decelerate)",
         }}
       >
         {/* Brand */}
