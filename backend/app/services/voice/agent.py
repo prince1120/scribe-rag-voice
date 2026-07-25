@@ -83,6 +83,38 @@ def _should_search(query: str) -> bool:
     return True
 
 
+# Characters that are silent on a page but not in a synthesiser: Sarvam reads
+# "**" as "star star" and "#" as "hash". The system prompt already forbids
+# markdown, but instruction-following degrades on small fast models — and the
+# fast models are exactly the ones voice wants. So this is enforced in code
+# rather than requested in a prompt.
+_MARKDOWN_NOISE = str.maketrans("", "", "*_`#~")
+
+# "[label](url)" -> "label". The URL is unspeakable and the brackets are noise.
+_MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+# Leading list bullets: "- item" / "3. item" -> "item". Ordinals read as
+# "three." mid-sentence, which sounds like a false start.
+_MD_BULLET = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+", re.MULTILINE)
+# Citation markers leak in from RAG excerpts; spoken, they are meaningless.
+_CITATION = re.compile(r"\[(?:Source\s*)?\d+(?:\.\d+)?\]")
+
+
+def strip_markdown_for_speech(text: str) -> str:
+    """Make a chunk safe to speak.
+
+    Operates per streamed chunk, so it only removes characters that cannot
+    span a chunk boundary — no multi-character sequence is reassembled here,
+    which keeps it correct without buffering the whole reply and delaying the
+    first audio.
+    """
+    if not text:
+        return text
+    text = _MD_LINK.sub("\\1", text)
+    text = _CITATION.sub("", text)
+    text = _MD_BULLET.sub("", text)
+    return text.translate(_MARKDOWN_NOISE)
+
+
 class VoiceAssistant(Agent):
     def __init__(
         self,
@@ -97,6 +129,18 @@ class VoiceAssistant(Agent):
         self._settings = settings
         self._rag_enabled = rag_enabled
         self._tenant_id = tenant_id
+
+    async def tts_node(self, text, model_settings):
+        """Last stop before synthesis — everything spoken passes through here,
+        whichever LLM produced it."""
+        async def cleaned():
+            async for chunk in text:
+                out = strip_markdown_for_speech(chunk)
+                if out:
+                    yield out
+
+        async for frame in Agent.default.tts_node(self, cleaned(), model_settings):
+            yield frame
 
     async def on_user_turn_completed(
         self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
