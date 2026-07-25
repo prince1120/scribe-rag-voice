@@ -109,6 +109,20 @@ class Settings(BaseSettings):
     # Database (documents + conversations metadata)
     DATABASE_URL: str = "sqlite+aiosqlite:///./rag.db"
 
+    # File storage. Supabase Storage is used when both URL and service key are
+    # present; otherwise files go to UPLOAD_DIR on local disk. On hosts with an
+    # ephemeral filesystem (Render/Fly/Railway free tiers) local disk means
+    # every uploaded file is lost on redeploy, which breaks download, editing,
+    # and image questions.
+    SUPABASE_URL: str = ""
+    # Service-role key — bypasses row-level security, so it is server-side only
+    # and must never be exposed to the browser.
+    SUPABASE_SERVICE_KEY: str = ""
+    # Must be a PRIVATE bucket. A public one would make every uploaded document
+    # readable by URL to anyone who has it.
+    SUPABASE_BUCKET: str = "documents"
+    UPLOAD_DIR: str = "uploads"
+
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     CORS_METHODS: List[str] = ["GET", "POST", "DELETE", "OPTIONS"]

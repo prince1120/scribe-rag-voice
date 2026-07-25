@@ -1,6 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, Header, HTTPException, Depends, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import Response, StreamingResponse
 from typing import List, Optional
 import asyncio
 import os
@@ -30,6 +30,9 @@ from app.services.reranker import Reranker
 from app.services.rag_pipeline import RAGPipeline
 from app.services.vision_ocr import VisionOCR
 from app.services.conversation_service import ConversationService
+from app.services.storage import (
+    StorageError, build_key, cached_path, materialize, storage,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -78,6 +81,26 @@ async def _enforce_demo_document_cap(identity: Identity):
                 "per session. Delete one to upload another."
             ),
         )
+
+
+async def _resolve_image_paths(results: List[dict]) -> None:
+    """Give retrieved image chunks a readable local path, in place.
+
+    The RAG pipeline sends images to the vision model by path, but chunks now
+    carry a storage key — which for Supabase is not a file on this machine.
+    Resolving here (async, before generation) rather than inside the pipeline
+    keeps rag_pipeline synchronous and unaware of where files live.
+    """
+    for result in results:
+        payload = result.get("payload") or {}
+        if not payload.get("is_image"):
+            continue
+        key = payload.get("storage_key")
+        if not key:
+            continue
+        path = await cached_path(key, suffix=os.path.splitext(key)[1].lower())
+        if path:
+            payload["file_path"] = path
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -138,12 +161,16 @@ def _remove_quiet(path: str):
 
 
 async def _ingest_file(
-    file_path: str, document_id: str, safe_name: str, tenant_id: str, file_size: int,
+    data: bytes, document_id: str, safe_name: str, tenant_id: str, file_size: int,
 ) -> DocumentUploadResponse:
     """Shared pipeline: process a file already on disk into chunks, embed,
     upsert into the vector store, and persist its metadata. Used by both
     the file-upload endpoint and the paste-text endpoint (which writes the
     pasted content to a .md file first, then shares this same path)."""
+    key = build_key(document_id, safe_name)
+    ext = os.path.splitext(safe_name)[1].lower()
+    await storage.save(key, data)
+
     try:
         metadata = {
             "document_id": document_id,
@@ -151,12 +178,19 @@ async def _ingest_file(
             "tenant_id": tenant_id,
             "upload_timestamp": datetime.now().isoformat(),
             "file_size": file_size,
+            # The storage key, not a path: with remote storage the path below
+            # is a temp file that stops existing once ingestion finishes, so
+            # anything needing the file later (image questions) must re-fetch.
+            "storage_key": key,
         }
 
-        chunks = await run_in_threadpool(document_processor.process_file, file_path, metadata)
+        async with materialize(key, suffix=ext) as file_path:
+            chunks = await run_in_threadpool(
+                document_processor.process_file, file_path, metadata
+            )
 
         if not chunks:
-            _remove_quiet(file_path)
+            await storage.delete(key)
             raise HTTPException(
                 status_code=422,
                 # Previously blamed a missing Tesseract binary, which sent
@@ -211,9 +245,9 @@ async def _ingest_file(
 
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error ingesting document: {e}")
-        _remove_quiet(file_path)
+    except Exception:
+        logger.exception("Error ingesting document")
+        await storage.delete(key)
         raise HTTPException(status_code=500, detail="Failed to process document")
 
 
@@ -240,34 +274,26 @@ async def upload_document(
         )
 
     document_id = str(uuid4())
-    upload_dir = "uploads"
-    os.makedirs(upload_dir, exist_ok=True)
-    file_path = os.path.join(upload_dir, f"{document_id}_{safe_name}")
-
     max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
-    size = 0
-    try:
-        with open(file_path, "wb") as buffer:
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                size += len(chunk)
-                if size > max_bytes:
-                    raise HTTPException(
-                        status_code=413,
-                        detail=f"File exceeds max size of {settings.MAX_FILE_SIZE_MB}MB",
-                    )
-                buffer.write(chunk)
-    except HTTPException:
-        _remove_quiet(file_path)
-        raise
-    except Exception as e:
-        _remove_quiet(file_path)
-        logger.error(f"Error saving upload: {e}")
-        raise HTTPException(status_code=500, detail="Failed to save upload")
 
-    return await _ingest_file(file_path, document_id, safe_name, tenant_id, size)
+    # Read in 1MB slices and stop the moment the cap is passed, rather than
+    # buffering the whole upload and checking afterwards — otherwise the cap
+    # does nothing to protect memory against a large upload.
+    parts: list[bytes] = []
+    size = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds max size of {settings.MAX_FILE_SIZE_MB}MB",
+            )
+        parts.append(chunk)
+
+    return await _ingest_file(b"".join(parts), document_id, safe_name, tenant_id, size)
 
 
 @router.post(
@@ -289,10 +315,6 @@ async def paste_text(
     if not safe_name.lower().endswith(".md"):
         safe_name += ".md"
 
-    upload_dir = "uploads"
-    os.makedirs(upload_dir, exist_ok=True)
-    file_path = os.path.join(upload_dir, f"{document_id}_{safe_name}")
-
     content_bytes = body.content.encode("utf-8")
     max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
     if len(content_bytes) > max_bytes:
@@ -301,15 +323,9 @@ async def paste_text(
             detail=f"Pasted content exceeds max size of {settings.MAX_FILE_SIZE_MB}MB",
         )
 
-    try:
-        with open(file_path, "wb") as f:
-            f.write(content_bytes)
-    except Exception as e:
-        _remove_quiet(file_path)
-        logger.error(f"Error saving pasted text: {e}")
-        raise HTTPException(status_code=500, detail="Failed to save pasted text")
-
-    return await _ingest_file(file_path, document_id, safe_name, tenant_id, len(content_bytes))
+    return await _ingest_file(
+        content_bytes, document_id, safe_name, tenant_id, len(content_bytes)
+    )
 
 
 @router.post("/query", response_model=QueryResponse, dependencies=[Depends(verify_api_key)])
@@ -362,6 +378,7 @@ async def query_documents(
 
         # Hierarchical citation numbering: doc.chunk (e.g. 1.1, 1.2, 2.1)
         results = assign_display_numbers(results)
+        await _resolve_image_paths(results)
         retrieval_ms = int((time.time() - start_time) * 1000)
 
         if not results:
@@ -498,6 +515,7 @@ async def query_stream(
 
         # Hierarchical citation numbering: doc.chunk (e.g. 1.1, 1.2, 2.1)
         results = assign_display_numbers(results)
+        await _resolve_image_paths(results)
         retrieval_ms = int((time.time() - request_start) * 1000)
 
         if not results:
@@ -691,12 +709,7 @@ async def delete_document(
         raise HTTPException(status_code=404, detail="Document not found or access denied")
     try:
         await run_in_threadpool(vector_store.delete_by_document, document_id, tenant_id)
-        # Best-effort: remove the original file too
-        upload_dir = "uploads"
-        if os.path.isdir(upload_dir):
-            for name in os.listdir(upload_dir):
-                if name.startswith(f"{document_id}_"):
-                    _remove_quiet(os.path.join(upload_dir, name))
+        await storage.delete(build_key(document_id, record.filename))
         await repositories.delete_document_record(document_id, tenant_id)
         return {"status": "deleted", "document_id": document_id}
     except Exception as e:
@@ -722,19 +735,6 @@ _INLINE_MEDIA_TYPES = {
 }
 
 
-def _find_upload_file(document_id: str) -> Optional[tuple]:
-    """Locate an uploaded file by document_id prefix. Returns
-    (file_path, original_filename) or None if not found."""
-    upload_dir = "uploads"
-    if not os.path.isdir(upload_dir):
-        return None
-    prefix = f"{document_id}_"
-    for name in os.listdir(upload_dir):
-        if name.startswith(prefix):
-            return os.path.join(upload_dir, name), name[len(prefix):]
-    return None
-
-
 @router.get("/documents/{document_id}/file", dependencies=[Depends(verify_api_key)])
 async def get_document_file(
     document_id: str,
@@ -746,19 +746,19 @@ async def get_document_file(
     if not record:
         raise HTTPException(status_code=404, detail="Document file not found or access denied")
 
-    found = _find_upload_file(document_id)
-    if not found:
-        raise HTTPException(status_code=404, detail="Document file not found")
-    file_path, original_name = found
+    original_name = record.filename
     ext = os.path.splitext(original_name)[1].lower()
     media_type = _INLINE_MEDIA_TYPES.get(ext, "application/octet-stream")
 
-    return FileResponse(
-        path=file_path,
+    try:
+        data = await storage.read(build_key(document_id, original_name))
+    except StorageError:
+        raise HTTPException(status_code=404, detail="Document file not found")
+
+    return Response(
+        content=data,
         media_type=media_type,
-        headers={
-            "Content-Disposition": f'inline; filename="{original_name}"'
-        },
+        headers={"Content-Disposition": f'inline; filename="{original_name}"'},
     )
 
 
@@ -793,11 +793,9 @@ async def get_document_content(
     if not record:
         raise HTTPException(status_code=404, detail="Document not found or access denied")
 
-    found = _find_upload_file(document_id)
-    if not found:
-        raise HTTPException(status_code=404, detail="Document file not found")
-    file_path, original_name = found
+    original_name = record.filename
     ext = os.path.splitext(original_name)[1].lower()
+    key = build_key(document_id, original_name)
 
     if ext in _IMAGE_EXTENSIONS:
         chunks = await run_in_threadpool(vector_store.get_document_chunks, document_id, tenant_id)
@@ -814,9 +812,14 @@ async def get_document_content(
         )
 
     try:
-        content = await run_in_threadpool(content_editor.extract_editable_text, file_path, ext)
-    except Exception as e:
-        logger.error(f"Error extracting content for {document_id}: {e}")
+        async with materialize(key, suffix=ext) as file_path:
+            content = await run_in_threadpool(
+                content_editor.extract_editable_text, file_path, ext
+            )
+    except StorageError:
+        raise HTTPException(status_code=404, detail="Document file not found")
+    except Exception:
+        logger.exception("Error extracting content for %s", document_id)
         raise HTTPException(status_code=500, detail="Failed to read document content")
 
     return DocumentContentResponse(
@@ -840,18 +843,16 @@ async def update_document_content(
     record = await repositories.get_document_record(document_id, tenant_id)
     if not record:
         raise HTTPException(status_code=404, detail="Document not found or access denied")
-    found = _find_upload_file(document_id)
-    if not found:
-        raise HTTPException(status_code=404, detail="Document file not found")
-    file_path, original_name = found
+    original_name = record.filename
     ext = os.path.splitext(original_name)[1].lower()
+    key = build_key(document_id, original_name)
+    file_size = record.file_size
 
     try:
         if ext in _IMAGE_EXTENSIONS:
             # Don't touch the image file — only its OCR'd text is editable.
             # Chunk the edited text directly instead of process_file, which
             # would re-run OCR and overwrite the user's edits.
-            image_path = os.path.abspath(file_path)
             text_chunks = await run_in_threadpool(document_processor.chunk_text, body.content)
             if not text_chunks or not any(t.strip() for t in text_chunks):
                 text_chunks = ["(no readable text)"]
@@ -865,21 +866,34 @@ async def update_document_content(
                         "document_id": document_id,
                         "filename": original_name,
                         "is_image": True,
-                        "file_path": image_path,
+                        "storage_key": key,
                     },
                 }
                 for i, t in enumerate(text_chunks)
             ]
         elif content_editor.is_editable(ext):
-            await run_in_threadpool(content_editor.write_editable_text, file_path, ext, body.content)
-            metadata = {
-                "document_id": document_id,
-                "filename": original_name,
-                "tenant_id": tenant_id,
-                "upload_timestamp": datetime.now().isoformat(),
-                "file_size": os.path.getsize(file_path),
-            }
-            chunks = await run_in_threadpool(document_processor.process_file, file_path, metadata)
+            # Rewrite the source file in its original format, push it back to
+            # storage, then re-chunk from the rewritten copy so the index and
+            # the downloadable file can't disagree.
+            async with materialize(key, suffix=ext) as file_path:
+                await run_in_threadpool(
+                    content_editor.write_editable_text, file_path, ext, body.content
+                )
+                file_size = os.path.getsize(file_path)
+                with open(file_path, "rb") as handle:
+                    await storage.save(key, handle.read())
+
+                metadata = {
+                    "document_id": document_id,
+                    "filename": original_name,
+                    "tenant_id": tenant_id,
+                    "upload_timestamp": datetime.now().isoformat(),
+                    "file_size": file_size,
+                    "storage_key": key,
+                }
+                chunks = await run_in_threadpool(
+                    document_processor.process_file, file_path, metadata
+                )
         else:
             raise HTTPException(status_code=415, detail=f"Editing not supported for '{ext}'")
 
@@ -910,7 +924,6 @@ async def update_document_content(
         await run_in_threadpool(vector_store.delete_by_document, document_id, tenant_id)
         await run_in_threadpool(vector_store.upsert_points, points)
 
-        file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
         await repositories.update_document(document_id, tenant_id, len(chunks), file_size)
 
         return DocumentUploadResponse(
@@ -922,6 +935,8 @@ async def update_document_content(
         )
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error updating document content: {e}")
+    except StorageError:
+        raise HTTPException(status_code=404, detail="Document file not found")
+    except Exception:
+        logger.exception("Error updating document content")
         raise HTTPException(status_code=500, detail="Failed to update document")
