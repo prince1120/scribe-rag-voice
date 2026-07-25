@@ -3,6 +3,7 @@
    after Tailwind so :root tokens and .ds-* utilities are available to every
    component, and so component styles below can build on them. */
 @import "./styles/design-system.css";
+@import "./styles/chat.css";
 
 @theme {
   --breakpoint-sm: 640px;

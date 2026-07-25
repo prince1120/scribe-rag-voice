@@ -1,0 +1,334 @@
+/* Chat surface — message list, citations, composer.
+ *
+ * Built on the tokens in design-system.css; no raw values for spacing, motion,
+ * or elevation belong here.
+ */
+
+/* ---- Message list -------------------------------------------------------- */
+
+.msg-list {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior-y: contain; /* stop scroll chaining to the page on mobile */
+  padding: var(--space-5) var(--space-4) var(--space-6);
+}
+
+.msg-list-inner {
+  max-width: var(--content-max);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.msg {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ---- User turn ----------------------------------------------------------- */
+
+.msg-user {
+  align-items: flex-end;
+}
+
+.msg-user-bubble {
+  max-width: min(85%, 34rem);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-sm); /* tail toward the sender */
+  background: var(--claude-bubble);
+  color: #F5F3EB;
+  font-size: var(--text-base);
+  line-height: var(--leading-snug);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---- Assistant turn ------------------------------------------------------ */
+
+.msg-body {
+  font-size: var(--text-base);
+  line-height: var(--leading-relaxed);
+  color: var(--claude-text);
+  word-break: break-word;
+}
+
+.msg-body > * + * { margin-top: var(--space-4); }
+
+.msg-body h2,
+.msg-body h3 {
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+}
+.msg-body h2 { font-size: var(--text-lg); margin-top: var(--space-5); }
+.msg-body h3 { font-size: var(--text-md); margin-top: var(--space-4); }
+
+.msg-body ul,
+.msg-body ol { padding-left: var(--space-5); }
+.msg-body li + li { margin-top: var(--space-2); }
+.msg-body li::marker { color: var(--claude-muted); }
+
+.msg-body a {
+  color: var(--claude-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.msg-body code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.875em;
+  padding: 0.15em 0.35em;
+  border-radius: var(--radius-sm);
+  background: var(--claude-surface-2);
+  border: 1px solid var(--claude-border);
+}
+
+.msg-body pre {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--claude-surface-2);
+  border: 1px solid var(--claude-border);
+  overflow-x: auto; /* the block scrolls, never the page */
+}
+.msg-body pre code { padding: 0; border: none; background: none; }
+
+/* Tables scroll inside their own container for the same reason. */
+.msg-body table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+.msg-body th,
+.msg-body td {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--claude-border);
+  text-align: left;
+}
+.msg-body th { background: var(--claude-surface-2); font-weight: var(--weight-semibold); }
+
+.msg-body blockquote {
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--claude-border-strong);
+  color: var(--claude-text-2);
+}
+
+/* ---- Thinking ------------------------------------------------------------ */
+
+.msg-thinking {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 1.5rem;
+}
+
+/* ---- Citations ----------------------------------------------------------- */
+
+.citation-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 5px;
+  margin: 0 2px;
+  vertical-align: baseline;
+  transform: translateY(-1px);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums; /* chips keep one width as ids change */
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--claude-border-strong);
+  background: var(--claude-accent-soft);
+  color: var(--claude-accent-hover);
+  cursor: pointer;
+}
+
+.citation-chip:hover {
+  background: var(--claude-accent);
+  border-color: var(--claude-accent);
+  color: #fff;
+}
+
+.msg-sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--claude-border);
+}
+
+.msg-sources-label {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--claude-muted);
+}
+
+.msg-sources-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.source-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 15rem;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--claude-border);
+  background: var(--claude-surface);
+  color: var(--claude-text-2);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.source-pill:hover {
+  border-color: var(--claude-border-strong);
+  background: var(--claude-surface-2);
+}
+
+.source-pill-num {
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  color: var(--claude-accent);
+}
+
+.source-pill-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Errors -------------------------------------------------------------- */
+
+.msg-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-danger-soft);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+}
+
+.msg-retry {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+/* ---- Composer ------------------------------------------------------------ */
+
+.composer-wrap {
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  background: linear-gradient(to top, var(--claude-bg) 65%, transparent);
+}
+
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--claude-border-strong);
+  background: var(--claude-surface);
+  box-shadow: var(--shadow-sm);
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+/* Focus is shown on the container, not the bare textarea — the input has no
+   border of its own, so a ring on it would sit oddly inside the pill. */
+.composer:focus-within {
+  border-color: var(--claude-accent);
+  box-shadow: var(--shadow-md), 0 0 0 3px var(--claude-accent-soft);
+}
+.composer:focus-within .composer-input:focus-visible { outline: none; }
+
+.composer-input {
+  flex: 1;
+  min-height: 1.5rem;
+  max-height: 200px;
+  padding: var(--space-2) 0;
+  border: none;
+  background: transparent;
+  color: var(--claude-text);
+  font: inherit;
+  font-size: var(--text-base);
+  line-height: var(--leading-snug);
+  resize: none;
+}
+.composer-input::placeholder { color: var(--claude-muted); }
+.composer-input:disabled { cursor: not-allowed; }
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.composer-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+
+.composer-btn-send { background: var(--claude-accent); color: #fff; }
+.composer-btn-send:hover:not(:disabled) { background: var(--claude-accent-hover); }
+.composer-btn-send:disabled { background: var(--claude-border-strong); color: var(--claude-surface); }
+
+.composer-btn-stop { background: var(--claude-bubble); color: #fff; }
+
+.composer-btn-ghost { background: transparent; color: var(--claude-muted); }
+.composer-btn-ghost:hover:not(:disabled) {
+  background: var(--claude-surface-2);
+  color: var(--claude-accent);
+}
+
+.composer-hint {
+  max-width: var(--content-max);
+  margin: var(--space-2) auto 0;
+  text-align: center;
+  font-size: var(--text-xs);
+  color: var(--claude-muted);
+}
+
+/* ---- Mobile -------------------------------------------------------------- */
+
+@media (max-width: 640px) {
+  .msg-list { padding: var(--space-4) var(--space-3) var(--space-5); }
+  .msg-list-inner { gap: var(--space-5); }
+  .msg-user-bubble { max-width: 90%; }
+  .composer-wrap { padding: var(--space-2) var(--space-3); }
+  .composer { border-radius: var(--radius-lg); }
+  /* The disclaimer costs a line of a small screen and says nothing the
+     sources under each answer do not already show. */
+  .composer-hint { display: none; }
+  .source-pill { max-width: 11rem; }
+}
