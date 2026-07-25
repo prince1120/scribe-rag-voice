@@ -5,10 +5,10 @@
 
 import type { NextRequest } from "next/server";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const BACKEND = process.env.BACKEND_ORIGIN || "http://localhost:8000";
+const BACKEND = process.env.BACKEND_ORIGIN || "http://127.0.0.1:8000";
 // Server-side only — never sent to the browser. Set this to match the
 // backend's API_KEY once auth is enabled there.
 const BACKEND_API_KEY = process.env.BACKEND_API_KEY || "";

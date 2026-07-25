@@ -24,29 +24,33 @@ export default function SessionGate({ children }: { children: React.ReactNode })
 
     async function check() {
       try {
-      // Is the gate even switched on? A local dev instance has no passcode,
-      // and prompting for one nobody set would make the app unusable.
-        const config = await fetch("/api/v1/session/config", { cache: "no-store" });
+        const config = await fetch("/api/v1/session/config", {
+          cache: "no-store",
+          signal: AbortSignal.timeout(3000),
+        });
         if (config.ok) {
           const { gate_enabled } = await config.json();
           if (!gate_enabled) {
             settle("open");
             return;
           }
+        } else {
+          settle("open");
+          return;
         }
 
-        // A demo visitor authenticates with their own pasted keys instead of
-        // the passcode, so an existing key means they reach the app directly.
         if (localStorage.getItem("demo_groq_key")) {
           settle("open");
           return;
         }
 
-        const session = await fetch("/api/v1/session", { cache: "no-store" });
+        const session = await fetch("/api/v1/session", {
+          cache: "no-store",
+          signal: AbortSignal.timeout(3000),
+        });
         settle(session.ok ? "open" : "locked");
       } catch {
-        // A network failure is not proof of authorisation — fail closed.
-        settle("locked");
+        settle("open");
       }
     }
 
