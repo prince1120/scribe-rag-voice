@@ -523,6 +523,18 @@ export function VoiceCallModal({
         }
       }
 
+      // Browsers expose navigator.mediaDevices only on a secure origin —
+      // HTTPS, or localhost. Over plain http://<lan-ip> (testing from a phone)
+      // the API is absent entirely and LiveKit throws a bare
+      // "cannot read properties of undefined" deep in its stack, which says
+      // nothing about the actual cause.
+      if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+        throw new Error(
+          "Microphone access needs a secure connection. Open the app over HTTPS " +
+          "or on localhost — browsers block the microphone on plain http:// addresses."
+        );
+      }
+
       await room.localParticipant.setMicrophoneEnabled(true);
 
       // Analyser on the mic → orb reacts to the user's voice too.
