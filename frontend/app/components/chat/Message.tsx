@@ -228,7 +228,7 @@ export function Message({
         // the answer as it lands instead of nothing at all.
         aria-live={message.streaming ? "polite" : undefined}
       >
-        {isEmpty && message.streaming ? (
+        {isEmpty && !message.error ? (
           <ThinkingIndicator />
         ) : (
           <>

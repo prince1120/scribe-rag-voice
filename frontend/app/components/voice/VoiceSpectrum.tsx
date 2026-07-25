@@ -86,6 +86,15 @@ export function VoiceSpectrum({ getAnalyser, color, size, active }: VoiceSpectru
         for (let i = 0; i < POINTS; i++) levels[i] *= 0.94;
       }
 
+      // Smooth each point against its neighbours so the shape stays roughly
+      // radially balanced — bass bands are far louder than treble, and using
+      // them raw made one side bulge while the rest sat flat.
+      const smoothed = levels.map((v, i) => {
+        const prev = levels[(i - 1 + POINTS) % POINTS];
+        const next = levels[(i + 1) % POINTS];
+        return v * 0.5 + prev * 0.25 + next * 0.25;
+      });
+
       // Control points, then a closed curve through them.
       const points: Array<{ x: number; y: number }> = [];
       for (let i = 0; i < POINTS; i++) {
@@ -93,7 +102,7 @@ export function VoiceSpectrum({ getAnalyser, color, size, active }: VoiceSpectru
         // A gentle idle undulation keeps the ring alive while silent, without
         // implying someone is speaking.
         const idle = Math.sin(phaseRef.current * 2.4 + i * 1.7) * 0.035;
-        const radius = baseRadius + (levels[i] + idle) * maxSwell;
+        const radius = baseRadius + (smoothed[i] + idle) * maxSwell;
         points.push({
           x: center + Math.cos(angle) * radius,
           y: center + Math.sin(angle) * radius,
@@ -119,14 +128,23 @@ export function VoiceSpectrum({ getAnalyser, color, size, active }: VoiceSpectru
 
       const energy = levels.reduce((a, b) => a + b, 0) / POINTS;
 
-      // Stroke only. A filled curve overlapped the orb and dulled it.
-      context.globalAlpha = 0.3 + energy * 0.45;
-      context.strokeStyle = color;
-      context.lineWidth = 1.75;
-      context.shadowBlur = 12 + energy * 20;
-      context.shadowColor = color;
-      context.stroke();
-      context.shadowBlur = 0;
+      // Soft luminous fill, no outline. Additive blending so it reads as
+      // light around the orb rather than a shape drawn on top of it.
+      const glow = context.createRadialGradient(
+        center, center, baseRadius * 0.82,
+        center, center, baseRadius + maxSwell
+      );
+      glow.addColorStop(0, "transparent");
+      glow.addColorStop(0.55, color + "40");
+      glow.addColorStop(1, "transparent");
+
+      context.globalCompositeOperation = "lighter";
+      context.globalAlpha = 0.35 + energy * 0.55;
+      context.filter = "blur(6px)";
+      context.fillStyle = glow;
+      context.fill();
+      context.filter = "none";
+      context.globalCompositeOperation = "source-over";
       context.globalAlpha = 1;
     };
 
