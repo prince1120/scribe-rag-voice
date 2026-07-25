@@ -117,6 +117,12 @@ interface CustomModel {
 
 const CUSTOM_MODEL_PREFIX = "custom:";
 
+let messageCounter = 0;
+function newMessageId(): string {
+  messageCounter += 1;
+  return `msg-${Date.now()}-${messageCounter}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 
 export default function Home() {
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -890,7 +896,7 @@ export default function Home() {
     setIsLoading(true);
 
     const userMessage: Message = {
-      id: crypto.randomUUID(),
+      id: newMessageId(),
       role: "user",
       content: input,
       images: chatImages.length > 0 ? chatImages.map((i) => i.dataUrl) : undefined,
@@ -898,7 +904,7 @@ export default function Home() {
     const assistantMessage: Message = {
       // randomUUID, not Date.now(): two submits in the same millisecond
       // produced colliding keys and React reused the wrong node.
-      id: crypto.randomUUID(),
+      id: newMessageId(),
       role: "assistant",
       content: "",
     };
