@@ -213,7 +213,22 @@ Locked in by `tests/test_voice_prompts.py` (20 tests) as behavioural invariants,
 
 ### PROBLEM 6 — UI is not production-grade  🟠 HIGH (owner's explicit priority)
 
-**Status:** NOT STARTED — this is the next major piece of work.
+**Status:** IN PROGRESS. Foundation + chat surface done; shell, voice, and documents remain.
+
+**Done so far**
+- `styles/design-system.css` — spacing/type scales, warm-tinted elevation, motion capped at 260ms, real `prefers-reduced-motion` support.
+- `lib/api.ts` — typed client with `ApiError.status`, and an SSE reader that buffers across chunk boundaries (the old per-chunk parse dropped tokens whenever a frame straddled a read).
+- `components/chat/` — `citations.tsx`, `Message.tsx`, `Composer.tsx` + `styles/chat.css`.
+- `page.tsx` renders messages through `Message`; 243 lines of superseded rendering code removed. **3,695 → 3,281 lines.**
+- Verified in a browser at 1280px and 375px: no horizontal overflow at either width.
+
+**Lesson worth keeping:** before swapping any surface, diff the old markup against the replacement feature by feature. The first attempt at this swap would have silently dropped image attachments, the copy button, filtered sources, and latency metrics. Parity check first, swap second.
+
+**Next, in order**
+1. **App shell** — sidebar → off-canvas drawer under 768px. Currently the sidebar has no mobile treatment.
+2. **Composer** — not yet swapped. The old one carries drag-and-drop image attach and a preview strip that `Composer.tsx` does not implement yet; port those before replacing it.
+3. **Voice call surface** — full-screen, orb states, transcript.
+4. **Documents + settings panels.**
 
 **The problem.** `frontend/app/page.tsx` is a single 3,695-line component holding chat, documents, settings, citations, the demo gate, and model management. There is no mobile layout, no design system, and no component boundaries — which is why it is hard to make anything look polished.
 
