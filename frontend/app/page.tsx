@@ -873,27 +873,33 @@ export default function Home() {
     // If no docs uploaded AND no attached image, nothing to answer from
     if (documents.length === 0 && chatImages.length === 0) return;
 
-    const convId = await ensureConversationId();
+    // Arm the guard and paint the message BEFORE any await. Previously
+    // ensureConversationId() ran first, so a network round-trip passed with
+    // nothing on screen and isLoading still false: the message appeared to
+    // vanish, people clicked send again, and the second click sailed past the
+    // guard above. Two identical questions, two answers, double the API cost.
+    setIsLoading(true);
 
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       role: "user",
       content: input,
       images: chatImages.length > 0 ? chatImages.map((i) => i.dataUrl) : undefined,
     };
-
-    setMessages((prev) => [...prev, userMessage]);
-    setInput("");
-    setChatImages([]);
-    setIsLoading(true);
-    setShowScrollBottom(false);
-
     const assistantMessage: Message = {
-      id: (Date.now() + 1).toString(),
+      // randomUUID, not Date.now(): two submits in the same millisecond
+      // produced colliding keys and React reused the wrong node.
+      id: crypto.randomUUID(),
       role: "assistant",
       content: "",
     };
-    setMessages((prev) => [...prev, assistantMessage]);
+
+    setMessages((prev) => [...prev, userMessage, assistantMessage]);
+    setInput("");
+    setChatImages([]);
+    setShowScrollBottom(false);
+
+    const convId = await ensureConversationId();
 
     setTimeout(() => {
       if (chatScrollRef.current) {
