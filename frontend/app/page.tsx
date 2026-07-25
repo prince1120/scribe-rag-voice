@@ -40,6 +40,8 @@ import { ToastStack, type ToastItem, type ToastType } from "./Toast";
 // Relative path — Next.js rewrites (next.config.ts) proxies /api/* to the
 // FastAPI backend. This way the browser only talks to the page's own origin,
 // which makes ngrok / Vercel / any public deployment work without touching code.
+import { Message as ChatMessageView } from "./components/chat/Message";
+
 const API_BASE = "/api/v1";
 // Mirrors backend DEMO_MAX_DOCUMENTS / DEMO_TOP_K (app/config.py) — display
 // only, the backend is the source of truth and enforces these regardless.
@@ -114,249 +116,6 @@ interface CustomModel {
 
 const CUSTOM_MODEL_PREFIX = "custom:";
 
-function CitationChip({
-  label,
-  citation,
-  onOpen,
-}: {
-  label: string; // "1.1" or "1"
-  citation: Citation;
-  onOpen: (c: Citation, label: string) => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() => onOpen(citation, label)}
-      title={`${citation.filename}${citation.page_number ? ` · p.${citation.page_number}` : ""
-        } — click to view source`}
-      className="inline-flex items-center justify-center align-baseline mx-0.5 text-[11px] font-semibold rounded transition-colors"
-      style={{
-        minWidth: "22px",
-        height: "18px",
-        padding: "0 5px",
-        background: "var(--claude-accent-soft)",
-        color: "var(--claude-accent-hover)",
-        border: "1px solid var(--claude-border-strong)",
-        transform: "translateY(-1px)",
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = "var(--claude-accent)";
-        e.currentTarget.style.color = "white";
-        e.currentTarget.style.borderColor = "var(--claude-accent)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = "var(--claude-accent-soft)";
-        e.currentTarget.style.color = "var(--claude-accent-hover)";
-        e.currentTarget.style.borderColor = "var(--claude-border-strong)";
-      }}
-    >
-      {label}
-    </button>
-  );
-}
-
-function processTextForCitations(
-  text: string,
-  citations: Citation[],
-  onOpen: (c: Citation, label: string) => void
-): React.ReactNode[] {
-  const parts: React.ReactNode[] = [];
-  // Match [1.2], [1], or [Source 1.2]/[Source 1] — supports both old and new formats.
-  const regex = /\[(?:Source\s*)?(\d+(?:\.\d+)?)\]/gi;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  let key = 0;
-
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push(text.slice(lastIndex, match.index));
-    }
-    const label = match[1];
-    // Lookup: prefer display_number match (e.g. "1.2"); fall back to flat index.
-    let citation = citations.find((c) => c.display_number === label);
-    if (!citation && !label.includes(".")) {
-      citation = citations[parseInt(label, 10) - 1];
-    }
-    if (citation) {
-      parts.push(
-        <CitationChip
-          key={`c-${key++}`}
-          label={label}
-          citation={citation}
-          onOpen={onOpen}
-        />
-      );
-    } else if (citations.length > 0) {
-      // Hallucinated marker (no matching citation). Drop silently to
-      // avoid raw "[1.5]" text littering the UI.
-    } else {
-      // No citations loaded yet (still streaming) — keep raw text so the
-      // model output stays intact until the final citation list arrives.
-      parts.push(match[0]);
-    }
-    lastIndex = match.index + match[0].length;
-  }
-
-  if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex));
-  }
-
-  return parts;
-}
-
-// Walk React children; for each string child, splice in citation chips.
-function processChildren(
-  children: React.ReactNode,
-  citations: Citation[],
-  onOpen: (c: Citation, label: string) => void
-): React.ReactNode {
-  if (citations.length === 0) return children;
-  const out: React.ReactNode[] = [];
-  React.Children.forEach(children, (child, i) => {
-    if (typeof child === "string") {
-      out.push(
-        <React.Fragment key={`t-${i}`}>
-          {processTextForCitations(child, citations, onOpen)}
-        </React.Fragment>
-      );
-    } else {
-      out.push(child);
-    }
-  });
-  return out;
-}
-
-function MarkdownAnswer({
-  content,
-  citations,
-  onOpenSource,
-}: {
-  content: string;
-  citations: Citation[];
-  onOpenSource: (c: Citation, label: string) => void;
-}) {
-  const wrap = (children: React.ReactNode) =>
-    processChildren(children, citations, onOpenSource);
-
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        p: ({ children }) => (
-          <p className="mb-3 last:mb-0 leading-[1.7]">{wrap(children)}</p>
-        ),
-        ul: ({ children }) => (
-          <ul className="list-disc pl-5 mb-3 last:mb-0 space-y-1">{children}</ul>
-        ),
-        ol: ({ children }) => (
-          <ol className="list-decimal pl-5 mb-3 last:mb-0 space-y-1">
-            {children}
-          </ol>
-        ),
-        li: ({ children }) => (
-          <li className="leading-[1.7]">{wrap(children)}</li>
-        ),
-        strong: ({ children }) => (
-          <strong className="font-semibold" style={{ color: "var(--claude-text)" }}>
-            {wrap(children)}
-          </strong>
-        ),
-        em: ({ children }) => <em className="italic">{wrap(children)}</em>,
-        h1: ({ children }) => (
-          <h1
-            className="font-serif-display text-[22px] mt-4 mb-2 leading-tight"
-            style={{ color: "var(--claude-text)" }}
-          >
-            {wrap(children)}
-          </h1>
-        ),
-        h2: ({ children }) => (
-          <h2
-            className="font-serif-display text-[19px] mt-4 mb-2 leading-tight"
-            style={{ color: "var(--claude-text)" }}
-          >
-            {wrap(children)}
-          </h2>
-        ),
-        h3: ({ children }) => (
-          <h3
-            className="font-semibold text-[15px] mt-3 mb-1.5"
-            style={{ color: "var(--claude-text)" }}
-          >
-            {wrap(children)}
-          </h3>
-        ),
-        blockquote: ({ children }) => (
-          <blockquote
-            className="border-l-2 pl-3 my-3 italic"
-            style={{ borderColor: "var(--claude-accent)", color: "var(--claude-text-2)" }}
-          >
-            {children}
-          </blockquote>
-        ),
-        code: ({ children }) => (
-          <code
-            className="px-1 py-0.5 rounded text-[13px] font-mono"
-            style={{
-              background: "var(--claude-surface-2)",
-              border: "1px solid var(--claude-border)",
-            }}
-          >
-            {children}
-          </code>
-        ),
-        pre: ({ children }) => (
-          <pre
-            className="p-3 rounded-lg my-3 overflow-x-auto text-[13px] font-mono"
-            style={{
-              background: "var(--claude-surface-2)",
-              border: "1px solid var(--claude-border)",
-            }}
-          >
-            {children}
-          </pre>
-        ),
-        a: ({ children, href }) => (
-          <a
-            href={href}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline"
-            style={{ color: "var(--claude-accent-hover)" }}
-          >
-            {children}
-          </a>
-        ),
-        table: ({ children }) => (
-          <div className="overflow-x-auto my-3">
-            <table className="text-[13px] border-collapse">{children}</table>
-          </div>
-        ),
-        th: ({ children }) => (
-          <th
-            className="px-2 py-1 text-left font-semibold border"
-            style={{
-              background: "var(--claude-surface-2)",
-              borderColor: "var(--claude-border)",
-            }}
-          >
-            {children}
-          </th>
-        ),
-        td: ({ children }) => (
-          <td
-            className="px-2 py-1 border"
-            style={{ borderColor: "var(--claude-border)" }}
-          >
-            {wrap(children)}
-          </td>
-        ),
-      }}
-    >
-      {content}
-    </ReactMarkdown>
-  );
-}
 
 export default function Home() {
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -408,18 +167,6 @@ export default function Home() {
   const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
-
-  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
-  const copyMessage = async (id: string, content: string) => {
-    try {
-      await navigator.clipboard.writeText(content);
-      setCopiedMessageId(id);
-      notify("Copied to clipboard", "success");
-      setTimeout(() => setCopiedMessageId((cur) => (cur === id ? null : cur)), 1500);
-    } catch {
-      notify("Couldn't copy — your browser may be blocking clipboard access.", "error");
-    }
-  };
 
   // Set defaults initially to avoid hydration mismatch (SSR-compatible).
   // Settings and Groq Key are loaded from localStorage after mounting.
@@ -2062,9 +1809,10 @@ export default function Home() {
 
         {/* Messages */}
         <div
-          className="flex-1 overflow-y-auto relative"
+          className="flex-1 overflow-y-auto relative ds-scroll"
           ref={chatScrollRef}
           onScroll={handleChatScroll}
+          style={{ overscrollBehaviorY: "contain" }}
         >
           <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
             {messages.length === 0 && (
@@ -2122,186 +1870,24 @@ export default function Home() {
               </div>
             )}
 
-            <div className="space-y-6">
+            <div className="msg-list-inner">
               {messages.map((message) => (
-                <div key={message.id} id={`msg-${message.id}`} className="msg-enter scroll-mt-6">
-                  {message.role === "user" ? (
-                    <div className="flex justify-end">
-                      <div
-                        className="max-w-[85%] px-4 py-3 rounded-2xl rounded-tr-md shadow-sm"
-                        style={{
-                          background: "var(--claude-bubble)",
-                          color: "#F5F3EB",
-                        }}
-                      >
-                        {message.images && message.images.length > 0 && (
-                          <div
-                            className={`flex flex-wrap gap-1.5 ${message.content ? "mb-2.5" : ""
-                              }`}
-                          >
-                            {message.images.map((src, i) => (
-                              <button
-                                key={i}
-                                type="button"
-                                onClick={() => window.open(src, "_blank")}
-                                title="Open full size"
-                                className="block rounded-lg overflow-hidden hover:opacity-90 transition-opacity"
-                                style={{
-                                  width: 140,
-                                  height: 140,
-                                  border: "1px solid rgba(255,255,255,0.15)",
-                                }}
-                              >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img
-                                  src={src}
-                                  alt={`attached ${i + 1}`}
-                                  style={{
-                                    width: "100%",
-                                    height: "100%",
-                                    objectFit: "cover",
-                                    display: "block",
-                                  }}
-                                />
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        {message.content && (
-                          <p className="whitespace-pre-wrap text-[15px] leading-relaxed">
-                            {message.content}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex gap-3 items-start group">
-                      <div
-                        className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-                        style={{ background: "linear-gradient(145deg, var(--claude-accent), var(--claude-accent-hover))" }}
-                      >
-                        <ScribeMark className="w-4 h-4 text-white" />
-                      </div>
-                      <div className="flex-1 min-w-0 pt-1">
-                        <div
-                          className="text-[15px]"
-                          style={{ color: "var(--claude-text)" }}
-                        >
-                          {message.content ? (
-                            <>
-                              <MarkdownAnswer
-                                content={message.content}
-                                citations={message.annotations || []}
-                                onOpenSource={openSource}
-                              />
-                              {isLoading && message.id === messages[messages.length - 1]?.id && (
-                                <span className="streaming-cursor" title="Streaming response…" />
-                              )}
-                            </>
-                          ) : (
-                            <div className="flex flex-col gap-2 py-0.5 select-none">
-                              <div className="flex items-center gap-2 text-[13px] font-medium text-[var(--claude-muted)] ai-thinking-pulse">
-                                <Sparkles className="w-4 h-4 text-[var(--claude-accent)] animate-spin" style={{ animationDuration: '3s' }} />
-                                <span>Searching documents &amp; synthesizing answer…</span>
-                              </div>
-                              <div className="flex flex-col gap-1.5 w-full max-w-md mt-1">
-                                <div className="h-3 rounded-md ai-shimmer-bar w-[85%]" />
-                                <div className="h-3 rounded-md ai-shimmer-bar w-[65%]" />
-                                <div className="h-3 rounded-md ai-shimmer-bar w-[40%]" />
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        {message.content && (
-                          <button
-                            type="button"
-                            onClick={() => copyMessage(message.id, message.content)}
-                            title="Copy response"
-                            aria-label="Copy response"
-                            className="mt-2 inline-flex items-center gap-1.5 h-6 px-1.5 -ml-1.5 rounded-md text-[11px] font-medium opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
-                            style={{ color: "var(--claude-muted)" }}
-                            onMouseEnter={(e) => (e.currentTarget.style.color = "var(--claude-accent)")}
-                            onMouseLeave={(e) => (e.currentTarget.style.color = "var(--claude-muted)")}
-                          >
-                            {copiedMessageId === message.id ? (
-                              <>
-                                <Check className="w-3 h-3" /> Copied
-                              </>
-                            ) : (
-                              <>
-                                <Copy className="w-3 h-3" /> Copy
-                              </>
-                            )}
-                          </button>
-                        )}
-
-                        {(() => {
-                          const allCitations = message.annotations || [];
-
-                          // Find which citation IDs were actually referenced in the answer
-                          const usedIds = new Set<string>();
-                          const re = /\[(?:Source\s*)?(\d+(?:\.\d+)?)\]/gi;
-                          let m: RegExpExecArray | null;
-                          while ((m = re.exec(message.content)) !== null) {
-                            usedIds.add(m[1]);
-                          }
-
-                          const usedCitations = allCitations.filter(
-                            (c, i) => {
-                              const id = c.display_number || String(i + 1);
-                              return usedIds.has(id);
-                            }
-                          );
-
-                          if (usedCitations.length === 0 && !message.metrics) {
-                            return null;
-                          }
-
-                          return (
-                            <div
-                              className="mt-3 pt-2 border-t flex items-center flex-wrap gap-x-3 gap-y-1"
-                              style={{ borderColor: "var(--claude-border)" }}
-                            >
-                              {usedCitations.length > 0 && (
-                                <div className="flex items-center gap-1">
-                                  <span
-                                    className="text-[11px] uppercase tracking-wider font-semibold mr-1"
-                                    style={{ color: "var(--claude-muted)" }}
-                                  >
-                                    Sources
-                                  </span>
-                                  {usedCitations.map((citation, idx) => {
-                                    const label =
-                                      citation.display_number || String(idx + 1);
-                                    return (
-                                      <CitationChip
-                                        key={idx}
-                                        label={label}
-                                        citation={citation}
-                                        onOpen={openSource}
-                                      />
-                                    );
-                                  })}
-                                </div>
-                              )}
-                              {message.metrics && (
-                                <span
-                                  className="text-[11px] tabular-nums ml-auto"
-                                  style={{ color: "var(--claude-muted)" }}
-                                  title="Retrieval = embed + search + rerank. TTFT = time to first token (includes retrieval + LLM prefill)."
-                                >
-                                  retrieval {message.metrics.retrieval_ms}ms
-                                  {" · "}TTFT {message.metrics.ttft_ms}ms
-                                  {" · "}total {message.metrics.total_ms}ms
-                                </span>
-                              )}
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    </div>
-                  )}
+                <div key={message.id} id={`msg-${message.id}`} className="scroll-mt-6">
+                  <ChatMessageView
+                    message={{
+                      id: message.id,
+                      role: message.role,
+                      content: message.content,
+                      citations: message.annotations,
+                      images: message.images,
+                      metrics: message.metrics,
+                      streaming:
+                        isLoading &&
+                        message.role === "assistant" &&
+                        message.id === messages[messages.length - 1]?.id,
+                    }}
+                    onOpenCitation={openSource}
+                  />
                 </div>
               ))}
             </div>

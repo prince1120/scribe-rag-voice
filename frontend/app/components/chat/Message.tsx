@@ -21,6 +21,8 @@ export interface ChatMessage {
   citations?: Citation[];
   /** Data URLs for images the user attached to their own turn. */
   images?: string[];
+  /** Latency breakdown for the turn, shown beside the sources. */
+  metrics?: { retrieval_ms: number; ttft_ms: number; total_ms: number } | null;
   error?: string | null;
   streaming?: boolean;
 }
@@ -54,12 +56,53 @@ function referencedCitations(content: string, citations: Citation[]): Citation[]
   });
 }
 
+/** The wait before the first token.
+ *
+ *  This is the slowest moment in the app — retrieval runs embedding, hybrid
+ *  search, and a cross-encoder rerank before the model produces anything. Bare
+ *  dots would say nothing during it. Naming the work explains the delay, and
+ *  skeleton bars preview the shape of the answer so the layout doesn't jump
+ *  when text lands.
+ */
 export function ThinkingIndicator() {
   return (
-    <div className="msg-thinking" role="status" aria-label="Thinking">
-      <span className="ds-thinking-dot" />
-      <span className="ds-thinking-dot" />
-      <span className="ds-thinking-dot" />
+    <div className="msg-thinking" role="status">
+      <div className="msg-thinking-label">
+        <span className="msg-thinking-dots" aria-hidden="true">
+          <span className="ds-thinking-dot" />
+          <span className="ds-thinking-dot" />
+          <span className="ds-thinking-dot" />
+        </span>
+        Searching your documents…
+      </div>
+      <div className="msg-thinking-skeleton" aria-hidden="true">
+        <span className="ds-skeleton" style={{ width: "88%" }} />
+        <span className="ds-skeleton" style={{ width: "64%" }} />
+        <span className="ds-skeleton" style={{ width: "42%" }} />
+      </div>
+    </div>
+  );
+}
+
+/** Scribe's mark, shown beside each answer. */
+function AssistantAvatar() {
+  return (
+    <div className="msg-avatar" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none">
+        <path
+          d="M7 4h7l4 4v12H7z"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinejoin="round"
+        />
+        <path d="M14 4v4h4" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        <path
+          d="M10 12h5M10 15.5h5"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+        />
+      </svg>
     </div>
   );
 }
@@ -178,6 +221,7 @@ export function Message({
 
   return (
     <div className="msg msg-assistant ds-animate-rise">
+      <AssistantAvatar />
       <div
         className="msg-body"
         // Streaming text is announced politely so a screen reader user hears
@@ -217,9 +261,11 @@ export function Message({
 
       {/* Sources are listed under the answer as well as inline, so they can be
           scanned without hunting for chips in the prose. */}
-      {!message.streaming && sources.length > 0 && (
+      {!message.streaming && (sources.length > 0 || message.metrics) && (
         <div className="msg-sources">
-          <span className="msg-sources-label">Sources</span>
+          {sources.length > 0 && (
+            <span className="msg-sources-label">Sources</span>
+          )}
           <div className="msg-sources-list">
             {sources.map((citation) => (
               <button
@@ -236,6 +282,16 @@ export function Message({
               </button>
             ))}
           </div>
+
+          {message.metrics && (
+            <span
+              className="msg-metrics"
+              title="Retrieval = embed + search + rerank. TTFT = time to first token, which includes retrieval plus model prefill."
+            >
+              {message.metrics.retrieval_ms}ms retrieval · {message.metrics.ttft_ms}ms
+              {" "}first token · {message.metrics.total_ms}ms total
+            </span>
+          )}
         </div>
       )}
     </div>

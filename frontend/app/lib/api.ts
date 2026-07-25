@@ -21,11 +21,15 @@ export interface Citation {
   document_id: string;
   filename: string;
   chunk_id: string;
-  page_number?: number | null;
-  chunk_index?: number | null;
+  page_number?: number;
+  chunk_index?: number;
   score: number;
+  /** Short preview (≤240 chars) shown on source cards. */
   snippet: string;
-  content: string;
+  /** Full chunk text, shown in the source panel. Optional because the
+   *  non-streaming /query response returns only the snippet. */
+  content?: string;
+  /** Hierarchical id like "1.1" — document 1, chunk 1. */
   display_number?: string;
 }
 
