@@ -76,6 +76,23 @@ async def delete_document_record(document_id: str, tenant_id: str) -> None:
             await session.commit()
 
 
+async def list_expired_documents(
+    cutoff: datetime, include_owner: bool, owner_tenant_id: str
+) -> List[DocumentRecord]:
+    """Documents last touched before `cutoff`.
+
+    Returned rather than deleted here so the caller can remove each one's
+    vectors and file first — deleting the row on its own is what strands
+    orphaned chunks in the vector store.
+    """
+    async with async_session() as session:
+        query = select(DocumentRecord).where(DocumentRecord.created_at < cutoff)
+        if not include_owner:
+            query = query.where(DocumentRecord.tenant_id != owner_tenant_id)
+        result = await session.execute(query)
+        return list(result.scalars().all())
+
+
 async def get_or_create_conversation(conversation_id: str, tenant_id: str) -> None:
     async with async_session() as session:
         result = await session.execute(

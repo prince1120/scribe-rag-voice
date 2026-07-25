@@ -123,6 +123,19 @@ class Settings(BaseSettings):
     SUPABASE_BUCKET: str = "documents"
     UPLOAD_DIR: str = "uploads"
 
+    # Document retention. Uploads are session-scoped: the file itself lives on
+    # a disk that a redeploy wipes, but the Postgres row and the Qdrant vectors
+    # do not — so without a sweep the UI keeps listing documents whose file is
+    # gone, and they fail only when downloaded, edited, or asked about as an
+    # image. Worse than disappearing, because it looks like it still works.
+    DOCUMENT_TTL_HOURS: int = 24
+    # 0 disables the sweep entirely.
+    CLEANUP_INTERVAL_MINUTES: int = 60
+    # Owner documents are exempt by default: the passcode holder is the person
+    # curating a library, not a passing visitor, and silently deleting it would
+    # be an unpleasant surprise. Set True for a purely ephemeral deployment.
+    CLEANUP_INCLUDES_OWNER: bool = False
+
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     CORS_METHODS: List[str] = ["GET", "POST", "DELETE", "OPTIONS"]

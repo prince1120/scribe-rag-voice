@@ -2,7 +2,7 @@ import asyncio
 import logging
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,6 +25,7 @@ from app.api.routes import router as api_router  # noqa: E402
 from app.api.session_routes import router as session_router  # noqa: E402
 from app.api.voice_routes import router as voice_router  # noqa: E402
 from app.database import init_db  # noqa: E402
+from app.services.cleanup import run_cleanup_loop  # noqa: E402
 from app.services.voice.worker_supervisor import ensure_worker_running  # noqa: E402
 
 
@@ -67,7 +68,19 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("LiveKit isn't configured — skipping voice worker auto-start.")
 
-    yield
+    # Sweeps documents whose file is gone or whose TTL has passed, so the three
+    # stores (file, Postgres row, Qdrant vectors) can't drift apart. Runs as a
+    # background task — a slow first sweep must not delay readiness.
+    cleanup_task = asyncio.create_task(run_cleanup_loop())
+
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        # Awaited so the task is actually finished before the loop closes,
+        # rather than leaving asyncio to complain about a pending task.
+        with suppress(asyncio.CancelledError):
+            await cleanup_task
 
 
 app = FastAPI(
