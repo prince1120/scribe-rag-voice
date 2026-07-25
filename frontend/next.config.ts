@@ -28,6 +28,15 @@ const nextConfig: NextConfig = {
     "*.trycloudflare.com",
     // Explicit fallback — current ngrok URL
     "58c1-223-178-214-156.ngrok-free.app",
+    // LAN addresses, for testing on a phone over the same Wi-Fi. Without the
+    // host here Next blocks /_next/* and HMR, so the page server-renders but
+    // never hydrates — it sits on the loading state forever, which looks like
+    // a hung app rather than a blocked asset.
+    "172.23.101.186",
+    "192.168.*.*",
+    "172.16.*.*",
+    "172.23.*.*",
+    "10.*.*.*",
     ...envOrigins,
   ],
 };
