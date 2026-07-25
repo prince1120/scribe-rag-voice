@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -91,6 +92,30 @@ if not settings.APP_ACCESS_PASSCODE:
         "it on behalf of anonymous callers. Set APP_ACCESS_PASSCODE and "
         "SESSION_SECRET before deploying anywhere public."
     )
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Last line of defence for anything a route didn't catch.
+
+    The exception text stays in the logs. Returning it to the caller — which
+    routes used to do via `HTTPException(500, detail=str(e))` — leaks database
+    URLs, file paths, and library internals to anyone who can trigger an error.
+    The request id goes back instead, so a user can quote it and it can be
+    found in the logs.
+    """
+    request_id = request_id_ctx.get()
+    logger.exception(
+        "Unhandled error on %s %s", request.method, request.url.path
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Internal server error",
+            "request_id": request_id,
+        },
+        headers={"X-Request-ID": request_id},
+    )
+
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)

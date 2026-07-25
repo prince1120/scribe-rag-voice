@@ -15,6 +15,7 @@ from app.models.schemas import (
     PasteTextRequest, DocumentContentResponse, DocumentContentUpdate,
 )
 from app.config import settings
+from app.logging_config import request_id_ctx
 from app.auth import verify_api_key
 from app.identity import Identity, get_identity
 from app.rate_limit import limiter
@@ -158,10 +159,13 @@ async def _ingest_file(
             _remove_quiet(file_path)
             raise HTTPException(
                 status_code=422,
+                # Previously blamed a missing Tesseract binary, which sent
+                # users chasing an install this app has never needed — OCR
+                # runs through a vision model (vision_ocr.py), not Tesseract.
                 detail=(
-                    "Could not extract any text from this file. "
-                    "If it's a scanned PDF or image-only document, make sure "
-                    "the Tesseract OCR binary is installed."
+                    "No readable text could be extracted from this file. If it "
+                    "is a scanned document or photo, check that the text is in "
+                    "focus and right-side up, then try again."
                 ),
             )
 
@@ -428,9 +432,14 @@ async def query_documents(
             llm_ms=llm_ms,
         )
 
-    except Exception as e:
-        logger.error(f"Error querying: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        # Detail deliberately withheld: str(e) here has included database URLs
+        # and filesystem paths. The traceback goes to the logs with the
+        # request id attached.
+        logger.exception("Error querying")
+        raise HTTPException(status_code=500, detail="Failed to answer the query")
 
 
 @router.post("/query/stream", dependencies=[Depends(verify_api_key)])
@@ -545,24 +554,45 @@ async def query_stream(
             first_token_at: Optional[float] = None
             if body.conversation_id:
                 _persist("user", body.query)
-            for token in rag_pipeline.generate_streaming_response(
-                query=body.query,
-                context_chunks=results,
-                conversation_history=conversation_history,
-                attached_images=body.attached_images,
-                temperature=body.temperature if body.temperature is not None else 0.1,
-                max_tokens=body.max_tokens or 800,
-                groq_api_key=x_user_groq_key,
-                override_model=body.model,
-                custom_base_url=x_custom_llm_base_url,
-                custom_api_key=x_custom_llm_key,
-            ):
-                if first_token_at is None:
-                    first_token_at = time.time()
-                full_response += token
-                # Send each token as JSON with 'text' field
-                data = json.dumps({"text": token})
-                yield f"data: {data}\n\n"
+
+            try:
+                for token in rag_pipeline.generate_streaming_response(
+                    query=body.query,
+                    context_chunks=results,
+                    conversation_history=conversation_history,
+                    attached_images=body.attached_images,
+                    temperature=body.temperature if body.temperature is not None else 0.1,
+                    max_tokens=body.max_tokens or 800,
+                    groq_api_key=x_user_groq_key,
+                    override_model=body.model,
+                    custom_base_url=x_custom_llm_base_url,
+                    custom_api_key=x_custom_llm_key,
+                ):
+                    if first_token_at is None:
+                        first_token_at = time.time()
+                    full_response += token
+                    # Send each token as JSON with 'text' field
+                    data = json.dumps({"text": token})
+                    yield f"data: {data}\n\n"
+            except Exception:
+                # The response already started with a 200, so raising here just
+                # drops the connection and the client waits forever. An error
+                # frame is the only way to tell it something went wrong.
+                logger.exception("Streaming generation failed mid-response")
+                error = json.dumps({
+                    "error": (
+                        "The answer was interrupted. This is usually a rate "
+                        "limit or a model timeout — please try again."
+                    ),
+                    "request_id": request_id_ctx.get(),
+                })
+                yield f"data: {error}\n\n"
+                # Whatever was generated before the failure is still worth
+                # keeping: the user saw it, so the transcript should match.
+                if body.conversation_id and full_response:
+                    _persist("assistant", full_response, citations)
+                yield "data: [DONE]\n\n"
+                return
 
             if body.conversation_id:
                 _persist("assistant", full_response, citations)
@@ -585,9 +615,11 @@ async def query_stream(
 
         return StreamingResponse(generate(), media_type="text/event-stream")
         
-    except Exception as e:
-        logger.error(f"Error in stream query: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error in stream query")
+        raise HTTPException(status_code=500, detail="Failed to answer the query")
 
 
 @router.get("/documents", response_model=List[DocumentUploadResponse], dependencies=[Depends(verify_api_key)])
