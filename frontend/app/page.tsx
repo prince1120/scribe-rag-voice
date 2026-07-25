@@ -873,6 +873,15 @@ export default function Home() {
     // If no docs uploaded AND no attached image, nothing to answer from
     if (documents.length === 0 && chatImages.length === 0) return;
 
+    // Unchecking every source used to send document_ids: null, which the
+    // backend reads as "no filter" and answers from ALL documents — the exact
+    // opposite of what unchecking them means. Refuse instead.
+    const selectedCount = documents.filter((d) => d.selected !== false).length;
+    if (documents.length > 0 && selectedCount === 0 && chatImages.length === 0) {
+      notify("Select at least one source to search, or attach an image.", "info");
+      return;
+    }
+
     // Arm the guard and paint the message BEFORE any await. Previously
     // ensureConversationId() ran first, so a network round-trip passed with
     // nothing on screen and isLoading still false: the message appeared to
