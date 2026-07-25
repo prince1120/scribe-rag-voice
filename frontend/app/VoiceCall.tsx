@@ -1,7 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, Track, createAudioAnalyser } from "livekit-client";
+
+import { VoiceSpectrum } from "./components/voice/VoiceSpectrum";
+import { useAudioDeviceSwitching } from "./components/voice/useAudioDeviceSwitching";
+import { personaForVoice } from "./components/voice/voicePersona";
 import type { RemoteTrack, RemoteAudioTrack, Participant, TranscriptionSegment } from "livekit-client";
 import { PhoneOff, Mic, MicOff, X, Loader2, AudioLines, Check, Pencil, Play, Square, BookOpen, SlidersHorizontal, Sparkles, Radio, Volume2 } from "lucide-react";
 import type { ToastType } from "./Toast";
@@ -190,6 +194,8 @@ export function VoiceCallModal({
   };
 
   const roomRef = useRef<Room | null>(null);
+  const [activeRoom, setActiveRoom] = useState<Room | null>(null);
+  const [deviceNotice, setDeviceNotice] = useState<string | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const orbRef = useRef<HTMLDivElement>(null);
   const glowRef = useRef<HTMLDivElement>(null);
@@ -244,6 +250,8 @@ export function VoiceCallModal({
     agentAnalyserRef.current = null;
     roomRef.current?.disconnect();
     roomRef.current = null;
+    setActiveRoom(null);
+    setDeviceNotice(null);
     setActiveSpeaker(null);
     setAgentState(null);
     setActiveTab("call");
@@ -417,6 +425,7 @@ export function VoiceCallModal({
 
       const room = new Room();
       roomRef.current = room;
+      setActiveRoom(room);
 
       room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
         if (track.kind !== Track.Kind.Audio) return;
@@ -562,6 +571,35 @@ export function VoiceCallModal({
     setMuted(next);
   };
 
+  // Whichever side is speaking owns the ring. Read through a callback rather
+  // than captured state so a track republished mid-call is picked up.
+  const getActiveAnalyser = useCallback((): AnalyserNode | null => {
+    const local = localAnalyserRef.current;
+    const agent = agentAnalyserRef.current;
+    const localVolume = local?.calculateVolume() ?? 0;
+    const agentVolume = agent?.calculateVolume() ?? 0;
+    if (agentVolume >= localVolume) return agent?.analyser ?? null;
+    return local?.analyser ?? null;
+  }, []);
+
+  // Clear the hardware notice after a few seconds so it does not sit there
+  // for the rest of the call.
+  useEffect(() => {
+    if (!deviceNotice) return;
+    const timer = setTimeout(() => setDeviceNotice(null), 4000);
+    return () => clearTimeout(timer);
+  }, [deviceNotice]);
+
+  useAudioDeviceSwitching({
+    room: activeRoom,
+    enabled: state === "connected",
+    onSwitch: (label, reason) => {
+      setDeviceNotice(
+        reason === "connected" ? `Switched to ${label}` : `${label} disconnected — using default`
+      );
+    },
+  });
+
   if (!isOpen) return null;
 
   const agentActive = agentState === "speaking" || activeSpeaker === "agent";
@@ -583,7 +621,7 @@ export function VoiceCallModal({
           ? "Muted"
           : "Listening";
 
-  const subLabel = !live
+  const subLabel = deviceNotice ? deviceNotice : !live
     ? state === "connecting"
       ? "Setting up your voice space…"
       : state === "error"
@@ -599,11 +637,16 @@ export function VoiceCallModal({
 
   // Palette shifts with who holds the floor: indigo when the agent speaks,
   // warm gold when thinking, warm neutral otherwise.
-  const orbCore = agentActive
-    ? "var(--claude-accent)"
-    : agentThinking
-      ? "#d4a73b"
-      : "#6b74bd";
+  // The chosen voice sets the orb identity; state only modulates it. Thinking
+  // keeps its own amber so "working" stays legible across every voice, and
+  // idle is the persona colour softened rather than a different hue — the orb
+  // should look like the same character whether or not it is talking.
+  const persona = personaForVoice(selectedVoice);
+  const orbCore = agentThinking
+    ? "#d4a73b"
+    : agentActive
+      ? persona.core
+      : persona.accent;
 
   return (
     <div
@@ -696,6 +739,16 @@ export function VoiceCallModal({
                 </>
               )}
 
+              {/* Frequency ring — real spectrum of the active speaker */}
+              {live && (
+                <VoiceSpectrum
+                  getAnalyser={getActiveAnalyser}
+                  color={orbCore}
+                  size={240}
+                  active={agentActive || (userActive && !muted)}
+                />
+              )}
+
               {/* Soft outer glow */}
               <div
                 ref={glowRef}
@@ -731,17 +784,20 @@ export function VoiceCallModal({
                 <div className={`absolute rounded-full voice-blob-a ${live ? "" : "voice-breathe"}`}
                   style={{
                     width: "70%", height: "70%", top: "8%", left: "6%",
-                    background: "radial-gradient(circle, rgba(255,255,255,0.9) 0%, transparent 70%)", filter: "blur(6px)"
+                    background: "radial-gradient(circle, rgba(255,255,255,0.9) 0%, transparent 70%)", filter: "blur(6px)",
+                    animationDuration: live ? `${7 / persona.drift}s` : `${persona.breathe}s`,
                   }} />
                 <div className="absolute rounded-full voice-blob-b"
                   style={{
                     width: "60%", height: "60%", bottom: "6%", right: "8%",
-                    background: `radial-gradient(circle, ${orbCore} 0%, transparent 72%)`, filter: "blur(8px)", mixBlendMode: "overlay"
+                    background: `radial-gradient(circle, ${orbCore} 0%, transparent 72%)`, filter: "blur(8px)", mixBlendMode: "overlay",
+                    animationDuration: `${9 / persona.drift}s`,
                   }} />
                 <div className="absolute rounded-full voice-blob-c"
                   style={{
                     width: "50%", height: "50%", top: "24%", right: "18%",
-                    background: "radial-gradient(circle, rgba(255,255,255,0.7) 0%, transparent 70%)", filter: "blur(7px)"
+                    background: "radial-gradient(circle, rgba(255,255,255,0.7) 0%, transparent 70%)", filter: "blur(7px)",
+                    animationDuration: `${11 / persona.drift}s`,
                   }} />
 
                 {/* Center state icon */}
