@@ -50,8 +50,10 @@ export function VoiceSpectrum({ getAnalyser, color, size, active }: VoiceSpectru
     context.scale(dpr, dpr);
 
     const center = size / 2;
-    const baseRadius = center * 0.72;
-    const maxSwell = center * 0.2;
+    // Sits clearly outside the 176px orb (88px radius) — at 0.72 the curve
+    // grazed the orb edge and read as clipping it rather than surrounding it.
+    const baseRadius = center * 0.86;
+    const maxSwell = center * 0.13;
     let spectrum: Uint8Array | null = null;
 
     const draw = () => {
@@ -117,21 +119,14 @@ export function VoiceSpectrum({ getAnalyser, color, size, active }: VoiceSpectru
 
       const energy = levels.reduce((a, b) => a + b, 0) / POINTS;
 
-      // Soft fill inside the curve, brightest at the rim.
-      const gradient = context.createRadialGradient(
-        center, center, baseRadius * 0.55,
-        center, center, baseRadius + maxSwell
-      );
-      gradient.addColorStop(0, "transparent");
-      gradient.addColorStop(1, color);
-      context.globalAlpha = 0.1 + energy * 0.22;
-      context.fillStyle = gradient;
-      context.fill();
-
-      context.globalAlpha = 0.35 + energy * 0.5;
+      // Stroke only. A filled curve overlapped the orb and dulled it.
+      context.globalAlpha = 0.3 + energy * 0.45;
       context.strokeStyle = color;
-      context.lineWidth = 1.5;
+      context.lineWidth = 1.75;
+      context.shadowBlur = 12 + energy * 20;
+      context.shadowColor = color;
       context.stroke();
+      context.shadowBlur = 0;
       context.globalAlpha = 1;
     };
 
