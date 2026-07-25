@@ -1,0 +1,935 @@
+from fastapi import APIRouter, UploadFile, File, Header, HTTPException, Depends, Request
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import StreamingResponse, FileResponse
+from typing import List, Optional
+import asyncio
+import os
+import json
+from uuid import uuid4
+from datetime import datetime
+import logging
+
+from app.models.schemas import (
+    QueryRequest, QueryResponse, DocumentUploadResponse,
+    Conversation, ConversationMessage, HealthResponse, SourceCitation,
+    PasteTextRequest, DocumentContentResponse, DocumentContentUpdate,
+)
+from app.config import settings
+from app.auth import verify_api_key
+from app.rate_limit import limiter
+from app import repositories
+from app.utils import sanitize_filename, assign_display_numbers, derive_demo_tenant_id
+from app.services import content_editor
+from app.services.document_processor import DocumentProcessor
+from app.services.embedding_service import EmbeddingService
+from app.services.sparse_encoder import SparseEncoder
+from app.services.vector_store import VectorStoreService
+from app.services.reranker import Reranker
+from app.services.rag_pipeline import RAGPipeline
+from app.services.vision_ocr import VisionOCR
+from app.services.conversation_service import ConversationService
+from app.services.tenant_service import resolve_tenant_context, get_tenant_context, TenantContext
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+# Initialize services
+embedding_service = EmbeddingService(model_name=settings.EMBEDDING_MODEL)
+sparse_encoder = SparseEncoder()
+reranker = Reranker()
+vector_store = VectorStoreService(
+    host=settings.QDRANT_HOST,
+    port=settings.QDRANT_PORT,
+    collection_name=settings.QDRANT_COLLECTION_NAME,
+    vector_size=embedding_service.dimension,
+    api_key=settings.QDRANT_API_KEY
+)
+rag_pipeline = RAGPipeline(
+    groq_api_key=settings.GROQ_API_KEY,
+    model=settings.GROQ_MODEL,
+    vision_model=settings.GROQ_VISION_MODEL,
+)
+conversation_service = ConversationService(
+    redis_host=settings.REDIS_HOST,
+    redis_port=settings.REDIS_PORT,
+    redis_password=settings.REDIS_PASSWORD
+)
+vision_ocr = VisionOCR(groq_api_key=settings.GROQ_API_KEY)
+document_processor = DocumentProcessor(
+    chunk_size=settings.CHUNK_SIZE,
+    chunk_overlap=settings.CHUNK_OVERLAP,
+    vision_ocr=vision_ocr,
+    embedding_service=embedding_service,
+)
+
+
+def _effective_tenant(
+    tenant_id: str = "default",
+    x_user_groq_key: Optional[str] = None,
+    x_user_sarvam_key: Optional[str] = None,
+    x_client_id: Optional[str] = None,
+) -> str:
+    """Resolve isolated cryptographic tenant ID using tenant_service."""
+    ctx = resolve_tenant_context(
+        tenant_id=tenant_id,
+        x_user_groq_key=x_user_groq_key,
+        x_user_sarvam_key=x_user_sarvam_key,
+        x_client_id=x_client_id,
+    )
+    return ctx.tenant_id
+
+
+async def _enforce_demo_document_cap(tenant_id: str, x_user_groq_key: Optional[str]):
+    if not x_user_groq_key:
+        return
+    existing = await repositories.list_documents(tenant_id)
+    if len(existing) >= settings.DEMO_MAX_DOCUMENTS:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Demo limit reached: up to {settings.DEMO_MAX_DOCUMENTS} documents "
+                "per session. Delete one to upload another."
+            ),
+        )
+
+
+@router.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Health check / readiness probe. Checks every real dependency this
+    service needs: vector store, LLM client, DB, and cache. `redis` is
+    reported `degraded` rather than `unhealthy` because ConversationService
+    transparently falls back to in-memory storage — the app still works,
+    just without durable multi-instance conversation memory.
+    """
+    components = {
+        "api": "healthy",
+        "vector_store": "unknown",
+        "embedding_service": "healthy",
+        "llm_client": "unknown",
+        "database": "unknown",
+        "redis": "unknown",
+    }
+
+    try:
+        await run_in_threadpool(vector_store.get_collection_info)
+        components["vector_store"] = "healthy"
+    except Exception as e:
+        components["vector_store"] = f"unhealthy: {str(e)}"
+
+    try:
+        # Verifies the Groq SDK client + tokenizer are usable. A full
+        # roundtrip to the Groq API isn't done here — that would burn quota
+        # on every health check / liveness probe.
+        await run_in_threadpool(rag_pipeline.count_tokens, "test")
+        components["llm_client"] = "healthy"
+    except Exception as e:
+        components["llm_client"] = f"unhealthy: {str(e)}"
+
+    try:
+        async with repositories.async_session() as session:
+            await session.execute(repositories.select(1))
+        components["database"] = "healthy"
+    except Exception as e:
+        components["database"] = f"unhealthy: {str(e)}"
+
+    redis_ok = await run_in_threadpool(conversation_service.ping)
+    components["redis"] = "healthy" if redis_ok else "degraded (using in-memory fallback)"
+
+    unhealthy = any(v.startswith("unhealthy") for v in components.values())
+    status = "unhealthy" if unhealthy else (
+        "degraded" if any(v.startswith("degraded") for v in components.values()) else "healthy"
+    )
+
+    return HealthResponse(status=status, components=components)
+
+
+def _remove_quiet(path: str):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+async def _ingest_file(
+    file_path: str, document_id: str, safe_name: str, tenant_id: str, file_size: int,
+) -> DocumentUploadResponse:
+    """Shared pipeline: process a file already on disk into chunks, embed,
+    upsert into the vector store, and persist its metadata. Used by both
+    the file-upload endpoint and the paste-text endpoint (which writes the
+    pasted content to a .md file first, then shares this same path)."""
+    try:
+        metadata = {
+            "document_id": document_id,
+            "filename": safe_name,
+            "tenant_id": tenant_id,
+            "upload_timestamp": datetime.now().isoformat(),
+            "file_size": file_size,
+        }
+
+        chunks = await run_in_threadpool(document_processor.process_file, file_path, metadata)
+
+        if not chunks:
+            _remove_quiet(file_path)
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Could not extract any text from this file. "
+                    "If it's a scanned PDF or image-only document, make sure "
+                    "the Tesseract OCR binary is installed."
+                ),
+            )
+
+        # Generate dense + sparse embeddings for hybrid retrieval
+        texts = [chunk["content"] for chunk in chunks]
+        dense_embeddings = await run_in_threadpool(embedding_service.encode_documents, texts)
+        sparse_embeddings = await run_in_threadpool(sparse_encoder.encode_documents, texts)
+
+        points = []
+        for chunk, dense, sparse in zip(chunks, dense_embeddings, sparse_embeddings):
+            points.append({
+                "id": chunk["chunk_id"],
+                "dense_vector": dense,
+                "sparse_vector": sparse,
+                "payload": {
+                    "chunk_id": chunk["chunk_id"],
+                    "document_id": chunk["document_id"],
+                    "content": chunk["content"],
+                    "chunk_index": chunk["chunk_index"],
+                    "tenant_id": tenant_id,
+                    "filename": safe_name,
+                    **chunk.get("metadata", {})
+                }
+            })
+
+        await run_in_threadpool(vector_store.upsert_points, points)
+
+        await repositories.save_document(
+            document_id=document_id,
+            tenant_id=tenant_id,
+            filename=safe_name,
+            file_size=file_size,
+            chunk_count=len(chunks),
+        )
+
+        return DocumentUploadResponse(
+            document_id=document_id,
+            filename=safe_name,
+            status="processed",
+            message=f"Successfully processed {len(chunks)} chunks",
+            chunk_count=len(chunks)
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error ingesting document: {e}")
+        _remove_quiet(file_path)
+        raise HTTPException(status_code=500, detail="Failed to process document")
+
+
+@router.post(
+    "/documents/upload",
+    response_model=DocumentUploadResponse,
+    dependencies=[Depends(verify_api_key)],
+)
+@limiter.limit(f"{settings.RATE_LIMIT_UPLOAD_PER_MINUTE}/minute")
+async def upload_document(
+    request: Request, file: UploadFile = File(...), tenant_id: str = "default",
+    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
+    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+):
+    """Upload and process a document."""
+    tenant_id = _effective_tenant(tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+    await _enforce_demo_document_cap(tenant_id, x_user_groq_key)
+
+    safe_name = sanitize_filename(file.filename)
+    ext = os.path.splitext(safe_name)[1].lower()
+    if ext not in settings.ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(settings.ALLOWED_UPLOAD_EXTENSIONS)}",
+        )
+
+    document_id = str(uuid4())
+    upload_dir = "uploads"
+    os.makedirs(upload_dir, exist_ok=True)
+    file_path = os.path.join(upload_dir, f"{document_id}_{safe_name}")
+
+    max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
+    size = 0
+    try:
+        with open(file_path, "wb") as buffer:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File exceeds max size of {settings.MAX_FILE_SIZE_MB}MB",
+                    )
+                buffer.write(chunk)
+    except HTTPException:
+        _remove_quiet(file_path)
+        raise
+    except Exception as e:
+        _remove_quiet(file_path)
+        logger.error(f"Error saving upload: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save upload")
+
+    return await _ingest_file(file_path, document_id, safe_name, tenant_id, size)
+
+
+@router.post(
+    "/documents/paste",
+    response_model=DocumentUploadResponse,
+    dependencies=[Depends(verify_api_key)],
+)
+@limiter.limit(f"{settings.RATE_LIMIT_UPLOAD_PER_MINUTE}/minute")
+async def paste_text(
+    request: Request, body: PasteTextRequest,
+    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
+    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+):
+    """Ingest pasted text as a document, through the same pipeline as a file upload."""
+    tenant_id = _effective_tenant(body.tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+    await _enforce_demo_document_cap(tenant_id, x_user_groq_key)
+
+    document_id = str(uuid4())
+    safe_name = sanitize_filename(body.title) or "pasted-text"
+    if not safe_name.lower().endswith(".md"):
+        safe_name += ".md"
+
+    upload_dir = "uploads"
+    os.makedirs(upload_dir, exist_ok=True)
+    file_path = os.path.join(upload_dir, f"{document_id}_{safe_name}")
+
+    content_bytes = body.content.encode("utf-8")
+    max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
+    if len(content_bytes) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Pasted content exceeds max size of {settings.MAX_FILE_SIZE_MB}MB",
+        )
+
+    try:
+        with open(file_path, "wb") as f:
+            f.write(content_bytes)
+    except Exception as e:
+        _remove_quiet(file_path)
+        logger.error(f"Error saving pasted text: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save pasted text")
+
+    return await _ingest_file(file_path, document_id, safe_name, tenant_id, len(content_bytes))
+
+
+@router.post("/query", response_model=QueryResponse, dependencies=[Depends(verify_api_key)])
+@limiter.limit(f"{settings.RATE_LIMIT_QUERY_PER_MINUTE}/minute")
+async def query_documents(
+    request: Request, body: QueryRequest,
+    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
+    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    x_custom_llm_base_url: Optional[str] = Header(default=None, alias="X-Custom-LLM-Base-URL"),
+    x_custom_llm_key: Optional[str] = Header(default=None, alias="X-Custom-LLM-Key"),
+):
+    """Query documents with RAG."""
+    try:
+        import time
+        start_time = time.time()
+
+        tenant_id = _effective_tenant(body.tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+
+        # Get conversation history if available
+        conversation_history = None
+        if body.conversation_id:
+            conversation_history = conversation_service.get_conversation_history(
+                body.conversation_id
+            )
+
+        # Hybrid retrieval: dense + BM25 sparse, fused by RRF
+        # Dense and sparse query encoding are independent — run concurrently
+        # instead of paying two sequential model calls.
+        query_embedding, sparse_query = await asyncio.gather(
+            run_in_threadpool(embedding_service.encode_query, body.query),
+            run_in_threadpool(sparse_encoder.encode_query, body.query),
+        )
+
+        # Demo sessions (pasted Groq key) get a fixed, smaller top_k regardless
+        # of what the client requests.
+        final_top_k = settings.DEMO_TOP_K if x_user_groq_key else (body.top_k or settings.RETRIEVAL_TOP_K)
+        # Over-fetch from hybrid retrieval, then narrow via cross-encoder rerank
+        hybrid_results = await run_in_threadpool(
+            vector_store.search,
+            query_vector=query_embedding,
+            sparse_vector=sparse_query,
+            limit=max(final_top_k * 3, 20),
+            tenant_id=tenant_id,
+            filters=body.filters,
+            document_ids=body.document_ids,
+        )
+
+        # Cross-encoder rerank for final ordering
+        results = await run_in_threadpool(reranker.rerank, body.query, hybrid_results, top_k=final_top_k)
+
+        # Hierarchical citation numbering: doc.chunk (e.g. 1.1, 1.2, 2.1)
+        results = assign_display_numbers(results)
+        retrieval_ms = int((time.time() - start_time) * 1000)
+
+        if not results:
+            return QueryResponse(
+                answer="I don't have enough information in the provided documents to answer this question.",
+                citations=[],
+                conversation_id=body.conversation_id or "",
+                processing_time_ms=int((time.time() - start_time) * 1000),
+                retrieval_ms=retrieval_ms,
+            )
+
+        # Generate response
+        llm_start = time.time()
+        answer = await run_in_threadpool(
+            rag_pipeline.generate_response,
+            query=body.query,
+            context_chunks=results,
+            conversation_history=conversation_history,
+            attached_images=body.attached_images,
+            temperature=body.temperature if body.temperature is not None else 0.1,
+            max_tokens=body.max_tokens or 800,
+            groq_api_key=x_user_groq_key,
+            override_model=body.model,
+            custom_base_url=x_custom_llm_base_url,
+            custom_api_key=x_custom_llm_key,
+        )
+        llm_ms = int((time.time() - llm_start) * 1000)
+
+        # Build citations
+        citations = [
+            SourceCitation(
+                document_id=r["payload"].get("document_id", ""),
+                filename=r["payload"].get("filename", "Unknown"),
+                chunk_id=r["payload"].get("chunk_id", ""),
+                page_number=r["payload"].get("page_number"),
+                score=r["score"],
+                snippet=r["payload"].get("content", "")[:200] + "..."
+            )
+            for r in results[:5]
+        ]
+        
+        # Update conversation if provided (Redis/in-memory = fast working
+        # context for the LLM, DB = durable history for the UI/list endpoint)
+        if body.conversation_id:
+            conversation_service.add_message(
+                body.conversation_id, "user", body.query
+            )
+            conversation_service.add_message(
+                body.conversation_id, "assistant", answer,
+                citations=[c.dict() for c in citations]
+            )
+            await repositories.append_message(
+                body.conversation_id, tenant_id, "user", body.query
+            )
+            await repositories.append_message(
+                body.conversation_id, tenant_id, "assistant", answer,
+                citations=[c.dict() for c in citations],
+            )
+        
+        processing_time = int((time.time() - start_time) * 1000)
+
+        return QueryResponse(
+            answer=answer,
+            citations=citations,
+            conversation_id=body.conversation_id or "",
+            processing_time_ms=processing_time,
+            retrieval_ms=retrieval_ms,
+            llm_ms=llm_ms,
+        )
+
+    except Exception as e:
+        logger.error(f"Error querying: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/query/stream", dependencies=[Depends(verify_api_key)])
+@limiter.limit(f"{settings.RATE_LIMIT_QUERY_PER_MINUTE}/minute")
+async def query_stream(
+    request: Request, body: QueryRequest,
+    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
+    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    x_custom_llm_base_url: Optional[str] = Header(default=None, alias="X-Custom-LLM-Base-URL"),
+    x_custom_llm_key: Optional[str] = Header(default=None, alias="X-Custom-LLM-Key"),
+):
+    """Stream query response compatible with Vercel AI SDK useChat."""
+    try:
+        import time
+        request_start = time.time()
+
+        tenant_id = _effective_tenant(body.tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+
+        # Get conversation history
+        _t = time.time()
+        conversation_history = None
+        if body.conversation_id:
+            conversation_history = conversation_service.get_conversation_history(
+                body.conversation_id
+            )
+        logger.info(f"[timing] conversation history fetch: {(time.time()-_t)*1000:.0f}ms")
+
+        # Hybrid retrieval: dense + BM25 sparse with RRF fusion, then rerank
+        # Dense and sparse query encoding are independent — run concurrently
+        # instead of paying two sequential model calls.
+        _t = time.time()
+        query_embedding, sparse_query = await asyncio.gather(
+            run_in_threadpool(embedding_service.encode_query, body.query),
+            run_in_threadpool(sparse_encoder.encode_query, body.query),
+        )
+        logger.info(f"[timing] query embedding (dense+sparse): {(time.time()-_t)*1000:.0f}ms")
+
+        # Demo sessions (pasted Groq key) get a fixed, smaller top_k regardless
+        # of what the client requests.
+        final_top_k = settings.DEMO_TOP_K if x_user_groq_key else (body.top_k or settings.RETRIEVAL_TOP_K)
+        _t = time.time()
+        hybrid_results = await run_in_threadpool(
+            vector_store.search,
+            query_vector=query_embedding,
+            sparse_vector=sparse_query,
+            limit=max(final_top_k * 3, 20),
+            tenant_id=tenant_id,
+            filters=body.filters,
+            document_ids=body.document_ids,
+        )
+        logger.info(f"[timing] vector_store.search total: {(time.time()-_t)*1000:.0f}ms")
+
+        _t = time.time()
+        results = await run_in_threadpool(reranker.rerank, body.query, hybrid_results, top_k=final_top_k)
+        logger.info(f"[timing] rerank: {(time.time()-_t)*1000:.0f}ms")
+
+        # Hierarchical citation numbering: doc.chunk (e.g. 1.1, 1.2, 2.1)
+        results = assign_display_numbers(results)
+        retrieval_ms = int((time.time() - request_start) * 1000)
+
+        if not results:
+            msg = json.dumps({"text": "I don't have enough information in the provided documents."})
+            return StreamingResponse(
+                iter([f"data: {msg}\n\n"]),
+                media_type="text/event-stream"
+            )
+        
+        # Build citations for the response
+        def _build_citation(r):
+            payload = r.get("payload") or {}
+            full = payload.get("content", "") or ""
+            short = (full[:240] + "…") if len(full) > 240 else full
+            return {
+                "document_id": payload.get("document_id", ""),
+                "filename": payload.get("filename", "Unknown"),
+                "chunk_id": payload.get("chunk_id", ""),
+                "page_number": payload.get("page_number"),
+                "chunk_index": payload.get("chunk_index"),
+                "score": r.get("score", 0.0),
+                "snippet": short,
+                "content": full,
+                "display_number": r.get("display_number"),
+            }
+
+        citations = [_build_citation(r) for r in results[:5]]
+
+        # generate() runs in a worker thread (Starlette wraps sync generators
+        # passed to StreamingResponse via iterate_in_threadpool), so DB writes
+        # from inside it must be scheduled back onto this event loop.
+        loop = asyncio.get_running_loop()
+
+        def _persist(role: str, content: str, msg_citations: Optional[list] = None):
+            if not body.conversation_id:
+                return
+            conversation_service.add_message(
+                body.conversation_id, role, content, citations=msg_citations
+            )
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    repositories.append_message(
+                        body.conversation_id, tenant_id, role, content,
+                        citations=msg_citations,
+                    ),
+                    loop,
+                ).result(timeout=10)
+            except Exception as e:
+                logger.error(f"Failed to persist message: {e}")
+
+        # Stream response in format compatible with Vercel AI SDK
+        def generate():
+            full_response = ""
+            first_token_at: Optional[float] = None
+            if body.conversation_id:
+                _persist("user", body.query)
+            for token in rag_pipeline.generate_streaming_response(
+                query=body.query,
+                context_chunks=results,
+                conversation_history=conversation_history,
+                attached_images=body.attached_images,
+                temperature=body.temperature if body.temperature is not None else 0.1,
+                max_tokens=body.max_tokens or 800,
+                groq_api_key=x_user_groq_key,
+                override_model=body.model,
+                custom_base_url=x_custom_llm_base_url,
+                custom_api_key=x_custom_llm_key,
+            ):
+                if first_token_at is None:
+                    first_token_at = time.time()
+                full_response += token
+                # Send each token as JSON with 'text' field
+                data = json.dumps({"text": token})
+                yield f"data: {data}\n\n"
+
+            if body.conversation_id:
+                _persist("assistant", full_response, citations)
+
+            # Latency breakdown: retrieval (embed+search+rerank) vs time to
+            # first token (includes retrieval + LLM prefill) vs full request.
+            ttft_ms = int(((first_token_at or time.time()) - request_start) * 1000)
+            total_ms = int((time.time() - request_start) * 1000)
+            metrics_data = json.dumps({
+                "metrics": {"retrieval_ms": retrieval_ms, "ttft_ms": ttft_ms, "total_ms": total_ms}
+            })
+            yield f"data: {metrics_data}\n\n"
+
+            # Send citations as a special message at the end
+            if citations:
+                citation_data = json.dumps({"annotations": citations})
+                yield f"data: {citation_data}\n\n"
+
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(generate(), media_type="text/event-stream")
+        
+    except Exception as e:
+        logger.error(f"Error in stream query: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/documents", response_model=List[DocumentUploadResponse], dependencies=[Depends(verify_api_key)])
+async def get_documents(
+    tenant_id: str = "default",
+    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
+    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+):
+    """List previously uploaded documents for a tenant (persisted, survives restarts)."""
+    tenant_id = _effective_tenant(tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+    records = await repositories.list_documents(tenant_id)
+    return [
+        DocumentUploadResponse(
+            document_id=r.document_id,
+            filename=r.filename,
+            status=r.status,
+            message="",
+            chunk_count=r.chunk_count,
+        )
+        for r in records
+    ]
+
+
+@router.get("/conversations", response_model=List[Conversation], dependencies=[Depends(verify_api_key)])
+async def list_conversations(
+    tenant_id: str = "default",
+    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
+    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+):
+    """List conversations for a tenant."""
+    tenant_id = _effective_tenant(tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+    records = await repositories.list_conversations(tenant_id)
+    return [
+        Conversation(
+            conversation_id=r.conversation_id,
+            tenant_id=r.tenant_id,
+            messages=[
+                ConversationMessage(
+                    role=m.role,
+                    content=m.content,
+                    timestamp=m.created_at.isoformat(),
+                    citations=m.citations,
+                )
+                for m in sorted(r.messages, key=lambda m: m.created_at)
+            ],
+            created_at=r.created_at.isoformat(),
+            updated_at=r.updated_at.isoformat(),
+        )
+        for r in records
+    ]
+
+
+@router.post("/conversations", response_model=dict, dependencies=[Depends(verify_api_key)])
+async def create_conversation(
+    tenant_id: str = "default",
+    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
+    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+):
+    """Create a new conversation."""
+    tenant_id = _effective_tenant(tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+    conversation_id = conversation_service.create_conversation(tenant_id)
+    await repositories.get_or_create_conversation(conversation_id, tenant_id)
+    return {"conversation_id": conversation_id, "status": "created"}
+
+
+@router.delete("/documents/{document_id}", dependencies=[Depends(verify_api_key)])
+async def delete_document(
+    document_id: str, tenant_id: str = "default",
+    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
+    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+):
+    """Delete a document and its chunks."""
+    tenant_id = _effective_tenant(tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+    record = await repositories.get_document_record(document_id, tenant_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Document not found or access denied")
+    try:
+        await run_in_threadpool(vector_store.delete_by_document, document_id, tenant_id)
+        # Best-effort: remove the original file too
+        upload_dir = "uploads"
+        if os.path.isdir(upload_dir):
+            for name in os.listdir(upload_dir):
+                if name.startswith(f"{document_id}_"):
+                    _remove_quiet(os.path.join(upload_dir, name))
+        await repositories.delete_document_record(document_id, tenant_id)
+        return {"status": "deleted", "document_id": document_id}
+    except Exception as e:
+        logger.error(f"Error deleting document: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete document")
+
+
+_INLINE_MEDIA_TYPES = {
+    ".pdf": "application/pdf",
+    ".txt": "text/plain; charset=utf-8",
+    ".md": "text/plain; charset=utf-8",
+    ".csv": "text/csv; charset=utf-8",
+    ".html": "text/html; charset=utf-8",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".tiff": "image/tiff",
+    ".tif": "image/tiff",
+    ".svg": "image/svg+xml",
+}
+
+
+def _find_upload_file(document_id: str) -> Optional[tuple]:
+    """Locate an uploaded file by document_id prefix. Returns
+    (file_path, original_filename) or None if not found."""
+    upload_dir = "uploads"
+    if not os.path.isdir(upload_dir):
+        return None
+    prefix = f"{document_id}_"
+    for name in os.listdir(upload_dir):
+        if name.startswith(prefix):
+            return os.path.join(upload_dir, name), name[len(prefix):]
+    return None
+
+
+@router.get("/documents/{document_id}/file", dependencies=[Depends(verify_api_key)])
+async def get_document_file(
+    document_id: str,
+    tenant_id: str = "default",
+    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
+    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+):
+    """Serve the original uploaded file inline, with strict DB tenant ownership validation."""
+    tenant_id = _effective_tenant(tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+    record = await repositories.get_document_record(document_id, tenant_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Document file not found or access denied")
+
+    found = _find_upload_file(document_id)
+    if not found:
+        raise HTTPException(status_code=404, detail="Document file not found")
+    file_path, original_name = found
+    ext = os.path.splitext(original_name)[1].lower()
+    media_type = _INLINE_MEDIA_TYPES.get(ext, "application/octet-stream")
+
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{original_name}"'
+        },
+    )
+
+
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif", ".gif"}
+
+
+def _strip_image_header(text: str) -> str:
+    """Strip the "[Image: filename]\\n" header we prefix onto OCR'd chunks
+    before showing the text in the editor."""
+    if not text.startswith("[Image: "):
+        return text
+    end = text.find("]\n")
+    if end != -1:
+        return text[end + 2:]
+    end = text.find("]")
+    return text[end + 1:] if end != -1 else text
+
+
+@router.get(
+    "/documents/{document_id}/content",
+    response_model=DocumentContentResponse,
+    dependencies=[Depends(verify_api_key)],
+)
+async def get_document_content(
+    document_id: str, tenant_id: str = "default",
+    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
+    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+):
+    """Return an editable plain-text representation of a document's content
+    (view/edit without downloading)."""
+    tenant_id = _effective_tenant(tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+    record = await repositories.get_document_record(document_id, tenant_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Document not found or access denied")
+
+    found = _find_upload_file(document_id)
+    if not found:
+        raise HTTPException(status_code=404, detail="Document file not found")
+    file_path, original_name = found
+    ext = os.path.splitext(original_name)[1].lower()
+
+    if ext in _IMAGE_EXTENSIONS:
+        chunks = await run_in_threadpool(vector_store.get_document_chunks, document_id, tenant_id)
+        raw = "\n\n".join(c["content"] for c in chunks)
+        return DocumentContentResponse(
+            document_id=document_id, filename=original_name,
+            content=_strip_image_header(raw), editable=True, is_image=True,
+        )
+
+    if not content_editor.is_editable(ext):
+        return DocumentContentResponse(
+            document_id=document_id, filename=original_name, content="",
+            editable=False, is_image=False,
+        )
+
+    try:
+        content = await run_in_threadpool(content_editor.extract_editable_text, file_path, ext)
+    except Exception as e:
+        logger.error(f"Error extracting content for {document_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to read document content")
+
+    return DocumentContentResponse(
+        document_id=document_id, filename=original_name, content=content,
+        editable=True, is_image=False,
+    )
+
+
+@router.put(
+    "/documents/{document_id}/content",
+    response_model=DocumentUploadResponse,
+    dependencies=[Depends(verify_api_key)],
+)
+@limiter.limit(f"{settings.RATE_LIMIT_UPLOAD_PER_MINUTE}/minute")
+async def update_document_content(
+    request: Request, document_id: str, body: DocumentContentUpdate,
+    x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
+    x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+):
+    """Edit a document's text content in place and re-index it so chat reflects the edit immediately."""
+    tenant_id = _effective_tenant(body.tenant_id, x_user_groq_key, x_user_sarvam_key, x_client_id)
+    record = await repositories.get_document_record(document_id, tenant_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Document not found or access denied")
+    found = _find_upload_file(document_id)
+    if not found:
+        raise HTTPException(status_code=404, detail="Document file not found")
+    file_path, original_name = found
+    ext = os.path.splitext(original_name)[1].lower()
+
+    try:
+        if ext in _IMAGE_EXTENSIONS:
+            # Don't touch the image file — only its OCR'd text is editable.
+            # Chunk the edited text directly instead of process_file, which
+            # would re-run OCR and overwrite the user's edits.
+            image_path = os.path.abspath(file_path)
+            text_chunks = await run_in_threadpool(document_processor.chunk_text, body.content)
+            if not text_chunks or not any(t.strip() for t in text_chunks):
+                text_chunks = ["(no readable text)"]
+            chunks = [
+                {
+                    "chunk_id": str(uuid4()),
+                    "document_id": document_id,
+                    "content": f"[Image: {original_name}]\n{t}",
+                    "chunk_index": i,
+                    "metadata": {
+                        "document_id": document_id,
+                        "filename": original_name,
+                        "is_image": True,
+                        "file_path": image_path,
+                    },
+                }
+                for i, t in enumerate(text_chunks)
+            ]
+        elif content_editor.is_editable(ext):
+            await run_in_threadpool(content_editor.write_editable_text, file_path, ext, body.content)
+            metadata = {
+                "document_id": document_id,
+                "filename": original_name,
+                "tenant_id": tenant_id,
+                "upload_timestamp": datetime.now().isoformat(),
+                "file_size": os.path.getsize(file_path),
+            }
+            chunks = await run_in_threadpool(document_processor.process_file, file_path, metadata)
+        else:
+            raise HTTPException(status_code=415, detail=f"Editing not supported for '{ext}'")
+
+        if not chunks:
+            raise HTTPException(status_code=422, detail="Edited content produced no indexable text")
+
+        texts = [c["content"] for c in chunks]
+        dense_embeddings = await run_in_threadpool(embedding_service.encode_documents, texts)
+        sparse_embeddings = await run_in_threadpool(sparse_encoder.encode_documents, texts)
+
+        points = []
+        for chunk, dense, sparse in zip(chunks, dense_embeddings, sparse_embeddings):
+            points.append({
+                "id": chunk["chunk_id"],
+                "dense_vector": dense,
+                "sparse_vector": sparse,
+                "payload": {
+                    "chunk_id": chunk["chunk_id"],
+                    "document_id": chunk["document_id"],
+                    "content": chunk["content"],
+                    "chunk_index": chunk["chunk_index"],
+                    "tenant_id": tenant_id,
+                    "filename": original_name,
+                    **chunk.get("metadata", {}),
+                }
+            })
+
+        await run_in_threadpool(vector_store.delete_by_document, document_id, tenant_id)
+        await run_in_threadpool(vector_store.upsert_points, points)
+
+        file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+        await repositories.update_document(document_id, tenant_id, len(chunks), file_size)
+
+        return DocumentUploadResponse(
+            document_id=document_id,
+            filename=original_name,
+            status="processed",
+            message=f"Re-indexed with {len(chunks)} chunks",
+            chunk_count=len(chunks),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating document content: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update document")

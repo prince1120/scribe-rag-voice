@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(timeout 90 npx eslint app/VoiceCall.tsx)"
+    ]
+  }
+}

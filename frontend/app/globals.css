@@ -1,0 +1,283 @@
+@import "tailwindcss";
+
+@theme {
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+}
+
+:root {
+  /* Claude.ai authentic palette */
+  --claude-bg: #F0EEE6;          /* page — warm manuscript beige */
+  --claude-sidebar: #E9E6DC;     /* sidebar — slightly darker warm */
+  --claude-surface: #FAF9F5;     /* raised cards / composer */
+  --claude-surface-2: #F5F3EB;   /* hover surface */
+  --claude-border: #DDD9CC;      /* subtle warm border */
+  --claude-border-strong: #C9C4B4;
+  --claude-text: #181818;
+  --claude-text-2: #2C2B28;
+  --claude-muted: #87847A;
+  --claude-bubble: #2A2C36;      /* dark slate user bubble */
+  --claude-accent: #4854A8;      /* deep indigo */
+  --claude-accent-hover: #353F8A;
+  --claude-accent-soft: #DEE2F2;
+
+  /* Back-compat aliases (in case older class refs remain) */
+  --claude-cream: var(--claude-bg);
+  --claude-cream-2: var(--claude-sidebar);
+  --claude-cream-3: var(--claude-surface-2);
+  --claude-orange: var(--claude-accent);
+  --claude-orange-hover: var(--claude-accent-hover);
+  --claude-orange-soft: var(--claude-accent-soft);
+}
+
+html, body {
+  background: var(--claude-bg);
+  color: var(--claude-text);
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Inter", "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Safety net: an unanchored absolutely-positioned element or a fixed-width
+     child anywhere in the app can otherwise widen the document and trigger
+     a page-level horizontal scrollbar. Individual scrollable rows (chip
+     lists, tables, code blocks) opt back in with their own overflow-x-auto. */
+  overflow-x: hidden;
+}
+
+.font-serif-display {
+  font-family: "Iowan Old Style", "Apple Garamond", "Baskerville",
+    "Times New Roman", "Droid Serif", Times, serif;
+  letter-spacing: -0.01em;
+}
+
+/* Loading dots */
+.loading-dots::after {
+  content: '.';
+  animation: dots 1.4s steps(4, end) infinite;
+}
+
+@keyframes dots {
+  0%, 20% { content: '.'; }
+  40% { content: '..'; }
+  60%, 100% { content: '...'; }
+}
+
+/* Animated Shimmer / Pulse for AI Thinking Skeleton */
+@keyframes aiShimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.ai-shimmer-bar {
+  background: linear-gradient(
+    90deg,
+    var(--claude-border) 0%,
+    var(--claude-accent-soft) 50%,
+    var(--claude-border) 100%
+  );
+  background-size: 200% 100%;
+  animation: aiShimmer 2s infinite linear;
+}
+
+@keyframes aiGlowPulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.02); }
+}
+.ai-thinking-pulse {
+  animation: aiGlowPulse 1.8s ease-in-out infinite;
+}
+
+/* Pulsing Streaming Cursor Pill */
+.streaming-cursor {
+  display: inline-block;
+  width: 6px;
+  height: 15px;
+  margin-left: 3px;
+  border-radius: 2px;
+  background-color: var(--claude-accent);
+  vertical-align: -2px;
+  animation: cursorPulse 0.8s infinite ease-in-out;
+}
+@keyframes cursorPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+@keyframes bounceSubtle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+.animate-bounce-subtle {
+  animation: bounceSubtle 2s infinite ease-in-out;
+}
+
+/* Typing indicator (three bouncing dots) */
+.typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--claude-muted);
+  display: inline-block;
+  animation: typing-bounce 1.2s infinite ease-in-out;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.typing-dot:nth-child(3) { animation-delay: 0.30s; }
+
+@keyframes typing-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40%          { transform: translateY(-4px); opacity: 1; }
+}
+
+/* Custom scrollbar */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--claude-border-strong);
+  border-radius: 9999px;
+  border: 2px solid var(--claude-bg);
+}
+*::-webkit-scrollbar-thumb:hover { background: #B0AB9A; }
+
+/* Soft fade-in for new messages */
+.msg-enter {
+  animation: msgEnter 0.25s ease-out;
+}
+@keyframes msgEnter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ============ Voice call — "living presence" ============ */
+
+/* Whole overlay easing in */
+.voice-overlay-enter { animation: voiceOverlayIn 0.4s cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes voiceOverlayIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.voice-orb-enter { animation: voiceOrbIn 0.7s cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes voiceOrbIn {
+  from { opacity: 0; transform: scale(0.6); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* Organic blobs drifting inside the orb — gives it a "conscious", alive feel */
+@keyframes voiceBlobA {
+  0%, 100% { transform: translate(-18%, -12%) scale(1); }
+  33%      { transform: translate(20%, 10%) scale(1.15); }
+  66%      { transform: translate(-8%, 22%) scale(0.9); }
+}
+@keyframes voiceBlobB {
+  0%, 100% { transform: translate(16%, 14%) scale(1.1); }
+  33%      { transform: translate(-14%, -16%) scale(0.85); }
+  66%      { transform: translate(18%, -10%) scale(1.2); }
+}
+@keyframes voiceBlobC {
+  0%, 100% { transform: translate(10%, -20%) scale(0.95); }
+  50%      { transform: translate(-16%, 16%) scale(1.15); }
+}
+.voice-blob-a { animation: voiceBlobA 7s ease-in-out infinite; }
+.voice-blob-b { animation: voiceBlobB 9s ease-in-out infinite; }
+.voice-blob-c { animation: voiceBlobC 11s ease-in-out infinite; }
+
+/* Idle breathing when nobody is speaking */
+@keyframes voiceBreathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.04); }
+}
+.voice-breathe { animation: voiceBreathe 4.5s ease-in-out infinite; }
+
+/* Concentric ripple that emanates on speech */
+@keyframes voiceRipple {
+  0%   { transform: scale(1);   opacity: 0.5; }
+  100% { transform: scale(2.1); opacity: 0; }
+}
+.voice-ripple { animation: voiceRipple 2.4s ease-out infinite; }
+.voice-ripple-2 { animation: voiceRipple 2.4s ease-out infinite; animation-delay: 1.2s; }
+
+/* Transcript line entrance */
+.voice-line-enter { animation: voiceLineIn 0.32s cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes voiceLineIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Blinking caret for in-progress agent text */
+.voice-caret::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--claude-accent);
+  animation: voiceCaret 1s steps(2) infinite;
+}
+@keyframes voiceCaret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+/* Equalizer bars for the listening state */
+@keyframes voiceEq {
+  0%, 100% { transform: scaleY(0.35); }
+  50%      { transform: scaleY(1); }
+}
+.voice-eq-bar {
+  width: 3px;
+  border-radius: 9999px;
+  background: var(--claude-accent);
+  transform-origin: center;
+  animation: voiceEq 1s ease-in-out infinite;
+}
+
+/* Premium range slider overrides */
+input[type="range"].custom-range-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--claude-border);
+  outline: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+input[type="range"].custom-range-slider::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 9999px;
+  background: transparent;
+}
+
+input[type="range"].custom-range-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--claude-accent);
+  border: 2px solid var(--claude-bg);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+  margin-top: -5px; /* Centers the thumb on track */
+  transition: transform 0.1s ease, background 0.15s ease;
+}
+
+input[type="range"].custom-range-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  background: var(--claude-accent-hover);
+}
+
+input[type="range"].custom-range-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--claude-bg);
+  border-radius: 50%;
+  background: var(--claude-accent);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+  transition: transform 0.1s ease, background 0.15s ease;
+}
+
+input[type="range"].custom-range-slider::-moz-range-thumb:hover {
+  transform: scale(1.15);
+  background: var(--claude-accent-hover);
+}
