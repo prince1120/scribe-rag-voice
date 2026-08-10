@@ -1107,15 +1107,13 @@ export default function Home() {
         const workspace = await response.json();
         if (cancelled) return;
 
-        // ?test=1 means the owner deliberately came here from the agent
-        // editor to try their assistant. Redirecting them back would be an
-        // infinite loop, and there is nowhere else for a business owner to
-        // exercise chat and voice yet.
-        const testing = new URLSearchParams(window.location.search).has("test");
-
+        // A business owner never belongs in the personal document app: it is
+        // a different product with a sidebar and a library they do not manage
+        // from here. Testing now happens inside the agent editor, so there is
+        // no longer any reason to land here at all.
         if (workspace.needs_setup || !workspace.answered) {
           window.location.href = "/setup";
-        } else if (workspace.is_business && !testing) {
+        } else if (workspace.is_business) {
           window.location.href = "/agent";
         }
       } catch {

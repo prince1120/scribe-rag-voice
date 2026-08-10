@@ -997,3 +997,37 @@
   .agent-doc { flex-wrap: wrap; }
   .agent-doc-name { flex: 1 1 100%; }
 }
+
+/* ---- Inline agent test ---------------------------------------------------- */
+
+.agent-test-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.agent-test-close { background: none; border: none; color: var(--claude-accent); font-size: var(--text-sm); cursor: pointer; }
+.agent-test-close:hover { text-decoration: underline; }
+
+.agent-test-log {
+  display: flex; flex-direction: column; gap: var(--space-3);
+  min-height: 8rem; max-height: 22rem; overflow-y: auto;
+  padding: var(--space-4);
+  border: 1px solid var(--claude-border); border-radius: var(--radius-md);
+  background: var(--claude-surface);
+}
+
+.agent-test-turn {
+  font-size: var(--text-sm); line-height: var(--leading-normal);
+  white-space: pre-wrap; word-break: break-word;
+}
+.agent-test-turn.is-user {
+  align-self: flex-end; max-width: 85%;
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
+  background: var(--claude-bubble); color: #F5F3EB;
+}
+.agent-test-turn.is-assistant { color: var(--claude-text); }
+
+.agent-test-input { display: flex; gap: var(--space-2); }
+.agent-test-input .agent-input { flex: 1; min-width: 0; }
+.agent-test-input .agent-save { flex: 0 0 auto; padding: var(--space-3) var(--space-5); }
+
+@media (max-width: 640px) {
+  .agent-test-input { flex-direction: column; }
+  .agent-test-input .agent-save { width: 100%; }
+}

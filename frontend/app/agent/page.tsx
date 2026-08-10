@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { AgentDocuments } from "./AgentDocuments";
+import { AgentTest } from "./AgentTest";
 
 interface AgentConfig {
   name?: string;
@@ -303,11 +304,9 @@ export default function AgentPage() {
           >
             {saving ? "Saving…" : saved ? "Saved" : "Save agent"}
           </button>
-          {/* ?test=1 stops the workspace redirect bouncing straight back. */}
-          <a href="/?test=1" className="agent-test ds-pressable ds-tap">
-            Test it
-          </a>
         </div>
+
+        <AgentTest deployed={config.status === "deployed"} />
       </div>
     </main>
   );
