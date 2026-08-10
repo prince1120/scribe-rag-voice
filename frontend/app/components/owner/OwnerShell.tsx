@@ -54,6 +54,16 @@ const NAV: NavItem[] = [
       </svg>
     ),
   },
+  {
+    href: "/settings",
+    label: "Account",
+    icon: (
+      <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true">
+        <circle cx="10" cy="10" r="2.6" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    ),
+  },
 ];
 
 export function OwnerShell({

@@ -21,7 +21,11 @@
   --owner-accent: #4854A8;
 
   display: flex;
-  min-height: 100dvh;
+  /* Fixed height with the overflow owned by the content column, so the rail
+     stays put while a long agent form scrolls. min-height would let the whole
+     page scroll and carry the navigation off the top of the screen. */
+  height: 100dvh;
+  overflow: hidden;
   background: var(--owner-bg);
   color: var(--owner-text);
 }
@@ -34,6 +38,10 @@
   gap: var(--space-5);
   width: 15rem;
   flex-shrink: 0;
+  height: 100%;
+  /* The rail itself can scroll if the nav ever outgrows the viewport, without
+     the page moving. */
+  overflow-y: auto;
   padding: var(--space-4) var(--space-3);
   background: var(--owner-rail);
 }
@@ -81,7 +89,9 @@
 
 /* ---- Main ----------------------------------------------------------------- */
 
-.owner-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* min-height:0 lets the content column actually shrink inside the flex row;
+   without it the child's scroll container never engages and the page grows. */
+.owner-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 
 /* Only exists to hold the drawer toggle, so it is hidden where the rail is
    permanently visible. */
@@ -293,3 +303,18 @@
 .signin-button:hover:not(:disabled) { background: #303239; }
 
 .signin-foot { font-size: var(--text-xs); line-height: var(--leading-normal); color: #6E7078; }
+
+/* ---- Account ------------------------------------------------------------- */
+
+.settings-card {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  max-width: 26rem; padding: var(--space-5);
+  border: 1px solid var(--owner-border); border-radius: var(--radius-md);
+  background: var(--owner-surface);
+}
+.settings-done {
+  padding: var(--space-3); border-radius: var(--radius-md);
+  background: var(--color-success-soft); color: var(--color-success);
+  font-size: var(--text-sm);
+}
+.settings-done a { color: inherit; text-decoration: underline; }
