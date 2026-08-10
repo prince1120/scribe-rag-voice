@@ -16,6 +16,14 @@ import { OwnerShell } from "../components/owner/OwnerShell";
 
 interface AgentConfig {
   name?: string;
+  voice_script?: string | null;
+  chat_script?: string | null;
+  voice_model?: string | null;
+  chat_model?: string | null;
+  voice_temperature?: number | null;
+  chat_temperature?: number | null;
+  voice_max_tokens?: number | null;
+  chat_max_tokens?: number | null;
   language?: string;
   status?: string;
   script: string;
@@ -43,6 +51,7 @@ export default function AgentPage() {
   const [docCount, setDocCount] = useState<number | null>(null);
   const [businessName, setBusinessName] = useState<string | null>(null);
   const [languages, setLanguages] = useState<Array<{ id: string; label: string }>>([]);
+  const [channels, setChannels] = useState<{ chat: boolean; chat_blocked_reason?: string | null } | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -61,6 +70,13 @@ export default function AgentPage() {
 
         // The rail names the business, so it is fetched alongside the agent
         // rather than by the shell — one request instead of one per screen.
+        try {
+          const ch = await ownerFetch("/api/v1/workspace/channels");
+          if (ch.ok) setChannels(await ch.json());
+        } catch {
+          // The panel assumes both are available rather than blocking on this.
+        }
+
         try {
           const langs = await ownerFetch("/api/v1/voice/languages");
           if (langs.ok) setLanguages((await langs.json()).languages || []);
@@ -100,6 +116,14 @@ export default function AgentPage() {
           script: config.script,
           voice_id: config.voice_id,
           language: config.language,
+          voice_script: config.voice_script || undefined,
+          chat_script: config.chat_script || undefined,
+          voice_model: config.voice_model || undefined,
+          chat_model: config.chat_model || undefined,
+          voice_temperature: config.voice_temperature ?? undefined,
+          chat_temperature: config.chat_temperature ?? undefined,
+          voice_max_tokens: config.voice_max_tokens ?? undefined,
+          chat_max_tokens: config.chat_max_tokens ?? undefined,
           rag_enabled: config.rag_enabled,
           greeting: config.greeting || undefined,
         }),
@@ -341,6 +365,101 @@ export default function AgentPage() {
 
         {error && <p className="agent-error" role="alert">{error}</p>}
 
+        <section className="agent-section">
+          <span className="agent-label">Per-channel settings</span>
+          <p className="agent-hint">
+            Voice and chat are different jobs — a spoken answer has to be short
+            and cannot use formatting, a typed one can be longer and
+            structured. Leave anything blank to use the shared settings above.
+          </p>
+
+          <div className="chan-grid">
+            {(["voice", "chat"] as const).map((ch) => (
+              <div key={ch} className="chan-card">
+                <span className="chan-title">
+                  {ch === "voice" ? "Voice" : "Chat"}
+                </span>
+
+                <label className="agent-hint" htmlFor={`${ch}-script`}>
+                  Prompt override
+                </label>
+                <textarea
+                  id={`${ch}-script`}
+                  className="agent-textarea ds-scroll"
+                  rows={4}
+                  maxLength={8000}
+                  placeholder="Blank = use the prompt above"
+                  value={(ch === "voice" ? config.voice_script : config.chat_script) || ""}
+                  onChange={(e) =>
+                    update(ch === "voice"
+                      ? { voice_script: e.target.value }
+                      : { chat_script: e.target.value })
+                  }
+                />
+
+                <label className="agent-hint" htmlFor={`${ch}-model`}>Model</label>
+                <input
+                  id={`${ch}-model`}
+                  className="agent-input"
+                  placeholder="Blank = workspace default"
+                  value={(ch === "voice" ? config.voice_model : config.chat_model) || ""}
+                  onChange={(e) =>
+                    update(ch === "voice"
+                      ? { voice_model: e.target.value }
+                      : { chat_model: e.target.value })
+                  }
+                />
+
+                <div className="chan-row">
+                  <div>
+                    <label className="agent-hint" htmlFor={`${ch}-temp`}>
+                      Temperature
+                    </label>
+                    <input
+                      id={`${ch}-temp`}
+                      className="agent-input"
+                      type="number" step="0.1" min="0" max="2"
+                      placeholder="default"
+                      value={(ch === "voice" ? config.voice_temperature : config.chat_temperature) ?? ""}
+                      onChange={(e) => {
+                        const v = e.target.value === "" ? null : Number(e.target.value);
+                        update(ch === "voice"
+                          ? { voice_temperature: v }
+                          : { chat_temperature: v });
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label className="agent-hint" htmlFor={`${ch}-tokens`}>
+                      Max tokens
+                    </label>
+                    <input
+                      id={`${ch}-tokens`}
+                      className="agent-input"
+                      type="number" min="50" max={ch === "voice" ? 800 : 4000}
+                      placeholder="default"
+                      value={(ch === "voice" ? config.voice_max_tokens : config.chat_max_tokens) ?? ""}
+                      onChange={(e) => {
+                        const v = e.target.value === "" ? null : Number(e.target.value);
+                        update(ch === "voice"
+                          ? { voice_max_tokens: v }
+                          : { chat_max_tokens: v });
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {ch === "voice" && (
+                  <p className="agent-hint">
+                    Kept short on purpose — past ~500 tokens a caller is
+                    listening to a lecture.
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+
         <div className="agent-actions">
           <button
             type="button"
@@ -352,7 +471,11 @@ export default function AgentPage() {
           </button>
         </div>
 
-        <AgentTest deployed={config.status === "deployed"} />
+        <AgentTest
+          deployed={config.status === "deployed"}
+          chatAvailable={channels?.chat ?? true}
+          chatBlockedReason={channels?.chat_blocked_reason}
+        />
       </div>
       </main>
     </OwnerShell>

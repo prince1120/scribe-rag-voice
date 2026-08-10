@@ -298,10 +298,12 @@ async def create_voice_token(
     agent = await repositories.get_agent(tenant_id)
     rag_enabled = body.rag_enabled
 
-    if agent is not None and (agent.script or "").strip():
+    channel = owner_service.channel_settings(agent, "voice")
+
+    if agent is not None and channel.get("script"):
         workspace = await repositories.get_owner(tenant_id)
         instructions = owner_service.build_agent_prompt(
-            script=agent.script,
+            script=channel["script"],
             agent_name=agent.name,
             business_name=workspace.business_name if workspace else None,
         )
@@ -388,10 +390,21 @@ async def create_voice_token(
         meta["greet_on_connect"] = body.greet_on_connect
     if body.greeting_text:
         meta["greeting_text"] = body.greeting_text
-    if body.temperature is not None:
-        meta["temperature"] = body.temperature
-    if body.max_tokens is not None:
-        meta["max_tokens"] = body.max_tokens
+    # The agent's own sampling wins over the request's: a caller should not be
+    # able to make a business's assistant more verbose or more erratic than its
+    # owner configured.
+    temperature = channel.get("temperature")
+    max_tokens = channel.get("max_tokens")
+    if temperature is None:
+        temperature = body.temperature
+    if max_tokens is None:
+        max_tokens = body.max_tokens
+    if temperature is not None:
+        meta["temperature"] = temperature
+    if max_tokens is not None:
+        meta["max_tokens"] = max_tokens
+    if channel.get("model"):
+        meta["llm_model"] = channel["model"]
     dispatch_metadata = json.dumps(meta)
     selected_llm = body.llm_model or settings.GROQ_MODEL
     selected_speaker = body.tts_speaker or voice_settings.VOICE_TTS_SPEAKER

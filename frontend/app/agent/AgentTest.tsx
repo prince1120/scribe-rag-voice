@@ -19,7 +19,18 @@ interface Turn {
   content: string;
 }
 
-export function AgentTest({ deployed }: { deployed: boolean }) {
+export function AgentTest({
+  deployed,
+  chatAvailable = true,
+  chatBlockedReason,
+}: {
+  deployed: boolean;
+  /** Chat always answers from documents, so with none uploaded there is
+   *  nothing for it to answer from — testing it would only produce a refusal
+   *  to every question. */
+  chatAvailable?: boolean;
+  chatBlockedReason?: string | null;
+}) {
   const [open, setOpen] = useState(false);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
@@ -27,6 +38,7 @@ export function AgentTest({ deployed }: { deployed: boolean }) {
   const [error, setError] = useState("");
   const abortRef = useRef<AbortController | null>(null);
   const [channel, setChannel] = useState<"chat" | "voice">("voice");
+  const activeChannel = chatAvailable ? channel : "voice";
 
   const send = useCallback(async () => {
     const question = input.trim();
@@ -135,6 +147,8 @@ export function AgentTest({ deployed }: { deployed: boolean }) {
             className={`agent-test-tab ${channel === "chat" ? "is-active" : ""}`}
             onClick={() => setChannel("chat")}
             aria-pressed={channel === "chat"}
+            disabled={!chatAvailable}
+            title={chatBlockedReason || undefined}
           >
             Chat
           </button>
@@ -148,7 +162,13 @@ export function AgentTest({ deployed }: { deployed: boolean }) {
         </button>
       </div>
 
-      {channel === "voice" ? (
+      {!chatAvailable && (
+        <p className="agent-hint">
+          {chatBlockedReason || "Add a document to test chat."}
+        </p>
+      )}
+
+      {activeChannel === "voice" ? (
         <AgentVoiceTest deployed={deployed} />
       ) : (
       <>

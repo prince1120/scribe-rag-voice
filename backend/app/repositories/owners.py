@@ -128,6 +128,7 @@ async def upsert_agent(
     script: Optional[str] = None, voice_id: Optional[str] = None,
     language: Optional[str] = None,
     rag_enabled: Optional[bool] = None, greeting: Optional[str] = None,
+    **channel_fields,
 ) -> AgentRecord:
     """Create the owner's agent, or update the one they already have.
 
@@ -157,6 +158,13 @@ async def upsert_agent(
             record.rag_enabled = rag_enabled
         if greeting is not None:
             record.greeting = greeting
+
+        # Per-channel settings arrive as keyword arguments so adding one is a
+        # column and a form field, not another parameter threaded through
+        # three layers. None still means "leave alone".
+        for field, value in channel_fields.items():
+            if value is not None:
+                setattr(record, field, value)
 
         await session.commit()
         await session.refresh(record)

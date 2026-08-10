@@ -135,11 +135,13 @@ async def _chat_overrides(identity: Identity, x_user_groq_key, x_custom_llm_base
     from app.services import owner_service
 
     agent = await repositories.get_agent(identity.tenant_id)
+    channel = owner_service.channel_settings(agent, "chat")
+
     agent_prompt = None
-    if agent is not None and (agent.script or "").strip():
+    if agent is not None and channel.get("script"):
         workspace = await repositories.get_owner(identity.tenant_id)
         agent_prompt = owner_service.build_agent_prompt(
-            script=agent.script,
+            script=channel["script"],
             agent_name=agent.name,
             business_name=workspace.business_name if workspace else None,
         )
@@ -150,7 +152,9 @@ async def _chat_overrides(identity: Identity, x_user_groq_key, x_custom_llm_base
         "groq_api_key": x_user_groq_key or stored.get("groq_api_key"),
         "custom_base_url": x_custom_llm_base_url or stored.get("custom_llm_base_url"),
         "custom_api_key": x_custom_llm_key or stored.get("custom_llm_api_key"),
-        "model": stored.get("llm_model"),
+        "model": channel.get("model") or stored.get("llm_model"),
+        "temperature": channel.get("temperature"),
+        "max_tokens": channel.get("max_tokens"),
     }
 
 
@@ -474,8 +478,11 @@ async def query_documents(
             context_chunks=results,
             conversation_history=conversation_history,
             attached_images=body.attached_images,
-            temperature=body.temperature if body.temperature is not None else 0.1,
-            max_tokens=body.max_tokens or 800,
+            temperature=(
+                overrides["temperature"] if overrides["temperature"] is not None
+                else (body.temperature if body.temperature is not None else 0.1)
+            ),
+            max_tokens=overrides["max_tokens"] or body.max_tokens or 800,
             groq_api_key=overrides["groq_api_key"],
             override_model=body.model or overrides["model"],
             custom_base_url=overrides["custom_base_url"],
@@ -659,8 +666,11 @@ async def query_stream(
                     context_chunks=results,
                     conversation_history=conversation_history,
                     attached_images=body.attached_images,
-                    temperature=body.temperature if body.temperature is not None else 0.1,
-                    max_tokens=body.max_tokens or 800,
+                    temperature=(
+                        overrides["temperature"] if overrides["temperature"] is not None
+                        else (body.temperature if body.temperature is not None else 0.1)
+                    ),
+                    max_tokens=overrides["max_tokens"] or body.max_tokens or 800,
                     groq_api_key=overrides["groq_api_key"],
                     override_model=body.model or overrides["model"],
                     custom_base_url=overrides["custom_base_url"],

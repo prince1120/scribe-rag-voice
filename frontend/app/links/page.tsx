@@ -85,6 +85,9 @@ export default function LinksPage() {
   const [filter, setFilter] = useState<"all" | "active" | "blocked" | "revoked">("all");
   const [page, setPage] = useState(0);
   const PER_PAGE = 20;
+  // A chat link with no documents behind it hands someone an assistant that
+  // refuses every question, so the option is not offered.
+  const [chatAvailable, setChatAvailable] = useState(true);
 
   const load = useCallback(async () => {
     try {
@@ -104,6 +107,24 @@ export default function LinksPage() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await ownerFetch("/api/v1/workspace/channels");
+        if (response.ok && !cancelled) {
+          const data = await response.json();
+          setChatAvailable(Boolean(data.chat));
+          if (!data.chat) setMode("voice");
+        }
+      } catch {
+        // Leaving every option available is the tolerant default; the server
+        // refuses an impossible one anyway.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   async function create(event: React.FormEvent) {
     event.preventDefault();
@@ -328,8 +349,8 @@ export default function LinksPage() {
             aria-label="What they can do"
           >
             <option value="voice">Voice call only</option>
-            <option value="chat">Chat only</option>
-            <option value="both">Voice and chat</option>
+            {chatAvailable && <option value="chat">Chat only</option>}
+            {chatAvailable && <option value="both">Voice and chat</option>}
           </select>
           <input
             className="links-input"

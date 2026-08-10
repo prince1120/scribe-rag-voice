@@ -400,3 +400,23 @@
 @media (prefers-reduced-motion: reduce) {
   .vtest-orb.is-live { animation: none; }
 }
+
+/* ---- Per-channel settings -------------------------------------------------- */
+
+.chan-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+
+.chan-card {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--owner-border); border-radius: var(--radius-md);
+  background: var(--owner-surface);
+}
+.chan-title { font-size: var(--text-sm); font-weight: var(--weight-semibold); }
+.chan-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+.chan-row > div { display: flex; flex-direction: column; gap: var(--space-1); }
+
+.agent-test-tab:disabled { opacity: 0.45; cursor: not-allowed; }
+
+@media (max-width: 860px) {
+  .chan-grid { grid-template-columns: 1fr; }
+}

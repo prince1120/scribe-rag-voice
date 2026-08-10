@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -209,8 +209,29 @@ class AgentRecord(Base):
         DateTime(timezone=True), nullable=True
     )
 
-    # The owner's main lever: who the assistant is and how it speaks.
+    # The owner's main lever: who the assistant is and how it speaks. Used by
+    # both channels unless one has its own override below.
     script: Mapped[str] = mapped_column(Text, default="")
+
+    # Per-channel overrides. Voice and chat are genuinely different jobs — a
+    # spoken answer must be short and cannot use markdown, while a typed one
+    # can be structured and long — so an owner who wants them to differ should
+    # not have to compromise on one shared prompt. Null means "use `script`".
+    voice_script: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    chat_script: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Model per channel. Voice wants the fastest model available because
+    # time-to-first-token is dead air; chat can afford a larger one behind a
+    # streaming cursor. Null falls back to the workspace default.
+    voice_model: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    chat_model: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+
+    # Sampling, per channel and for the same reason. Null uses the server
+    # default rather than a number this table had to guess.
+    voice_temperature: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    voice_max_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    chat_temperature: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    chat_max_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     voice_id: Mapped[str] = mapped_column(String(64), default="anushka")
     # STT language, or "unknown" to auto-detect. Set per agent because a
     # business usually knows what its callers speak.

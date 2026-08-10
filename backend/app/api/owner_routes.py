@@ -37,6 +37,19 @@ class AgentConfigRequest(BaseModel):
     rag_enabled: Optional[bool] = None
     greeting: Optional[str] = Field(default=None, max_length=500)
 
+    # Per-channel overrides. Null means "use the shared setting" — the console
+    # sends only what the owner edited, so absent must not mean cleared.
+    voice_script: Optional[str] = Field(default=None, max_length=8000)
+    chat_script: Optional[str] = Field(default=None, max_length=8000)
+    voice_model: Optional[str] = Field(default=None, max_length=120)
+    chat_model: Optional[str] = Field(default=None, max_length=120)
+    voice_temperature: Optional[float] = Field(default=None, ge=0, le=2)
+    chat_temperature: Optional[float] = Field(default=None, ge=0, le=2)
+    # Voice is capped lower: 500 tokens is roughly forty seconds of speech, and
+    # past that a caller is listening to a lecture rather than an answer.
+    voice_max_tokens: Optional[int] = Field(default=None, ge=50, le=800)
+    chat_max_tokens: Optional[int] = Field(default=None, ge=50, le=4000)
+
 
 def _require_workspace_owner(identity: Identity) -> None:
     """A caller reached us through someone else's link. They may talk to that
@@ -244,6 +257,13 @@ async def undeploy_agent(identity: Identity = Depends(get_identity)):
     return await owner_service.undeploy_agent(identity.tenant_id)
 
 
+@router.get("/channels")
+async def get_channels(identity: Identity = Depends(get_identity)):
+    """What the console may offer: testing, and link types."""
+    _require_workspace_owner(identity)
+    return await owner_service.available_channels(identity.tenant_id)
+
+
 @router.get("/agent")
 async def get_agent(identity: Identity = Depends(get_identity)):
     _require_workspace_owner(identity)
@@ -266,6 +286,11 @@ async def save_agent(
             # The allowed set is owned by the voice config, not duplicated here,
             # so adding a voice in one place is enough.
             allowed_voices=SUPPORTED_TTS_VOICE_IDS,
+            **{f: getattr(body, f) for f in (
+                "voice_script", "chat_script", "voice_model", "chat_model",
+                "voice_temperature", "chat_temperature",
+                "voice_max_tokens", "chat_max_tokens",
+            )},
         )
     except owner_service.OwnerError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

@@ -89,6 +89,21 @@ async def create_contact(
     visible. Only its hash is stored, so it cannot be shown again."""
     _require_owner(identity)
 
+    # A chat link with no documents behind it would hand someone an assistant
+    # that answers "I don't have that" to everything, so it is refused at
+    # creation rather than discovered by whoever was sent it.
+    from app.services import owner_service
+
+    channels = await owner_service.available_channels(identity.tenant_id)
+    if body.mode in ("chat", "both") and not channels["chat"]:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Chat answers from your documents, and none are uploaded yet. "
+                "Add a document, or share a voice-only link."
+            ),
+        )
+
     token = contacts.generate_token()
     contact_id = str(uuid4())
 

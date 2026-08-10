@@ -165,6 +165,14 @@ async def get_agent_config(tenant_id: str) -> dict:
     record = await repositories.get_agent(tenant_id)
     if record is None:
         return {
+            "voice_script": None,
+            "chat_script": None,
+            "voice_model": None,
+            "chat_model": None,
+            "voice_temperature": None,
+            "voice_max_tokens": None,
+            "chat_temperature": None,
+            "chat_max_tokens": None,
             "name": "Assistant",
             "script": DEFAULT_SCRIPT,
             "voice_id": "anushka",
@@ -175,6 +183,14 @@ async def get_agent_config(tenant_id: str) -> dict:
             "configured": False,
         }
     return {
+        "voice_script": record.voice_script,
+        "chat_script": record.chat_script,
+        "voice_model": record.voice_model,
+        "chat_model": record.chat_model,
+        "voice_temperature": record.voice_temperature,
+        "voice_max_tokens": record.voice_max_tokens,
+        "chat_temperature": record.chat_temperature,
+        "chat_max_tokens": record.chat_max_tokens,
         "name": record.name,
         "status": record.status,
         "script": record.script or DEFAULT_SCRIPT,
@@ -192,6 +208,7 @@ async def save_agent_config(
     language: Optional[str] = None,
     rag_enabled: Optional[bool] = None, greeting: Optional[str] = None,
     allowed_voices: Optional[frozenset[str]] = None,
+    **channel_fields,
 ) -> dict:
     """Save the agent, refusing anything the voice worker would reject.
 
@@ -214,8 +231,17 @@ async def save_agent_config(
         language=language,
         rag_enabled=rag_enabled,
         greeting=greeting.strip() if greeting is not None else None,
+        **channel_fields,
     )
     return {
+        "voice_script": record.voice_script,
+        "chat_script": record.chat_script,
+        "voice_model": record.voice_model,
+        "chat_model": record.chat_model,
+        "voice_temperature": record.voice_temperature,
+        "voice_max_tokens": record.voice_max_tokens,
+        "chat_temperature": record.chat_temperature,
+        "chat_max_tokens": record.chat_max_tokens,
         "name": record.name,
         "script": record.script,
         "voice_id": record.voice_id,
@@ -406,4 +432,60 @@ async def resolve_credentials(tenant_id: str) -> dict:
         "custom_llm_api_key": read(record.custom_llm_key_enc),
         "custom_llm_base_url": record.custom_llm_base_url or None,
         "llm_model": record.llm_model or None,
+    }
+
+
+def channel_settings(agent, channel: str) -> dict:
+    """What a single channel should actually use.
+
+    Voice and chat are different jobs — a spoken answer must be short and
+    cannot use markdown, a typed one can be structured and long — so each may
+    override the shared script, model, temperature, and token ceiling. Anything
+    the owner left unset falls back: first to the shared script, then to the
+    server default, rather than to a number this function invented.
+    """
+    if agent is None:
+        return {}
+
+    prefix = "voice" if channel == "voice" else "chat"
+
+    # Stripped before the fallback, not after: a field the owner cleared to
+    # whitespace is an unset override, and treating it as set would leave that
+    # channel with no prompt at all.
+    override = (getattr(agent, f"{prefix}_script", None) or "").strip()
+    script = override or agent.script
+    return {
+        "script": (script or "").strip() or None,
+        "model": getattr(agent, f"{prefix}_model", None),
+        "temperature": getattr(agent, f"{prefix}_temperature", None),
+        "max_tokens": getattr(agent, f"{prefix}_max_tokens", None),
+    }
+
+
+async def available_channels(tenant_id: str) -> dict:
+    """Which channels this agent can actually serve.
+
+    Chat always answers from the owner's documents — that is the product, not a
+    setting — so with none uploaded there is nothing for it to answer from and
+    offering it would produce an assistant that says "I don't have that" to
+    everything. Voice has no such requirement: an owner may want a spoken agent
+    that works from its prompt alone, which is why the RAG toggle exists on
+    that channel and not on chat.
+
+    Used by both the test panel and the link-type picker, so the console can
+    never offer a channel that cannot work.
+    """
+    from app import repositories
+
+    documents = await repositories.list_documents(tenant_id)
+    has_documents = len(documents) > 0
+
+    return {
+        "voice": True,
+        "chat": has_documents,
+        "document_count": len(documents),
+        "chat_blocked_reason": (
+            None if has_documents
+            else "Chat answers from your documents. Add one to enable it."
+        ),
     }

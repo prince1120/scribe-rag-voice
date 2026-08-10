@@ -119,10 +119,15 @@ class TestAgentConfig:
         async def get_agent(tenant_id):
             return saved.get(tenant_id)
 
-        async def upsert_agent(*, tenant_id, name=None, script=None, voice_id=None, language=None, rag_enabled=None, greeting=None):
+        async def upsert_agent(*, tenant_id, name=None, script=None, voice_id=None, language=None, rag_enabled=None, greeting=None, **channel_fields):
             record = saved.get(tenant_id) or SimpleNamespace(
                 tenant_id=tenant_id, name="Assistant", status="draft", script="",
                 voice_id="anushka", language="unknown", rag_enabled=True, greeting=None,
+                # Per-channel overrides, all unset — the shared script applies.
+                voice_script=None, chat_script=None,
+                voice_model=None, chat_model=None,
+                voice_temperature=None, chat_temperature=None,
+                voice_max_tokens=None, chat_max_tokens=None,
             )
             if name is not None:
                 record.name = name
@@ -136,6 +141,9 @@ class TestAgentConfig:
                 record.rag_enabled = rag_enabled
             if greeting is not None:
                 record.greeting = greeting
+            for field, value in channel_fields.items():
+                if value is not None:
+                    setattr(record, field, value)
             saved[tenant_id] = record
             return record
 
@@ -189,3 +197,57 @@ def test_every_category_has_a_label():
     for category in owner_service.BUSINESS_CATEGORIES:
         assert category["id"] and category["label"]
     assert "other" in owner_service.VALID_CATEGORIES
+
+
+class TestChannelSettings:
+    """Voice and chat are different jobs — a spoken answer must be short and
+    cannot use markdown, a typed one can be structured and long — so each may
+    override the shared settings."""
+
+    def _agent(self, **overrides):
+        base = dict(
+            script="Shared prompt.", voice_script=None, chat_script=None,
+            voice_model=None, chat_model=None,
+            voice_temperature=None, chat_temperature=None,
+            voice_max_tokens=None, chat_max_tokens=None,
+        )
+        base.update(overrides)
+        return SimpleNamespace(**base)
+
+    def test_both_channels_fall_back_to_the_shared_script(self):
+        """One prompt is the common case; per-channel is the exception."""
+        agent = self._agent()
+        for channel in ("voice", "chat"):
+            assert owner_service.channel_settings(agent, channel)["script"] == "Shared prompt."
+
+    def test_a_channel_override_wins(self):
+        agent = self._agent(voice_script="Keep it short, you are on a call.")
+        assert owner_service.channel_settings(agent, "voice")["script"].startswith("Keep it short")
+        # …and does not leak into the other channel.
+        assert owner_service.channel_settings(agent, "chat")["script"] == "Shared prompt."
+
+    def test_channels_carry_their_own_model_and_sampling(self):
+        agent = self._agent(
+            voice_model="fast-model", chat_model="big-model",
+            voice_max_tokens=200, chat_max_tokens=2000,
+        )
+        voice = owner_service.channel_settings(agent, "voice")
+        chat = owner_service.channel_settings(agent, "chat")
+        assert voice["model"] == "fast-model" and chat["model"] == "big-model"
+        assert voice["max_tokens"] == 200 and chat["max_tokens"] == 2000
+
+    def test_unset_values_stay_none_rather_than_guessing(self):
+        """None means "use the server default" — inventing a number here would
+        silently override a tuned default."""
+        settings = owner_service.channel_settings(self._agent(), "voice")
+        assert settings["temperature"] is None
+        assert settings["max_tokens"] is None
+        assert settings["model"] is None
+
+    def test_a_blank_override_falls_back(self):
+        """Whitespace is not a prompt."""
+        agent = self._agent(voice_script="   ")
+        assert owner_service.channel_settings(agent, "voice")["script"] == "Shared prompt."
+
+    def test_no_agent_yields_nothing(self):
+        assert owner_service.channel_settings(None, "voice") == {}
