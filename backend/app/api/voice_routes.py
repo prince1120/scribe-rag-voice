@@ -236,7 +236,7 @@ async def create_voice_token(
     # A custom OpenAI-compatible model replaces Groq entirely, so its presence
     # makes a Groq key unnecessary rather than merely optional.
     has_custom_llm = bool(
-        (x_custom_llm_base_url or resolved.get("custom_llm_base_url") or "").strip()
+        (body.custom_llm_base_url or resolved.get("custom_llm_base_url") or "").strip()
     )
 
     if not effective_groq and not has_custom_llm:
