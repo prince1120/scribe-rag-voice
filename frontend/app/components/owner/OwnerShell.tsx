@@ -12,7 +12,7 @@
 // Same brand, different job.
 
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 interface NavItem {
   href: string;
@@ -58,10 +58,6 @@ export function OwnerShell({
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
 
-  // Navigating on a phone should close the drawer; leaving it open over the
-  // new screen is the classic mobile-nav bug.
-  useEffect(() => setMenuOpen(false), [pathname]);
-
   return (
     <div className="owner-shell">
       <aside className={`owner-rail ${menuOpen ? "is-open" : ""}`}>
@@ -85,6 +81,7 @@ export function OwnerShell({
               href={item.href}
               className={`owner-nav-item ${pathname === item.href ? "is-active" : ""}`}
               aria-current={pathname === item.href ? "page" : undefined}
+              onClick={() => setMenuOpen(false)}
             >
               {item.icon}
               <span>{item.label}</span>
