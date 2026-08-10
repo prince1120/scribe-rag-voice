@@ -1,0 +1,340 @@
+"""Async data-access helpers for the documents/conversations tables.
+
+Kept as plain functions (not a class) — this app has no ORM-heavy domain
+logic, just a handful of CRUD-shaped queries.
+"""
+from datetime import datetime, timezone
+from typing import List, Optional
+
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.orm import selectinload
+
+from app.database import async_session
+from app.models.db_models import (
+    ContactRecord, ContactSessionRecord, ConversationRecord, DocumentRecord,
+    MessageRecord,
+)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+async def save_document(
+    document_id: str, tenant_id: str, filename: str, file_size: int, chunk_count: int,
+    status: str = "processed",
+) -> None:
+    async with async_session() as session:
+        session.add(DocumentRecord(
+            document_id=document_id, tenant_id=tenant_id, filename=filename,
+            file_size=file_size, chunk_count=chunk_count, status=status,
+        ))
+        await session.commit()
+
+
+async def list_documents(tenant_id: str) -> List[DocumentRecord]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(DocumentRecord)
+            .where(DocumentRecord.tenant_id == tenant_id)
+            .order_by(DocumentRecord.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+
+async def get_document_record(document_id: str, tenant_id: str) -> Optional[DocumentRecord]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(DocumentRecord).where(
+                DocumentRecord.document_id == document_id,
+                DocumentRecord.tenant_id == tenant_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+
+
+async def update_document(document_id: str, tenant_id: str, chunk_count: int, file_size: int) -> None:
+    async with async_session() as session:
+        result = await session.execute(
+            select(DocumentRecord).where(
+                DocumentRecord.document_id == document_id,
+                DocumentRecord.tenant_id == tenant_id,
+            )
+        )
+        record = result.scalar_one_or_none()
+        if record:
+            record.chunk_count = chunk_count
+            record.file_size = file_size
+            await session.commit()
+
+
+async def delete_document_record(document_id: str, tenant_id: str) -> None:
+    async with async_session() as session:
+        result = await session.execute(
+            select(DocumentRecord).where(
+                DocumentRecord.document_id == document_id,
+                DocumentRecord.tenant_id == tenant_id,
+            )
+        )
+        record = result.scalar_one_or_none()
+        if record:
+            await session.delete(record)
+            await session.commit()
+
+
+async def list_expired_documents(
+    cutoff: datetime, include_owner: bool, owner_tenant_id: str
+) -> List[DocumentRecord]:
+    """Documents last touched before `cutoff`.
+
+    Returned rather than deleted here so the caller can remove each one's
+    vectors and file first — deleting the row on its own is what strands
+    orphaned chunks in the vector store.
+    """
+    async with async_session() as session:
+        query = select(DocumentRecord).where(DocumentRecord.created_at < cutoff)
+        if not include_owner:
+            query = query.where(DocumentRecord.tenant_id != owner_tenant_id)
+        result = await session.execute(query)
+        return list(result.scalars().all())
+
+
+async def get_or_create_conversation(conversation_id: str, tenant_id: str) -> None:
+    async with async_session() as session:
+        result = await session.execute(
+            select(ConversationRecord).where(ConversationRecord.conversation_id == conversation_id)
+        )
+        if result.scalar_one_or_none() is None:
+            session.add(ConversationRecord(conversation_id=conversation_id, tenant_id=tenant_id))
+            await session.commit()
+
+
+async def append_message(
+    conversation_id: str, tenant_id: str, role: str, content: str,
+    citations: Optional[list] = None,
+) -> None:
+    async with async_session() as session:
+        result = await session.execute(
+            select(ConversationRecord).where(ConversationRecord.conversation_id == conversation_id)
+        )
+        conversation = result.scalar_one_or_none()
+        if conversation is None:
+            conversation = ConversationRecord(conversation_id=conversation_id, tenant_id=tenant_id)
+            session.add(conversation)
+            await session.flush()
+
+        session.add(MessageRecord(
+            conversation_id=conversation_id, role=role, content=content, citations=citations,
+        ))
+        conversation.updated_at = datetime.now(timezone.utc)
+        await session.commit()
+
+
+async def list_conversations(tenant_id: str) -> List[ConversationRecord]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(ConversationRecord)
+            .where(ConversationRecord.tenant_id == tenant_id)
+            .options(selectinload(ConversationRecord.messages))
+            .order_by(ConversationRecord.updated_at.desc())
+        )
+        return list(result.scalars().all())
+
+
+# ---- Contacts (invite-link identities) --------------------------------------
+
+async def create_contact(
+    *, contact_id: str, owner_tenant_id: str, name: str, note: Optional[str],
+    token_hash: str, pin: Optional[str], expires_at: Optional[datetime],
+    max_sessions_per_day: int, mode: str = "both",
+) -> ContactRecord:
+    async with async_session() as session:
+        record = ContactRecord(
+            contact_id=contact_id, owner_tenant_id=owner_tenant_id, name=name,
+            note=note, token_hash=token_hash, pin=pin, expires_at=expires_at,
+            max_sessions_per_day=max_sessions_per_day, mode=mode,
+        )
+        session.add(record)
+        await session.commit()
+        await session.refresh(record)
+        return record
+
+
+async def get_contact_by_token_hash(token_hash: str) -> Optional[ContactRecord]:
+    """Looked up by hash, never by plaintext — the token is not stored."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(ContactRecord).where(ContactRecord.token_hash == token_hash)
+        )
+        return result.scalar_one_or_none()
+
+
+async def get_contact(contact_id: str, owner_tenant_id: str) -> Optional[ContactRecord]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(ContactRecord).where(
+                ContactRecord.contact_id == contact_id,
+                ContactRecord.owner_tenant_id == owner_tenant_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+
+async def list_contacts(owner_tenant_id: str) -> List[ContactRecord]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(ContactRecord)
+            .where(ContactRecord.owner_tenant_id == owner_tenant_id)
+            .order_by(ContactRecord.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+
+async def bind_contact_device(contact_id: str, device_id: str) -> None:
+    async with async_session() as session:
+        await session.execute(
+            update(ContactRecord)
+            .where(ContactRecord.contact_id == contact_id)
+            .values(bound_device=device_id, last_seen_at=_utcnow())
+        )
+        await session.commit()
+
+
+async def touch_contact(contact_id: str) -> None:
+    async with async_session() as session:
+        await session.execute(
+            update(ContactRecord)
+            .where(ContactRecord.contact_id == contact_id)
+            .values(last_seen_at=_utcnow())
+        )
+        await session.commit()
+
+
+async def revoke_contact(contact_id: str, owner_tenant_id: str) -> bool:
+    """Ownership is part of the WHERE clause, so a caller cannot revoke a
+    contact belonging to someone else by guessing an id."""
+    async with async_session() as session:
+        result = await session.execute(
+            update(ContactRecord)
+            .where(
+                ContactRecord.contact_id == contact_id,
+                ContactRecord.owner_tenant_id == owner_tenant_id,
+            )
+            .values(revoked_at=_utcnow())
+        )
+        await session.commit()
+        return result.rowcount > 0
+
+
+async def rotate_contact_token(
+    contact_id: str, owner_tenant_id: str, token_hash: str
+) -> bool:
+    """Issue a new link and forget the old device.
+
+    Re-issuing must clear bound_device, otherwise the new link would be locked
+    to whichever device held the compromised one.
+    """
+    async with async_session() as session:
+        result = await session.execute(
+            update(ContactRecord)
+            .where(
+                ContactRecord.contact_id == contact_id,
+                ContactRecord.owner_tenant_id == owner_tenant_id,
+            )
+            .values(token_hash=token_hash, bound_device=None, revoked_at=None)
+        )
+        await session.commit()
+        return result.rowcount > 0
+
+
+async def delete_contact(contact_id: str, owner_tenant_id: str) -> bool:
+    """Remove a contact and its session history for good.
+
+    Distinct from revoke, which keeps the record so past conversations stay
+    readable. This is for entries created by mistake, where leaving a dead row
+    on screen is just clutter. Ownership is in the WHERE clause so a guessed id
+    cannot delete someone else's contact.
+    """
+    async with async_session() as session:
+        await session.execute(
+            delete(ContactSessionRecord).where(
+                ContactSessionRecord.contact_id == contact_id
+            )
+        )
+        result = await session.execute(
+            delete(ContactRecord).where(
+                ContactRecord.contact_id == contact_id,
+                ContactRecord.owner_tenant_id == owner_tenant_id,
+            )
+        )
+        await session.commit()
+        return result.rowcount > 0
+
+
+async def start_contact_session(
+    *, session_id: str, contact_id: str, conversation_id: Optional[str],
+    ip_address: Optional[str], user_agent: Optional[str], device_id: Optional[str],
+    channel: str = "chat",
+) -> None:
+    async with async_session() as session:
+        session.add(ContactSessionRecord(
+            session_id=session_id, contact_id=contact_id,
+            conversation_id=conversation_id, ip_address=ip_address,
+            user_agent=(user_agent or "")[:300], device_id=device_id, channel=channel,
+        ))
+        await session.commit()
+
+
+async def list_contact_sessions(contact_id: str, limit: int = 50) -> List[ContactSessionRecord]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(ContactSessionRecord)
+            .where(ContactSessionRecord.contact_id == contact_id)
+            .order_by(ContactSessionRecord.started_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+
+async def count_sessions_since(contact_id: str, since: datetime) -> int:
+    """Backs the per-day cap, so a leaked link cannot quietly drain the quota."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(func.count())
+            .select_from(ContactSessionRecord)
+            .where(
+                ContactSessionRecord.contact_id == contact_id,
+                ContactSessionRecord.started_at >= since,
+            )
+        )
+        return int(result.scalar() or 0)
+
+
+# Owner/agent queries live in their own module to keep this file from becoming
+# the same kind of monolith the frontend page did. Re-exported so existing
+# `repositories.<fn>` call sites keep working — the package boundary is an
+# organisational change, not an API change.
+from app.repositories.owners import (  # noqa: E402,F401
+    create_owner,
+    get_agent,
+    get_owner,
+    update_owner,
+    upsert_agent,
+)
+
+
+async def set_contact_blocked(contact_id: str, owner_tenant_id: str, blocked: bool) -> bool:
+    """Block or unblock a contact. Ownership is in the WHERE clause so a
+    guessed id cannot reach another owner's contact."""
+    async with async_session() as session:
+        result = await session.execute(
+            update(ContactRecord)
+            .where(
+                ContactRecord.contact_id == contact_id,
+                ContactRecord.owner_tenant_id == owner_tenant_id,
+            )
+            .values(blocked_at=_utcnow() if blocked else None)
+        )
+        await session.commit()
+        return result.rowcount > 0

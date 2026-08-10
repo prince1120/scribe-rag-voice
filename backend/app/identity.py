@@ -31,10 +31,25 @@ class Identity:
     is_owner: bool
     groq_key: Optional[str] = None
     sarvam_key: Optional[str] = None
+    # Set when the caller arrived through an invite link. They read the
+    # owner's library, so tenant_id is the owner's — this is who is asking,
+    # for attribution and for the limits that apply to them.
+    contact_id: Optional[str] = None
 
     @property
     def is_demo(self) -> bool:
-        return not self.is_owner
+        return not self.is_owner and self.contact_id is None
+
+    @property
+    def is_contact(self) -> bool:
+        return self.contact_id is not None
+
+    @property
+    def can_manage_documents(self) -> bool:
+        """Contacts ask questions; they do not curate the library. Without
+        this, an invite link would carry the right to delete every document
+        it can read."""
+        return self.is_owner
 
 
 def resolve_identity(
@@ -53,8 +68,29 @@ def resolve_identity(
     # demo keys in a browser can't silently redirect the owner to a different
     # library than the one they see in the UI.
     try:
-        verify(session_cookie)
-        return Identity(tenant_id=OWNER_TENANT_ID, is_owner=True)
+        payload = verify(session_cookie)
+        kind = payload.get("kind", "owner")
+
+        # A contact cookie is signed by the same key as the owner's, so the
+        # signature alone proves nothing about privilege — the kind has to be
+        # read. Skipping this check would let any invite link act as owner.
+        if isinstance(kind, str) and kind.startswith("contact:"):
+            # "contact:<contact_id>:<owner_tenant_id>". The owner's tenant is
+            # carried in the signed payload rather than looked up, so resolving
+            # identity stays synchronous and free of a database round trip on
+            # every request. It is inside the signature, so a contact cannot
+            # edit it to reach another owner's documents.
+            parts = kind.split(":", 2)
+            contact_id = parts[1] if len(parts) > 1 else ""
+            owner_tenant = parts[2] if len(parts) > 2 else OWNER_TENANT_ID
+            if contact_id:
+                return Identity(
+                    tenant_id=owner_tenant,
+                    is_owner=False,
+                    contact_id=contact_id,
+                )
+        elif kind == "owner":
+            return Identity(tenant_id=OWNER_TENANT_ID, is_owner=True)
     except SessionError:
         pass
 

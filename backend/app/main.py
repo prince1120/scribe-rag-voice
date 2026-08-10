@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 # Imported after logging is configured so any startup-time log lines from
 # these modules (model loading, service init) come out in the same format.
 from app.api.routes import router as api_router  # noqa: E402
+from app.api.contact_routes import router as contact_router  # noqa: E402
+from app.api.owner_routes import router as owner_router  # noqa: E402
 from app.api.session_routes import router as session_router  # noqa: E402
 from app.api.voice_routes import router as voice_router  # noqa: E402
 from app.database import init_db  # noqa: E402
@@ -148,6 +150,8 @@ app.add_middleware(
 
 # Include API routes
 app.include_router(session_router, prefix="/api/v1/session", tags=["session"])
+app.include_router(contact_router, prefix="/api/v1/contacts", tags=["contacts"])
+app.include_router(owner_router, prefix="/api/v1/workspace", tags=["workspace"])
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(voice_router, prefix="/api/v1/voice", tags=["voice"])
 

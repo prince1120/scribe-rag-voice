@@ -69,6 +69,20 @@ document_processor = DocumentProcessor(
 )
 
 
+async def _require_document_manager(identity: Identity):
+    """Uploading, editing, and deleting are the owner's alone.
+
+    A contact reaches these routes with a valid session cookie scoped to the
+    owner's tenant, so without this check an invite link would carry the right
+    to delete every document it can read.
+    """
+    if not identity.can_manage_documents:
+        raise HTTPException(
+            status_code=403,
+            detail="This link can ask questions, but cannot change documents.",
+        )
+
+
 async def _enforce_demo_document_cap(identity: Identity):
     if identity.is_owner:
         return
@@ -263,6 +277,7 @@ async def upload_document(
 ):
     """Upload and process a document."""
     tenant_id = identity.tenant_id
+    await _require_document_manager(identity)
     await _enforce_demo_document_cap(identity)
 
     safe_name = sanitize_filename(file.filename)
@@ -308,6 +323,7 @@ async def paste_text(
 ):
     """Ingest pasted text as a document, through the same pipeline as a file upload."""
     tenant_id = identity.tenant_id
+    await _require_document_manager(identity)
     await _enforce_demo_document_cap(identity)
 
     document_id = str(uuid4())
@@ -703,6 +719,7 @@ async def delete_document(
     identity: Identity = Depends(get_identity),
 ):
     """Delete a document and its chunks."""
+    await _require_document_manager(identity)
     tenant_id = identity.tenant_id
     record = await repositories.get_document_record(document_id, tenant_id)
     if not record:
@@ -839,6 +856,7 @@ async def update_document_content(
     identity: Identity = Depends(get_identity),
 ):
     """Edit a document's text content in place and re-index it so chat reflects the edit immediately."""
+    await _require_document_manager(identity)
     tenant_id = identity.tenant_id
     record = await repositories.get_document_record(document_id, tenant_id)
     if not record:

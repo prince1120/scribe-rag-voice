@@ -14,13 +14,15 @@ from typing import Optional
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from livekit.api import AccessToken, RoomAgentDispatch, RoomConfiguration, VideoGrants
 
+from app import repositories
 from app.auth import verify_api_key, verify_internal_api_key
 from app.config import settings
 from app.identity import Identity, get_identity
+from app.rate_limit import client_ip
 from app.models.schemas import (
     VoicePreviewRequest,
     VoiceRetrieveRequest,
@@ -196,6 +198,7 @@ async def voice_history(conversation_id: str) -> dict:
 
 @router.post("/token", response_model=VoiceTokenResponse, dependencies=[Depends(verify_api_key)])
 async def create_voice_token(
+    request: Request,
     body: VoiceTokenRequest,
     identity: Identity = Depends(get_identity),
     x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
@@ -266,8 +269,28 @@ async def create_voice_token(
     # ignore anything else so a stale/bad client value can't crash the session.
     if body.tts_speaker and body.tts_speaker in SUPPORTED_TTS_VOICE_IDS:
         meta["tts_speaker"] = body.tts_speaker
-    if body.conversation_id:
-        meta["conversation_id"] = body.conversation_id
+    # A contact's call needs a conversation to write into, so the owner can
+    # read back what was said. One is minted here when the caller didn't supply
+    # one — without it the turns are stored against nothing and the History
+    # view can only ever show that a call happened, not what it was about.
+    conversation_id = body.conversation_id
+    if identity.contact_id and not conversation_id:
+        conversation_id = str(uuid4())
+
+    if conversation_id:
+        meta["conversation_id"] = conversation_id
+
+    if identity.contact_id:
+        await repositories.get_or_create_conversation(conversation_id, tenant_id)
+        await repositories.start_contact_session(
+            session_id=str(uuid4()),
+            contact_id=identity.contact_id,
+            conversation_id=conversation_id,
+            ip_address=client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            device_id=None,
+            channel="voice",
+        )
     if body.llm_model:
         meta["llm_model"] = body.llm_model
     if body.custom_llm_base_url:

@@ -275,3 +275,244 @@ Recorded so they are not lost. Do not start these before Problems 1–4 are done
 - Follow `.agents/AGENTS.md` (SOLID) — it is the owner's stated standard.
 - **Never commit secrets.** `.gitignore` is already correct; keep it that way. The database password and API keys belong only in `backend/.env`.
 - Prefer editing existing files over adding new ones; this codebase is already well-factored in the backend.
+
+---
+
+## PROBLEM 7 — Two products in one app: Personal and Business  🔵 NEXT MAJOR DIRECTION
+
+**Status:** DESIGN AGREED, NOT STARTED. Invite links (Problem 8 below) are built and are the foundation this sits on.
+
+### The decision
+
+When someone arrives with their own Groq/Sarvam keys, ask one question: **Personal or Business?**
+
+**Personal** — the app exactly as it is today. Upload documents, chat, call. Nothing changes. This is the existing product and must keep working untouched.
+
+**Business** — a different product built from the same engine. The owner is not here to browse their documents; they are here to *configure an assistant others will talk to*.
+
+### Business mode: what the owner sees
+
+A setup screen, and nothing else:
+
+1. **Agent script** — the prompt. Who the assistant is, how it speaks, what it should and shouldn't say. This is the owner's main lever.
+2. **Voice** — pick from the existing voice list, with preview.
+3. **Documents** — up to **3**, small. A business FAQ, price list, and policy sheet is the realistic shape; this is not a document library.
+4. **RAG toggle for voice** — on means answers come from those documents, off means the script alone.
+5. **Test it** — try the configured agent in both voice and chat before sharing it. Nobody should hand out a link to something they have not heard.
+
+Then: create links, share them, and read every conversation that happens.
+
+### Business mode: what the caller sees
+
+Only the agent they were given a link to. No document sidebar, no settings, no other owners. The call screen already built for voice-only links (`/t/[token]` → `CallScreen`) is the right surface.
+
+### What this requires
+
+- **Un-hardcode the owner.** `OWNER_TENANT_ID = "default"` is assumed in ~8 places, and every contact route uses it in place of "the tenant of whoever is asking". This is the blocking change and everything else depends on it.
+- **An owner record** — durable, rather than a tenant id derived from a key hash. An owner rotating their API key must not lose their agent, links, and history.
+- **An agent config per owner** — script, voice, RAG on/off, document cap. New table, owned by the owner tenant.
+- **Contacts scoped to their owner** — the `owner_tenant_id` column already exists, so this is mostly swapping the constant for the caller's tenant.
+- **Conversations scoped to their owner** — so each owner reads only their own callers' transcripts.
+- **Per-owner quotas** — each owner spends their own key, so one cannot drain another's.
+
+### Order
+
+1. Un-hardcode the owner (blocking; do this first and alone)
+2. Owner record + mode choice on first arrival
+3. Agent config table + the setup screen
+4. Scope contacts, sessions, and transcripts per owner
+5. Test-your-agent flow
+6. Per-owner quotas
+
+### Open question, worth deciding deliberately
+
+A public directory — users browsing owners and picking one — is a *different product* again, with abuse and moderation problems this app has no answer for yet. Business mode as described above does not need it: the owner shares their own links. Add discovery only if owners actually ask for it.
+
+---
+
+## PROBLEM 8 — Invite links  ✅ BUILT (uncommitted)
+
+Each person gets a permanent, unguessable link. No signup. Every conversation is attributed to them.
+
+| Piece | Where |
+|---|---|
+| Tokens, hashing, device binding, expiry | `backend/app/contacts.py` |
+| `ContactRecord`, `ContactSessionRecord` | `backend/app/models/db_models.py` |
+| Owner management + public `/open` | `backend/app/api/contact_routes.py` |
+| Contact identity type | `backend/app/identity.py` |
+| Link page + simple call screen | `frontend/app/t/[token]/` |
+| Owner UI | `frontend/app/links/` |
+
+**Security posture.** A link is a bearer credential — whoever holds it is that person, and that cannot be designed away. What limits the damage: only the hash is stored; the first device to open a link claims it and later devices are refused; instant revoke and rotate; optional out-of-band PIN; per-day session caps; and a session log showing IP and device so a spread link is visible.
+
+**Caught while building:** `resolve_identity` accepted any validly-signed cookie as owner. Contact cookies use the same signing key, so an invite link would have carried full owner rights including document deletion. The payload's `kind` is now checked, and all four mutating document routes are guarded.
+
+**Bugs found in testing, all fixed:** a column named `mode` collides with PostgreSQL's `mode()` ordered-set aggregate (renamed to `access_mode`); `set_cookie` received `key` both positionally and via `cookie_params()`, 500-ing every link open; action buttons had no busy state, so slow requests looked dead and got clicked repeatedly.
+
+**Still open:** the PIN screen appears on any 401 rather than only when a PIN is required; no duplicate-name warning; voice ignores per-document selection when RAG is on.
+
+---
+
+## PROBLEM 9 — Three audiences, three surfaces
+
+This is the working spec for the Personal/Business split. Read it before touching `contact_routes.py`, `identity.py`, or anything under `frontend/app/links` and `frontend/app/t`.
+
+### The three people
+
+| | Who they are | What they came to do | How they are identified |
+|---|---|---|---|
+| **Personal user** | Someone with their own API keys | Ask questions about *their own* documents | Their own tenant, derived from their keys |
+| **Business owner** | Someone with their own API keys | Configure an assistant *other people* will call, and read what those people asked | Their own tenant, derived from their keys |
+| **Caller** | Someone handed a link. No account, ever | Talk to one specific owner's assistant | An invite token → a signed cookie carrying `contact:<id>:<owner_tenant>` |
+
+The first two are the same person entering by the same door; the mode question decides which product they get. The caller is a different species entirely — they never see a library, a setting, or another owner.
+
+### The mode question
+
+On first arrival with keys, ask once: **Personal or Business?** Store it on the owner record. It is changeable later but not asked again.
+
+- **Personal** → today's app, unchanged. Documents, chat, voice. Nothing in this section applies.
+- **Business** → the setup flow below. The document library UI is *not* shown; documents exist only as the agent's knowledge.
+
+### Screens
+
+**Business owner**
+
+1. `/setup` — first run only. Business **name** and **category** (both required: this is how we learn what people actually build), then straight into the agent editor.
+2. `/agent` — the single agent. **One agent per owner** — no list, no picker, no "create new". Fields: script/prompt, voice (with preview), up to **3** small documents, RAG on/off for voice. A **Test** panel runs the configured agent in both voice and chat against the owner's own config, before any link exists.
+3. `/links` — create, copy, revoke, rotate, delete links. Already built.
+4. `/links` → History → Transcript — who called, when, from what device, and what was said. Already built.
+
+**Caller**
+
+`/t/<token>` and nothing else. Opens the call screen: orb, status, timer, mute, end. Already built. They never reach `/`, `/links`, or `/agent`; a contact identity is rejected by every one of those.
+
+**Personal user**
+
+`/` exactly as it is now.
+
+### Data model
+
+```
+Owner (tenant_id)                     ← derived from their own API keys
+  ├── mode: "personal" | "business"
+  ├── business_name, business_category  (business only)
+  ├── Agent (one, business only)
+  │     ├── script / prompt
+  │     ├── voice id
+  │     ├── rag_enabled_for_voice
+  │     └── documents (max 3, small)
+  └── Contacts (many)                 ← ContactRecord.owner_tenant_id  [EXISTS]
+        └── ContactSessions (many)    ← one per visit  [EXISTS]
+              └── conversation_id     → messages = the transcript  [EXISTS]
+```
+
+`Owner` and `Agent` are the only new tables. Everything below `Contacts` is built.
+
+### Isolation rules — the part that must not be got wrong
+
+1. Every contact query is scoped by `identity.tenant_id`. Never by a constant. `OWNER_TENANT_ID` no longer appears in `contact_routes.py` and must not return.
+2. A caller's owner tenant travels **inside the signed cookie** (`contact:<id>:<owner_tenant>`), so resolving identity needs no database round trip and the value cannot be edited to reach another owner.
+3. `_require_owner` rejects **contacts**, not "anyone who isn't the single owner". Any owner manages their own links; a caller manages nothing.
+4. Contacts may read the agent's documents. They may never upload, edit, or delete — enforced by `can_manage_documents` on all four mutating routes.
+5. Each owner spends their own API keys. One owner must never be able to consume another's quota.
+
+### Order of work
+
+| # | Step | Status |
+|---|---|---|
+| 1 | Un-hardcode the owner in contact routes; carry owner tenant in the contact cookie | ✅ DONE — 139 tests |
+| 2 | `Owner` table: mode, business name, category. Mode question on first arrival | next |
+| 3 | `Agent` table + `/agent` editor. Enforce one agent and the 3-document cap | |
+| 4 | Business mode hides the document library and shows the agent editor instead | |
+| 5 | Test-your-agent panel (voice + chat against the owner's own config) | |
+| 6 | Per-owner quota accounting | |
+
+### Responsive
+
+Every screen listed above must work at 375px. The pattern already used in `chat.css`: stack forms vertically below 640px, make buttons full width, let action rows wrap, and never let a fixed-width child widen the page. Test at 375px before calling any screen done.
+
+### Deliberately not building
+
+A public directory of owners. Callers reach an assistant because an owner sent them a link — not by browsing strangers. A directory is a different product with abuse and moderation problems this app has no answer for. Revisit only if owners ask for it.
+
+---
+
+## PROBLEM 10 — Business mode, full specification
+
+Supersedes the sketch in Problem 9 for business mode. Build in the order given; each step is usable on its own.
+
+### The owner's journey
+
+```
+/setup      business name + agent name, category
+   ↓
+/agent      build: prompt, voice, model, keys, documents, RAG-for-voice
+   ↓
+/agent      test in chat AND voice, against the unsaved draft
+   ↓
+Deploy      the agent goes live; only then do links work
+   ↓
+/links      share links, see who called, read transcripts, block or delete
+   ↓
+/dashboard  totals, recent activity, what people ask most
+```
+
+Editing after deploy is expected and must never require re-deploying from scratch: change the prompt, swap the voice, switch the model, rotate a key — all in place.
+
+### Screens and what each contains
+
+**`/setup`** — asked once
+- Business name, **agent name** (what the assistant calls itself), category
+
+**`/agent`** — the build surface
+- **Prompt** — full, unconstrained. The owner's main lever.
+- **Voice** — all voices, grouped male/female, each previewable before choosing.
+- **Model settings** — which LLM, plus keys: Sarvam, and any custom OpenAI-compatible model. Keys are editable and rotatable here, never shown back in full once saved.
+- **Documents** — optional. Up to 3, small. An agent with no documents is valid and common.
+- **RAG for voice** — on/off. **Chat always retrieves**; only voice is toggleable, because a spoken answer pays retrieval latency on every turn while chat can absorb it behind a streaming cursor.
+- **Test** — run the *draft* config in both chat and voice, before deploying. Nobody should hand out a link to something they have not heard.
+- **Deploy** — flips the agent live. Links do nothing until this happens.
+
+**`/links`** — the people
+- Create, copy, rotate, revoke, delete — built.
+- **Block** — distinct from revoke: a blocked person keeps their link but is refused, and the owner keeps their history. Revoke kills the link; block kills the person's access.
+- Per caller: when they called, from what device, and the full transcript of chat or voice.
+- **Search, filter, and pagination** — a business with two hundred callers cannot scroll.
+
+**`/dashboard`** — the overview
+- Total calls and chats, unique callers, activity over time.
+- Recent conversations, newest first.
+- **Most-asked questions** — the highest-value thing here: it tells an owner what to put in their documents next.
+
+### New model concepts
+
+| Concept | Why |
+|---|---|
+| `AgentRecord.status` — `draft` \| `deployed` | A link must not connect to a half-written prompt. Deploy is the gate. |
+| `AgentRecord.name` | The assistant's own name, distinct from the business name. |
+| `ContactRecord.blocked_at` | Block ≠ revoke. Revoke invalidates the link; block refuses the person while keeping their history. |
+| Per-owner model + keys | Each owner spends their own quota; keys live with the workspace, not in `.env`. |
+
+### Order
+
+| # | Step | Status |
+|---|---|---|
+| 1 | Un-hardcode owner; carry owner tenant in contact cookie | ✅ DONE |
+| 2 | `Owner`/`Agent` tables, service + routes, 155 tests | ✅ DONE |
+| 3 | `/setup` and `/agent` screens | ✅ DONE (first pass) |
+| 4 | Agent name, deploy gate, block | ← next |
+| 5 | Business mode redirects to `/setup`, hides the personal library | |
+| 6 | Documents on the agent screen, 3-doc cap enforced in UI | |
+| 7 | Test panel: chat + voice against the draft | |
+| 8 | Model settings + key rotation per owner | |
+| 9 | Search, filter, pagination on `/links` | |
+| 10 | `/dashboard` | |
+
+### Rules that must not be broken
+
+- Chat always retrieves. Only voice's RAG is toggleable.
+- A caller can talk to a **deployed** agent only. Draft agents refuse connections.
+- A blocked caller is refused at `/contacts/open`, before a session is minted.
+- Keys are write-only from the UI: saved, never returned in full.
+- Every list an owner sees is scoped by `identity.tenant_id`. No constants.
