@@ -9,6 +9,8 @@
 import { useCallback, useEffect, useState } from "react";
 
 interface AgentConfig {
+  name?: string;
+  status?: string;
   script: string;
   voice_id: string;
   rag_enabled: boolean;
@@ -30,6 +32,8 @@ export default function AgentPage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [previewing, setPreviewing] = useState("");
+  const [deploying, setDeploying] = useState(false);
+  const [docCount, setDocCount] = useState<number | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -38,6 +42,13 @@ export default function AgentPage() {
           fetch("/api/v1/workspace/agent", { credentials: "include" }),
           fetch("/api/v1/voice/voices", { credentials: "include" }),
         ]);
+
+        try {
+          const docs = await fetch("/api/v1/documents", { credentials: "include" });
+          if (docs.ok) setDocCount((await docs.json()).length);
+        } catch {
+          // A missing count is cosmetic; the editor still works without it.
+        }
 
         if (agentRes.status === 403) {
           setError("Only the workspace owner can change the agent.");
@@ -68,6 +79,7 @@ export default function AgentPage() {
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
+          name: config.name,
           script: config.script,
           voice_id: config.voice_id,
           rag_enabled: config.rag_enabled,
@@ -85,6 +97,27 @@ export default function AgentPage() {
       setError(err instanceof Error ? err.message : "Could not save.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function deploy(live: boolean) {
+    setDeploying(true);
+    setError("");
+    try {
+      const response = await fetch(
+        `/api/v1/workspace/agent/${live ? "deploy" : "undeploy"}`,
+        { method: "POST", credentials: "include" }
+      );
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body?.detail || "Could not change the status.");
+      }
+      const data = await response.json();
+      setConfig((prev) => (prev ? { ...prev, status: data.status } : prev));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not change the status.");
+    } finally {
+      setDeploying(false);
     }
   }
 
@@ -145,6 +178,37 @@ export default function AgentPage() {
           </div>
           <a href="/links" className="agent-link">Share links →</a>
         </header>
+
+        <div className={`agent-status ${config.status === "deployed" ? "is-live" : ""}`}>
+          <span className="agent-status-dot" aria-hidden="true" />
+          <span>
+            {config.status === "deployed"
+              ? "Live — your links are working"
+              : "Draft — links will not connect until you deploy"}
+          </span>
+          <button
+            type="button"
+            className="agent-status-btn ds-pressable ds-tap"
+            onClick={() => deploy(config.status !== "deployed")}
+            disabled={deploying || !config.script.trim()}
+          >
+            {deploying ? "Working…" : config.status === "deployed" ? "Take offline" : "Deploy"}
+          </button>
+        </div>
+
+        <section className="agent-section">
+          <label className="agent-label" htmlFor="agent-name">
+            What is your assistant called?
+          </label>
+          <input
+            id="agent-name"
+            className="agent-input"
+            value={config.name || ""}
+            onChange={(e) => update({ name: e.target.value })}
+            placeholder="e.g. Asha"
+            maxLength={120}
+          />
+        </section>
 
         <section className="agent-section">
           <label className="agent-label" htmlFor="script">
@@ -217,7 +281,16 @@ export default function AgentPage() {
               <span className="agent-label">Answer from my documents</span>
               <span className="agent-hint">
                 On, it answers from what you upload. Off, it follows the script
-                alone.
+                alone. Chat always uses your documents; this controls voice.
+              </span>
+              <span className="agent-hint">
+                {docCount === null
+                  ? ""
+                  : docCount === 0
+                    ? "No documents yet — add some before turning this on."
+                    : `${docCount} document${docCount === 1 ? "" : "s"} attached.`}
+                {" "}
+                <a href="/?test=1" className="agent-link">Manage documents →</a>
               </span>
             </span>
           </label>
@@ -234,7 +307,8 @@ export default function AgentPage() {
           >
             {saving ? "Saving…" : saved ? "Saved" : "Save agent"}
           </button>
-          <a href="/" className="agent-test ds-pressable ds-tap">
+          {/* ?test=1 stops the workspace redirect bouncing straight back. */}
+          <a href="/?test=1" className="agent-test ds-pressable ds-tap">
             Test it
           </a>
         </div>

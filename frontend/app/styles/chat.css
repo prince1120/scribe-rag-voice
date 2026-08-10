@@ -919,3 +919,35 @@
   .agent-voices { grid-template-columns: 1fr 1fr; }
   .agent-actions { flex-direction: column; }
 }
+
+/* ---- Agent status banner -------------------------------------------------- */
+
+/* Draft vs live is the single most consequential fact on this screen — a
+   deployed agent is answering strangers — so it sits above everything. */
+.agent-status {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--claude-border-strong); border-radius: var(--radius-md);
+  background: var(--claude-surface);
+  font-size: var(--text-sm);
+}
+.agent-status.is-live { border-color: var(--color-success); background: var(--color-success-soft); }
+
+.agent-status-dot {
+  width: 8px; height: 8px; border-radius: var(--radius-full);
+  background: var(--claude-muted); flex-shrink: 0;
+}
+.agent-status.is-live .agent-status-dot { background: var(--color-success); }
+
+.agent-status-btn {
+  margin-left: auto;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--claude-border-strong); border-radius: var(--radius-md);
+  background: var(--claude-bg); color: var(--claude-text);
+  font-size: var(--text-sm); font-weight: var(--weight-medium); cursor: pointer;
+}
+.agent-status-btn:hover:not(:disabled) { background: var(--claude-surface-2); }
+
+@media (max-width: 640px) {
+  .agent-status-btn { margin-left: 0; width: 100%; }
+}

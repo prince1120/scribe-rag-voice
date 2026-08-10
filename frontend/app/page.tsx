@@ -1107,9 +1107,15 @@ export default function Home() {
         const workspace = await response.json();
         if (cancelled) return;
 
+        // ?test=1 means the owner deliberately came here from the agent
+        // editor to try their assistant. Redirecting them back would be an
+        // infinite loop, and there is nowhere else for a business owner to
+        // exercise chat and voice yet.
+        const testing = new URLSearchParams(window.location.search).has("test");
+
         if (workspace.needs_setup || !workspace.answered) {
           window.location.href = "/setup";
-        } else if (workspace.is_business) {
+        } else if (workspace.is_business && !testing) {
           window.location.href = "/agent";
         }
       } catch {
