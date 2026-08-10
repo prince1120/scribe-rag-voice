@@ -128,6 +128,8 @@ class TestAgentConfig:
                 voice_model=None, chat_model=None,
                 voice_temperature=None, chat_temperature=None,
                 voice_max_tokens=None, chat_max_tokens=None,
+                voice_base_url=None, chat_base_url=None,
+                voice_api_key_enc=None, chat_api_key_enc=None,
             )
             if name is not None:
                 record.name = name

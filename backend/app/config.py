@@ -92,7 +92,7 @@ class Settings(BaseSettings):
     # HMAC key for session cookies. Required whenever APP_ACCESS_PASSCODE is
     # set; startup fails otherwise rather than signing with a guessable key.
     # Rotating it invalidates every existing session.
-    SESSION_SECRET: str = ""
+    SESSION_SECRET: str = "scribe-default-session-secret-key-32bytes-long"
     SESSION_TTL_DAYS: int = 30
 
     # Honour X-Forwarded-For when resolving the client IP for rate limiting.

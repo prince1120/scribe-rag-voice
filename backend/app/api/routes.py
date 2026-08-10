@@ -150,8 +150,19 @@ async def _chat_overrides(identity: Identity, x_user_groq_key, x_custom_llm_base
     return {
         "agent_prompt": agent_prompt,
         "groq_api_key": x_user_groq_key or stored.get("groq_api_key"),
-        "custom_base_url": x_custom_llm_base_url or stored.get("custom_llm_base_url"),
-        "custom_api_key": x_custom_llm_key or stored.get("custom_llm_api_key"),
+        # The chat channel's own provider wins over the workspace default, for
+        # the same reason as voice: an owner may want a different endpoint per
+        # channel, and a per-channel value says so explicitly.
+        "custom_base_url": (
+            x_custom_llm_base_url
+            or channel.get("base_url")
+            or stored.get("custom_llm_base_url")
+        ),
+        "custom_api_key": (
+            x_custom_llm_key
+            or channel.get("api_key")
+            or stored.get("custom_llm_api_key")
+        ),
         "model": channel.get("model") or stored.get("llm_model"),
         "temperature": channel.get("temperature"),
         "max_tokens": channel.get("max_tokens"),

@@ -123,6 +123,34 @@ def resolve_identity(
     )
 
 
+# Cache the single-owner tenant id so we don't query the DB on every request.
+_cached_single_owner_tenant: Optional[str] = None
+
+
+async def _resolve_single_owner_tenant() -> str:
+    """In dev mode (no passcode), look up the actual registered owner tenant
+    so dashboard queries match the data created by directory callers.
+
+    Falls back to OWNER_TENANT_ID if no owner is registered yet.
+    """
+    global _cached_single_owner_tenant
+    if _cached_single_owner_tenant is not None:
+        return _cached_single_owner_tenant
+
+    try:
+        from app.repositories.owners import get_all_owners
+        owners = await get_all_owners()
+        if len(owners) == 1:
+            _cached_single_owner_tenant = owners[0].tenant_id
+            logger.info("Dev mode: using real owner tenant %s", _cached_single_owner_tenant)
+            return _cached_single_owner_tenant
+    except Exception:
+        pass
+
+    _cached_single_owner_tenant = OWNER_TENANT_ID
+    return _cached_single_owner_tenant
+
+
 async def get_identity(
     scribe_session: Optional[str] = Cookie(default=None),
     x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
@@ -130,9 +158,23 @@ async def get_identity(
     x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
 ) -> Identity:
     """FastAPI dependency — use this in routes."""
-    return resolve_identity(
+    identity = resolve_identity(
         session_cookie=scribe_session,
         groq_key=x_user_groq_key,
         sarvam_key=x_user_sarvam_key,
         client_id=x_client_id,
     )
+
+    # In dev mode the sync fallback returns tenant_id="default". Replace it
+    # with the actual registered owner's tenant so queries hit real data.
+    if (
+        identity.is_owner
+        and identity.tenant_id == OWNER_TENANT_ID
+        and not settings.APP_ACCESS_PASSCODE
+    ):
+        real_tenant = await _resolve_single_owner_tenant()
+        if real_tenant != OWNER_TENANT_ID:
+            return Identity(tenant_id=real_tenant, is_owner=True)
+
+    return identity
+

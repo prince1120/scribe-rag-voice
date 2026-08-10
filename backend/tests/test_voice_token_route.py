@@ -27,7 +27,9 @@ class TestItRuns:
         response = client.post("/api/v1/voice/token", json={})
         assert response.status_code != 500
 
-    def test_a_missing_key_is_explained_not_crashed(self, client):
+    def test_a_missing_key_is_explained_not_crashed(self, client, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "GROQ_API_KEY", "")
         response = client.post("/api/v1/voice/token", json={})
         assert response.status_code == 400
         # The message should say where to fix it, not restate the rule.

@@ -61,3 +61,77 @@ class TestValidation:
 
     def test_the_minimum_is_not_trivially_low(self):
         assert owner_auth.MIN_PASSWORD_LENGTH >= 8
+
+
+class TestSignupLoginFlow:
+    @pytest.mark.asyncio
+    async def test_full_owner_auth_lifecycle(self):
+        from uuid import uuid4
+        from httpx import ASGITransport, AsyncClient
+        from app.main import app
+        from app.database import engine, init_db
+
+        await init_db()
+        test_email = f"test_owner_{uuid4().hex[:6]}@example.com"
+        test_password = "securePassword123"
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # 1. Signup
+            signup_res = await client.post(
+                "/api/v1/workspace/signup",
+                json={
+                    "email": test_email,
+                    "password": test_password,
+                    "business_name": "Test Clinic",
+                    "business_category": "clinic",
+                },
+            )
+            assert signup_res.status_code == 200
+            data = signup_res.json()
+            assert data["email"] == test_email
+            assert data["business_name"] == "Test Clinic"
+
+            cookie_header = signup_res.headers.get("set-cookie", "")
+            import re
+            m = re.search(r"scribe_session=([^;]+)", cookie_header)
+            session_token = m.group(1) if m else signup_res.cookies.get("scribe_session")
+            assert session_token is not None
+
+            # 2. Get workspace with session cookie
+            ws_res = await client.get(
+                "/api/v1/workspace",
+                cookies={"scribe_session": session_token},
+            )
+            assert ws_res.status_code == 200
+            ws_data = ws_res.json()
+            assert ws_data["business_name"] == "Test Clinic"
+            assert ws_data["is_business"] is True
+
+            # 3. Update profile
+            prof_res = await client.put(
+                "/api/v1/workspace/profile",
+                json={"business_name": "Updated Clinic", "business_category": "services"},
+                cookies={"scribe_session": session_token},
+            )
+            assert prof_res.status_code == 200
+            assert prof_res.json()["business_name"] == "Updated Clinic"
+
+            # 4. Logout
+            logout_res = await client.post(
+                "/api/v1/workspace/logout",
+                cookies={"scribe_session": session_token},
+            )
+            assert logout_res.status_code == 200
+
+            # 5. Login again with credentials
+            login_res = await client.post(
+                "/api/v1/workspace/login",
+                json={"email": test_email, "password": test_password},
+            )
+            assert login_res.status_code == 200
+            assert login_res.json()["business_name"] == "Updated Clinic"
+            assert login_res.json()["email"] == test_email
+
+        await engine.dispose()
+

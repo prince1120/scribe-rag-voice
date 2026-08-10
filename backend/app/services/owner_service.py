@@ -156,6 +156,18 @@ DEFAULT_SCRIPT = (
 )
 
 
+def _mask_enc(encrypted):
+    """Show that a key exists without handing it back."""
+    if not encrypted:
+        return None
+    from app.services import secrets_box
+
+    try:
+        return secrets_box.mask(secrets_box.decrypt(encrypted))
+    except secrets_box.SecretError:
+        return "unreadable - please re-enter"
+
+
 async def get_agent_config(tenant_id: str) -> dict:
     """The owner's agent, with defaults filled in when they have not saved one.
 
@@ -169,6 +181,10 @@ async def get_agent_config(tenant_id: str) -> dict:
             "chat_script": None,
             "voice_model": None,
             "chat_model": None,
+            "voice_base_url": None,
+            "chat_base_url": None,
+            "voice_api_key": None,
+            "chat_api_key": None,
             "voice_temperature": None,
             "voice_max_tokens": None,
             "chat_temperature": None,
@@ -187,6 +203,10 @@ async def get_agent_config(tenant_id: str) -> dict:
         "chat_script": record.chat_script,
         "voice_model": record.voice_model,
         "chat_model": record.chat_model,
+        "voice_base_url": record.voice_base_url,
+        "chat_base_url": record.chat_base_url,
+        "voice_api_key": _mask_enc(record.voice_api_key_enc),
+        "chat_api_key": _mask_enc(record.chat_api_key_enc),
         "voice_temperature": record.voice_temperature,
         "voice_max_tokens": record.voice_max_tokens,
         "chat_temperature": record.chat_temperature,
@@ -223,6 +243,17 @@ async def save_agent_config(
     if script is not None and not script.strip():
         raise OwnerError("The script cannot be empty — it is what the agent says.")
 
+    # Channel API keys are secrets like any other, so they are encrypted here
+    # rather than left as columns anyone with a database dump can read.
+    from app.services import secrets_box
+
+    for field in ("voice_api_key", "chat_api_key"):
+        value = channel_fields.pop(field, None)
+        if value is not None:
+            channel_fields[f"{field}_enc"] = (
+                secrets_box.encrypt(value.strip()) if value.strip() else ""
+            )
+
     record = await repositories.upsert_agent(
         tenant_id=tenant_id,
         name=name.strip() if name is not None else None,
@@ -238,6 +269,10 @@ async def save_agent_config(
         "chat_script": record.chat_script,
         "voice_model": record.voice_model,
         "chat_model": record.chat_model,
+        "voice_base_url": record.voice_base_url,
+        "chat_base_url": record.chat_base_url,
+        "voice_api_key": _mask_enc(record.voice_api_key_enc),
+        "chat_api_key": _mask_enc(record.chat_api_key_enc),
         "voice_temperature": record.voice_temperature,
         "voice_max_tokens": record.voice_max_tokens,
         "chat_temperature": record.chat_temperature,
@@ -326,6 +361,14 @@ async def undeploy_agent(tenant_id: str) -> dict:
     connecting; nothing else is lost."""
     updated = await repositories.set_agent_status(tenant_id, DRAFT)
     return {"status": updated.status, "deployed_at": None}
+
+
+async def delete_agent(tenant_id: str) -> dict:
+    """Delete/reset the agent for this tenant back to fresh draft defaults."""
+    await repositories.delete_agent(tenant_id)
+    logger.info("Agent reset/deleted for tenant %s", tenant_id)
+    return {"status": DRAFT, "configured": False}
+
 
 
 # ---- Provider credentials --------------------------------------------------
@@ -435,6 +478,19 @@ async def resolve_credentials(tenant_id: str) -> dict:
     }
 
 
+def _decrypt_quietly(encrypted):
+    """A key that cannot be read is a key that cannot be used."""
+    if not encrypted:
+        return None
+    from app.services import secrets_box
+
+    try:
+        return secrets_box.decrypt(encrypted)
+    except secrets_box.SecretError:
+        logger.warning("Unreadable channel key")
+        return None
+
+
 def channel_settings(agent, channel: str) -> dict:
     """What a single channel should actually use.
 
@@ -452,40 +508,63 @@ def channel_settings(agent, channel: str) -> dict:
     # Stripped before the fallback, not after: a field the owner cleared to
     # whitespace is an unset override, and treating it as set would leave that
     # channel with no prompt at all.
+    # The per-channel prompt is the prompt. `script` remains as a fallback for
+    # agents saved before the channels were split, so nobody loses an assistant
+    # they had already written.
     override = (getattr(agent, f"{prefix}_script", None) or "").strip()
-    script = override or agent.script
+    script = override or (agent.script or "")
     return {
         "script": (script or "").strip() or None,
         "model": getattr(agent, f"{prefix}_model", None),
         "temperature": getattr(agent, f"{prefix}_temperature", None),
         "max_tokens": getattr(agent, f"{prefix}_max_tokens", None),
+        # A custom endpoint replaces the provider entirely for this channel.
+        # A model name without one is just a name.
+        "base_url": getattr(agent, f"{prefix}_base_url", None),
+        "api_key": _decrypt_quietly(getattr(agent, f"{prefix}_api_key_enc", None)),
     }
 
 
 async def available_channels(tenant_id: str) -> dict:
     """Which channels this agent can actually serve.
 
-    Chat always answers from the owner's documents — that is the product, not a
-    setting — so with none uploaded there is nothing for it to answer from and
-    offering it would produce an assistant that says "I don't have that" to
-    everything. Voice has no such requirement: an owner may want a spoken agent
-    that works from its prompt alone, which is why the RAG toggle exists on
-    that channel and not on chat.
+    A channel needs a prompt. An unwritten one is not a quiet default — it is
+    an assistant with nothing to say, and offering it means someone is sent a
+    link to a blank agent.
 
-    Used by both the test panel and the link-type picker, so the console can
-    never offer a channel that cannot work.
+    Chat additionally needs documents, because chat always answers from them.
+    That is the product rather than a preference, which is why the RAG toggle
+    exists on voice alone: an owner may legitimately want a spoken agent that
+    works from its prompt and nothing else.
+
+    Used by the test panel, the link-type picker, and link creation, so the
+    console can never offer a channel that would not work.
     """
     from app import repositories
 
+    agent = await repositories.get_agent(tenant_id)
     documents = await repositories.list_documents(tenant_id)
     has_documents = len(documents) > 0
 
+    def has_prompt(channel: str) -> bool:
+        return bool((channel_settings(agent, channel) or {}).get("script"))
+
+    voice_ready = has_prompt("voice")
+    chat_ready = has_prompt("chat") and has_documents
+
+    def chat_reason() -> Optional[str]:
+        if not has_prompt("chat"):
+            return "Write a chat prompt to enable it."
+        if not has_documents:
+            return "Chat answers from your documents. Add one to enable it."
+        return None
+
     return {
-        "voice": True,
-        "chat": has_documents,
+        "voice": voice_ready,
+        "chat": chat_ready,
         "document_count": len(documents),
-        "chat_blocked_reason": (
-            None if has_documents
-            else "Chat answers from your documents. Add one to enable it."
+        "voice_blocked_reason": (
+            None if voice_ready else "Write a voice prompt to enable it."
         ),
+        "chat_blocked_reason": chat_reason(),
     }

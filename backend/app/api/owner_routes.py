@@ -43,6 +43,10 @@ class AgentConfigRequest(BaseModel):
     chat_script: Optional[str] = Field(default=None, max_length=8000)
     voice_model: Optional[str] = Field(default=None, max_length=120)
     chat_model: Optional[str] = Field(default=None, max_length=120)
+    voice_base_url: Optional[str] = Field(default=None, max_length=500)
+    chat_base_url: Optional[str] = Field(default=None, max_length=500)
+    voice_api_key: Optional[str] = Field(default=None, max_length=300)
+    chat_api_key: Optional[str] = Field(default=None, max_length=300)
     voice_temperature: Optional[float] = Field(default=None, ge=0, le=2)
     chat_temperature: Optional[float] = Field(default=None, ge=0, le=2)
     # Voice is capped lower: 500 tokens is roughly forty seconds of speech, and
@@ -119,6 +123,35 @@ async def choose_mode(
     return workspace.to_dict()
 
 
+class ProfileUpdateRequest(BaseModel):
+    business_name: Optional[str] = Field(default=None, max_length=200)
+    business_category: Optional[str] = Field(default=None, max_length=64)
+
+
+@router.put("/profile")
+async def update_profile(
+    body: ProfileUpdateRequest, identity: Identity = Depends(get_identity)
+):
+    """Update business name and category."""
+    _require_workspace_owner(identity)
+    if body.business_category and body.business_category not in owner_service.VALID_CATEGORIES:
+        raise HTTPException(status_code=400, detail="Pick a valid category that fits your business.")
+
+    record = await repositories.update_owner(
+        tenant_id=identity.tenant_id,
+        business_name=(body.business_name or "").strip() or None,
+        business_category=body.business_category,
+    )
+    if record is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+
+    return {
+        "business_name": record.business_name,
+        "business_category": record.business_category,
+    }
+
+
+
 class CredentialsRequest(BaseModel):
     email: str = Field(max_length=320)
     password: str = Field(max_length=200)
@@ -158,6 +191,57 @@ async def set_credentials(
     return {"email": email}
 
 
+class SignupRequest(BaseModel):
+    email: str = Field(max_length=320)
+    password: str = Field(max_length=200)
+    business_name: Optional[str] = Field(default=None, max_length=200)
+    business_category: Optional[str] = Field(default=None, max_length=64)
+
+
+@router.post("/signup")
+@limiter.limit("5/minute")
+async def signup(request: Request, response: Response, body: SignupRequest):
+    """Register a new business workspace directly with email and password."""
+    import uuid
+
+    try:
+        email = owner_auth.validate_email(body.email)
+        owner_auth.validate_password(body.password)
+    except owner_auth.AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    existing = await repositories.get_owner_by_email(email)
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="That email is already in use.")
+
+    tenant_id = uuid.uuid4().hex[:16]
+    owner = await repositories.create_owner(
+        tenant_id=tenant_id,
+        mode=owner_service.BUSINESS,
+        business_name=body.business_name.strip() if body.business_name else None,
+        business_category=body.business_category,
+    )
+    await repositories.set_owner_credentials(
+        tenant_id=tenant_id,
+        email=email,
+        password_hash=owner_auth.hash_password(body.password),
+    )
+
+    response.set_cookie(
+        value=issue(kind=f"owner:{tenant_id}"),
+        max_age=settings.SESSION_TTL_DAYS * 86400,
+        **cookie_params(),
+    )
+    logger.info("New business workspace signed up: %s", tenant_id)
+    return {
+        "email": email,
+        "mode": owner.mode,
+        "business_name": owner.business_name,
+        "business_category": owner.business_category,
+        "is_business": True,
+    }
+
+
 @router.post("/login")
 @limiter.limit("5/minute")
 async def login(request: Request, response: Response, body: CredentialsRequest):
@@ -186,20 +270,34 @@ async def login(request: Request, response: Response, body: CredentialsRequest):
     )
     logger.info("Owner signed in: %s", record.tenant_id)
     return {
+        "email": record.email,
         "mode": record.mode,
         "business_name": record.business_name,
+        "business_category": record.business_category,
         "is_business": record.mode == owner_service.BUSINESS,
     }
 
 
 @router.post("/logout")
 async def logout(response: Response):
-    """Clear the session. Flags must match the ones it was set with, or the
-    browser keeps the original cookie."""
+    """Clear the session."""
     params = cookie_params()
     response.delete_cookie(
-        key=params["key"], path=params["path"], samesite=params["samesite"],
-        secure=params["secure"], httponly=params["httponly"],
+        key=params["key"],
+        path="/",
+        httponly=params.get("httponly", True),
+        samesite=params.get("samesite", "lax"),
+        secure=params.get("secure", False),
+    )
+    response.set_cookie(
+        key=params["key"],
+        value="",
+        max_age=0,
+        expires=0,
+        path="/",
+        httponly=params.get("httponly", True),
+        samesite=params.get("samesite", "lax"),
+        secure=params.get("secure", False),
     )
     return {"status": "signed out"}
 
@@ -257,6 +355,19 @@ async def undeploy_agent(identity: Identity = Depends(get_identity)):
     return await owner_service.undeploy_agent(identity.tenant_id)
 
 
+@router.get("/models")
+async def list_models():
+    """The shortlist a picker offers.
+
+    Served from the backend so the personal app and the owner console cannot
+    drift apart and offer a model the other does not. Anything outside it is
+    reachable through a custom OpenAI-compatible provider.
+    """
+    from app.services.model_catalogue import GROQ_MODELS
+
+    return {"models": GROQ_MODELS}
+
+
 @router.get("/channels")
 async def get_channels(identity: Identity = Depends(get_identity)):
     """What the console may offer: testing, and link types."""
@@ -288,9 +399,19 @@ async def save_agent(
             allowed_voices=SUPPORTED_TTS_VOICE_IDS,
             **{f: getattr(body, f) for f in (
                 "voice_script", "chat_script", "voice_model", "chat_model",
+                "voice_base_url", "chat_base_url",
+                "voice_api_key", "chat_api_key",
                 "voice_temperature", "chat_temperature",
                 "voice_max_tokens", "chat_max_tokens",
             )},
         )
     except owner_service.OwnerError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.delete("/agent")
+async def delete_agent(identity: Identity = Depends(get_identity)):
+    """Delete and reset the agent back to empty draft defaults."""
+    _require_workspace_owner(identity)
+    return await owner_service.delete_agent(identity.tenant_id)
+

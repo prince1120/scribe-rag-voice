@@ -226,6 +226,15 @@ class AgentRecord(Base):
     voice_model: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     chat_model: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
 
+    # A custom OpenAI-compatible provider, per channel. A model name alone is
+    # not usable — reaching a non-Groq model needs its endpoint and its key
+    # too, and an owner may well want a fast hosted model for calls and a
+    # larger self-hosted one for chat. Keys are encrypted like every other.
+    voice_base_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    voice_api_key_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    chat_base_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    chat_api_key_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     # Sampling, per channel and for the same reason. Null uses the server
     # default rather than a number this table had to guess.
     voice_temperature: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

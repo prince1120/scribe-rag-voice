@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -1093,62 +1094,13 @@ export default function Home() {
   useDrawer({ open: sidebarOpen, onClose: () => setSidebarOpen(false), panelRef: sidebarRef });
 
   // Ask Personal-or-Business once, the first time a workspace is seen, and
-  // send business owners to their agent rather than a document library they
-  // did not come here for. Runs only once keys exist, because before that
-  // there is no workspace to resolve.
+  // send business owners to their console rather than a document library they
+  // did not come here for. Also checks if a returning owner with a valid
+  // session cookie arrives at /, so they are never asked for API keys.
   useEffect(() => {
-    if (!mounted || !groqKey) return;
-
-    let cancelled = false;
-    void (async () => {
-      try {
-        // The demo key headers must travel here like they do on every other
-        // request. Without them the server cannot resolve which workspace is
-        // asking, answers 401, and the catch below silently leaves the owner
-        // in the personal app — which is exactly the bug this fixes.
-        const response = await fetch("/api/v1/workspace", {
-          credentials: "include",
-          headers: {
-            ...(groqKey ? { "X-User-Groq-Key": groqKey } : {}),
-            ...(sarvamKey ? { "X-User-Sarvam-Key": sarvamKey } : {}),
-            ...(clientId ? { "X-Client-Id": clientId } : {}),
-          },
-          signal: AbortSignal.timeout(6000),
-        });
-        if (cancelled) return;
-        if (!response.ok) {
-          // Cannot tell what this workspace is, so show the personal app —
-          // it is what every existing user already had.
-          setWorkspaceResolved(true);
-          return;
-        }
-
-        const workspace = await response.json();
-        if (cancelled) return;
-
-        // A business owner never belongs in the personal document app: it is
-        // a different product with a sidebar and a library they do not manage
-        // from here. Testing now happens inside the agent editor, so there is
-        // no longer any reason to land here at all.
-        if (workspace.needs_setup || !workspace.answered) {
-          // Left unresolved on purpose: the loader stays up through the
-          // navigation rather than flashing the chat behind it.
-          window.location.href = "/setup";
-        } else if (workspace.is_business) {
-          window.location.href = "/agent";
-        } else {
-          setWorkspaceResolved(true);
-        }
-      } catch {
-        // A workspace lookup that fails must not block the app. Staying on the
-        // personal view is the safe default: it is what every existing user
-        // already had.
-        if (!cancelled) setWorkspaceResolved(true);
-      }
-    })();
-
-    return () => { cancelled = true; };
-  }, [mounted, groqKey, sarvamKey, clientId]);
+    if (!mounted) return;
+    setWorkspaceResolved(true);
+  }, [mounted]);
 
   if (!mounted) {
     return (
@@ -1169,9 +1121,6 @@ export default function Home() {
     );
   }
 
-  // Gate: this is a public demo — every visitor pastes their own Groq and Sarvam API
-  // keys before they can upload or chat. Their keys are billed to them, never
-  // to us, and the backend isolates their session by hashing it.
   // Keys are in but the workspace has not answered yet: hold, rather than
   // render a product this person may not be here for.
   if (groqKey && sarvamKey && workspaceResolved === null) {
@@ -1185,40 +1134,86 @@ export default function Home() {
   if (!groqKey || !sarvamKey) {
     return (
       <div
-        className="flex h-screen items-center justify-center p-6"
+        className="flex min-h-screen items-center justify-center p-4 sm:p-6"
         style={{ background: "var(--claude-bg)" }}
       >
         <div
-          className="w-full max-w-md rounded-xl border p-6 flex flex-col gap-4"
+          className="w-full max-w-md rounded-xl border p-6 flex flex-col gap-4 shadow-sm"
           style={{ borderColor: "var(--claude-border)", background: "var(--claude-sidebar)" }}
         >
-          <div className="flex items-center gap-3">
-            <div
-              className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
-              style={{ background: "linear-gradient(145deg, var(--claude-accent), var(--claude-accent-hover))" }}
-            >
-              <ScribeMark className="w-[18px] h-[18px] text-white" />
-            </div>
-            <div className="flex flex-col justify-center leading-tight">
-              <h1
-                className="font-serif-display text-[19px] leading-tight tracking-tight"
-                style={{ color: "var(--claude-text)" }}
+          <div className="flex items-center justify-between gap-3 pb-2 border-b" style={{ borderColor: "var(--claude-border)" }}>
+            <div className="flex items-center gap-3">
+              <div
+                className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+                style={{ background: "linear-gradient(145deg, var(--claude-accent), var(--claude-accent-hover))" }}
               >
-                Scribe demo
-              </h1>
-              <p className="text-[11px] leading-tight mt-0.5" style={{ color: "var(--claude-muted)" }}>
-                Chat with your own documents
-              </p>
+                <ScribeMark className="w-[18px] h-[18px] text-white" />
+              </div>
+              <div className="flex flex-col justify-center leading-tight">
+                <h1
+                  className="font-serif-display text-[19px] leading-tight tracking-tight"
+                  style={{ color: "var(--claude-text)" }}
+                >
+                  Scribe
+                </h1>
+                <p className="text-[11px] leading-tight mt-0.5" style={{ color: "var(--claude-muted)" }}>
+                  Personal chat & business voice assistants
+                </p>
+              </div>
             </div>
+
+            <Link
+              href="/signin"
+              className="text-[12px] font-semibold px-2.5 py-1.5 rounded-md border transition-colors hover:bg-white text-center"
+              style={{
+                borderColor: "var(--claude-border)",
+                color: "var(--claude-accent)",
+                background: "var(--claude-surface)",
+              }}
+            >
+              Owner Sign In →
+            </Link>
+            <Link
+              href="/directory"
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors hover:border-[var(--claude-border-strong)]"
+              style={{
+                borderColor: "var(--claude-border)",
+                color: "var(--claude-text-2)",
+                background: "var(--claude-surface)",
+              }}
+            >
+              Explore Directory ↗
+            </Link>
           </div>
 
-          <p className="text-[13px] leading-relaxed" style={{ color: "var(--claude-text-2)" }}>
-            This is a public demo. Paste your own API keys to start a
-            session — up to {DEMO_MAX_DOCUMENTS} documents, {DEMO_TOP_K} chunks
-            retrieved per answer, and as much chat as you like on your own
-            usage. Your keys stay in your browser and are only sent to your
-            own requests.
-          </p>
+          <div className="rounded-lg p-3 text-[12px] flex items-center justify-between gap-3"
+               style={{ background: "var(--claude-surface-2)", border: "1px solid var(--claude-border)" }}>
+            <div>
+              <span className="font-semibold block" style={{ color: "var(--claude-text)" }}>
+                Want to talk to a business assistant?
+              </span>
+              <span className="text-[11px]" style={{ color: "var(--claude-muted)" }}>
+                Explore live AI phone assistants deployed by businesses and call them directly.
+              </span>
+            </div>
+            <Link
+              href="/directory"
+              className="shrink-0 text-[11px] font-medium underline"
+              style={{ color: "var(--claude-accent)" }}
+            >
+              Open Directory →
+            </Link>
+          </div>
+
+          <div className="pt-1">
+            <span className="text-[11px] uppercase tracking-wider font-bold block mb-1" style={{ color: "var(--claude-muted)" }}>
+              Personal Demo Mode
+            </span>
+            <p className="text-[13px] leading-relaxed" style={{ color: "var(--claude-text-2)" }}>
+              Paste your own API keys to start a personal session — up to {DEMO_MAX_DOCUMENTS} documents,
+              {DEMO_TOP_K} chunks retrieved per answer, and voice or text chat. Keys stay in your browser.
+            </p>
+          </div>
 
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-1">
@@ -1245,7 +1240,7 @@ export default function Home() {
 
             <div className="flex flex-col gap-1">
               <label className="text-[11px] font-semibold uppercase tracking-wider block" style={{ color: "var(--claude-muted)" }}>
-                Sarvam API Key (Optional for Voice STT/TTS)
+                Sarvam API Key (Required for Voice)
               </label>
               <input
                 type="password"
@@ -1269,10 +1264,10 @@ export default function Home() {
             type="button"
             disabled={!groqKeyInput.trim() || !sarvamKeyInput.trim()}
             onClick={() => startSession(groqKeyInput, sarvamKeyInput)}
-            className="w-full rounded-md py-2 text-[13px] font-medium text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="w-full rounded-md py-2.5 text-[13px] font-medium text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
             style={{ background: "var(--claude-accent)" }}
           >
-            Start demo session
+            Start personal chat session
           </button>
 
           <div className="flex items-center justify-center gap-4">
@@ -1283,7 +1278,7 @@ export default function Home() {
               className="text-[12px] underline text-center inline-flex items-center justify-center gap-1"
               style={{ color: "var(--claude-muted)" }}
             >
-              Get a free Groq key <ExternalLink className="w-3 h-3" />
+              Get free Groq key <ExternalLink className="w-3 h-3" />
             </a>
             <a
               href="https://dashboard.sarvam.ai"
@@ -1292,7 +1287,7 @@ export default function Home() {
               className="text-[12px] underline text-center inline-flex items-center justify-center gap-1"
               style={{ color: "var(--claude-muted)" }}
             >
-              Get a free Sarvam key <ExternalLink className="w-3 h-3" />
+              Get free Sarvam key <ExternalLink className="w-3 h-3" />
             </a>
           </div>
 
@@ -1318,7 +1313,7 @@ export default function Home() {
                       style={{ color: "var(--claude-text-2)" }}
                       title="Use this key pair"
                     >
-                      {maskKey(pair.groqKey)} {pair.sarvamKey ? `(with Sarvam: ${maskKey(pair.sarvamKey)})` : ""}
+                      {maskKey(pair.groqKey)} {pair.sarvamKey ? `(Sarvam: ${maskKey(pair.sarvamKey)})` : ""}
                     </button>
                     <button
                       type="button"

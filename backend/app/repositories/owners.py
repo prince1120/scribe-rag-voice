@@ -21,6 +21,14 @@ async def get_owner(tenant_id: str) -> Optional[OwnerRecord]:
         return result.scalar_one_or_none()
 
 
+async def get_all_owners() -> List[OwnerRecord]:
+    """Return all registered owners — used by the dev-mode identity fallback
+    to find the real tenant_id when only one owner exists."""
+    async with async_session() as session:
+        result = await session.execute(select(OwnerRecord))
+        return list(result.scalars().all())
+
+
 async def create_owner(
     *, tenant_id: str, mode: str = "personal",
     business_name: Optional[str] = None, business_category: Optional[str] = None,
@@ -194,3 +202,71 @@ async def set_agent_status(tenant_id: str, status: str) -> AgentRecord:
         await session.commit()
         await session.refresh(record)
         return record
+
+
+async def delete_agent(tenant_id: str) -> None:
+    """Delete the agent record for a tenant."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(AgentRecord).where(AgentRecord.tenant_id == tenant_id)
+        )
+        record = result.scalar_one_or_none()
+        if record is not None:
+            await session.delete(record)
+            await session.commit()
+
+
+
+from app.models.db_models import AgentRecord, DocumentRecord, OwnerRecord
+
+
+async def list_deployed_agents() -> List[dict]:
+    """Return all businesses that have deployed their assistant.
+
+    Returns a list of dicts with business name, category, agent name,
+    greeting, language, voice availability, and chat availability.
+    """
+    async with async_session() as session:
+        result = await session.execute(
+            select(AgentRecord, OwnerRecord)
+            .join(OwnerRecord, AgentRecord.tenant_id == OwnerRecord.tenant_id)
+            .where(AgentRecord.status == "deployed")
+        )
+        rows = result.all()
+
+        agents = []
+        for agent, owner in rows:
+            # Exclude test runner or dummy tenants
+            if owner.tenant_id.startswith("test_"):
+                continue
+
+            # Must be a real business workspace with a real business name
+            if owner.mode != "business" or not (owner.business_name or "").strip():
+                continue
+
+            # Query documents for this owner
+            doc_result = await session.execute(
+                select(DocumentRecord.document_id).where(DocumentRecord.tenant_id == owner.tenant_id)
+            )
+            has_documents = len(doc_result.scalars().all()) > 0
+
+            has_voice = bool((agent.voice_script or agent.script or "").strip())
+            has_chat = bool((agent.chat_script or agent.script or "").strip()) and has_documents
+
+            # Must have at least one active, working channel (voice or chat)
+            if not (has_voice or has_chat):
+                continue
+
+            agents.append({
+                "owner_tenant_id": owner.tenant_id,
+                "business_name": owner.business_name.strip(),
+                "business_category": owner.business_category or "Services",
+                "agent_name": (agent.name or "Assistant").strip(),
+                "greeting": (agent.greeting or "Hello! How can I help you today?").strip(),
+                "language": agent.language or "en",
+                "voice_id": agent.voice_id or "anushka",
+                "has_voice": has_voice,
+                "has_chat": has_chat,
+                "deployed_at": agent.deployed_at.isoformat() if agent.deployed_at else None,
+            })
+        return agents

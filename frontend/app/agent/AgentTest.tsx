@@ -21,14 +21,19 @@ interface Turn {
 
 export function AgentTest({
   deployed,
-  chatAvailable = true,
+  voiceAvailable = false,
+  chatAvailable = false,
+  voiceBlockedReason,
   chatBlockedReason,
 }: {
   deployed: boolean;
-  /** Chat always answers from documents, so with none uploaded there is
-   *  nothing for it to answer from — testing it would only produce a refusal
-   *  to every question. */
+  /** A channel is testable once it has a prompt — and, for chat, documents,
+   *  since chat always answers from them. Testing a channel with neither
+   *  proves nothing: it would answer from an empty prompt or refuse every
+   *  question. */
+  voiceAvailable?: boolean;
   chatAvailable?: boolean;
+  voiceBlockedReason?: string | null;
   chatBlockedReason?: string | null;
 }) {
   const [open, setOpen] = useState(false);
@@ -38,7 +43,15 @@ export function AgentTest({
   const [error, setError] = useState("");
   const abortRef = useRef<AbortController | null>(null);
   const [channel, setChannel] = useState<"chat" | "voice">("voice");
-  const activeChannel = chatAvailable ? channel : "voice";
+
+  // Land on whichever channel actually works, so opening the panel never
+  // shows a disabled tab as the selected one.
+  const activeChannel =
+    channel === "voice" && !voiceAvailable && chatAvailable ? "chat"
+    : channel === "chat" && !chatAvailable && voiceAvailable ? "voice"
+    : channel;
+
+  const nothingReady = !voiceAvailable && !chatAvailable;
 
   const send = useCallback(async () => {
     const question = input.trim();
@@ -119,12 +132,14 @@ export function AgentTest({
           type="button"
           className="agent-test ds-pressable ds-tap"
           onClick={() => setOpen(true)}
+          disabled={nothingReady}
         >
           Test your assistant
         </button>
         <p className="agent-hint">
-          Try it here before sharing a link. Testing uses the saved
-          configuration, so save your changes first.
+          {nothingReady
+            ? "Write a prompt for voice or chat, then save, to test it here."
+            : "Try it here before sharing a link. Testing uses the saved configuration, so save your changes first."}
         </p>
       </section>
     );
@@ -136,17 +151,19 @@ export function AgentTest({
         <div className="agent-test-tabs" role="group" aria-label="Test channel">
           <button
             type="button"
-            className={`agent-test-tab ${channel === "voice" ? "is-active" : ""}`}
+            className={`agent-test-tab ${activeChannel === "voice" ? "is-active" : ""}`}
             onClick={() => setChannel("voice")}
-            aria-pressed={channel === "voice"}
+            aria-pressed={activeChannel === "voice"}
+            disabled={!voiceAvailable}
+            title={voiceBlockedReason || undefined}
           >
             Voice
           </button>
           <button
             type="button"
-            className={`agent-test-tab ${channel === "chat" ? "is-active" : ""}`}
+            className={`agent-test-tab ${activeChannel === "chat" ? "is-active" : ""}`}
             onClick={() => setChannel("chat")}
-            aria-pressed={channel === "chat"}
+            aria-pressed={activeChannel === "chat"}
             disabled={!chatAvailable}
             title={chatBlockedReason || undefined}
           >
@@ -162,10 +179,11 @@ export function AgentTest({
         </button>
       </div>
 
-      {!chatAvailable && (
-        <p className="agent-hint">
-          {chatBlockedReason || "Add a document to test chat."}
-        </p>
+      {activeChannel === "chat" && !chatAvailable && chatBlockedReason && (
+        <p className="agent-hint">{chatBlockedReason}</p>
+      )}
+      {activeChannel === "voice" && !voiceAvailable && voiceBlockedReason && (
+        <p className="agent-hint">{voiceBlockedReason}</p>
       )}
 
       {activeChannel === "voice" ? (

@@ -110,6 +110,24 @@ export function OwnerShell({
               <span>{item.label}</span>
             </Link>
           ))}
+          <button
+            type="button"
+            className="owner-nav-item"
+            style={{ textAlign: "left", width: "100%", background: "transparent", border: "none", cursor: "pointer" }}
+            onClick={async () => {
+              try {
+                await fetch("/api/v1/workspace/logout", { method: "POST", credentials: "include" });
+              } catch {
+                // proceed
+              }
+              window.location.href = "/signin";
+            }}
+          >
+            <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true">
+              <path d="M7 4H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3M12 14l4-4-4-4M16 10H7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span>Sign out</span>
+          </button>
         </nav>
 
         {status && (

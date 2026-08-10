@@ -10,10 +10,11 @@ app/services/voice/, decoupled from this request/response server.
 import asyncio
 import json
 import logging
-from typing import Optional
+from typing import Dict, List, Optional
 from uuid import uuid4
 
 import httpx
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from livekit.api import AccessToken, RoomAgentDispatch, RoomConfiguration, VideoGrants
@@ -231,8 +232,18 @@ async def create_voice_token(
     """
     resolved = await owner_service.resolve_credentials(identity.tenant_id)
 
-    effective_groq = (x_user_groq_key or resolved.get("groq_api_key") or "").strip()
-    effective_sarvam = (x_user_sarvam_key or resolved.get("sarvam_api_key") or "").strip()
+    effective_groq = (
+        x_user_groq_key
+        or resolved.get("groq_api_key")
+        or settings.GROQ_API_KEY
+        or ""
+    ).strip()
+    effective_sarvam = (
+        x_user_sarvam_key
+        or resolved.get("sarvam_api_key")
+        or settings.SARVAM_API_KEY
+        or ""
+    ).strip()
     # A custom OpenAI-compatible model replaces Groq entirely, so its presence
     # makes a Groq key unnecessary rather than merely optional.
     has_custom_llm = bool(
@@ -321,6 +332,21 @@ async def create_voice_token(
         }
         if (agent.greeting or "").strip():
             agent_overrides["greeting_text"] = agent.greeting.strip()
+
+        # If caller identity is known (from contact link/directory connect), personalize instructions and greeting!
+        if identity.contact_id:
+            contact = await repositories.get_contact(identity.contact_id, tenant_id)
+            if contact and (contact.name or "").strip():
+                caller_name = contact.name.strip()
+                instructions += (
+                    f"\n\n[CALLER IDENTITY]: You are on a live voice call with {caller_name}. "
+                    f"Greet {caller_name} warmly by name right at the beginning of the call (e.g. 'Hello {caller_name}!'), "
+                    f"and address them naturally as {caller_name}."
+                )
+                if (agent.greeting or "").strip():
+                    agent_overrides["greeting_text"] = f"Hello {caller_name}! {agent.greeting.strip()}"
+                else:
+                    agent_overrides["greeting_text"] = f"Hello {caller_name}! How can I help you today?"
     else:
         agent_overrides = {}
         # Personal workspaces keep the persona system they already use.
@@ -405,6 +431,13 @@ async def create_voice_token(
         meta["max_tokens"] = max_tokens
     if channel.get("model"):
         meta["llm_model"] = channel["model"]
+    # A channel's own provider replaces whatever the workspace has stored —
+    # an owner may reasonably want a fast hosted model for calls and their own
+    # server for chat, and a per-channel endpoint says so unambiguously.
+    if channel.get("base_url"):
+        meta["custom_llm_base_url"] = channel["base_url"]
+        if channel.get("api_key"):
+            meta["custom_llm_api_key"] = channel["api_key"]
     dispatch_metadata = json.dumps(meta)
     selected_llm = body.llm_model or settings.GROQ_MODEL
     selected_speaker = body.tts_speaker or voice_settings.VOICE_TTS_SPEAKER
@@ -443,3 +476,27 @@ async def create_voice_token(
         room_name=room_name,
         participant_identity=participant_identity,
     )
+
+
+class VoiceSessionRecordRequest(BaseModel):
+    messages: List[dict] = []
+    duration_seconds: int = 0
+
+
+@router.post("/record_session")
+async def record_voice_session(
+    body: VoiceSessionRecordRequest,
+    identity: Identity = Depends(get_identity),
+) -> dict:
+    """Save call transcript turns and duration so the owner dashboard shows
+    the conversation, questions asked, and caller details."""
+    if not body.messages:
+        return {"status": "skipped"}
+
+    conv_id = await repositories.record_voice_transcript(
+        tenant_id=identity.tenant_id,
+        contact_id=identity.contact_id,
+        messages=body.messages,
+        duration_seconds=body.duration_seconds,
+    )
+    return {"status": "saved", "conversation_id": conv_id}
