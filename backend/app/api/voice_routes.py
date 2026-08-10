@@ -56,6 +56,17 @@ async def list_voices() -> dict:
     return {"voices": SUPPORTED_TTS_VOICES, "default": voice_settings.VOICE_TTS_SPEAKER}
 
 
+@router.get("/languages", dependencies=[Depends(verify_api_key)])
+async def list_languages() -> dict:
+    """Languages the STT model accepts, with auto-detect first.
+
+    Served from the backend so a picker can never offer a language the worker
+    would reject — the same reason the voice list is served rather than
+    hardcoded in the UI.
+    """
+    return {"languages": SUPPORTED_STT_LANGUAGES}
+
+
 @router.get("/personas", dependencies=[Depends(verify_api_key)])
 async def list_personas() -> dict:
     """Predefined voice personas (offered by the UI only when RAG is off).
@@ -272,7 +283,20 @@ async def create_voice_token(
         )
         # The owner's saved toggle wins for voice; chat always retrieves.
         rag_enabled = agent.rag_enabled
+
+        # Voice, greeting and language are configuration the owner set and the
+        # caller hears, so they come from the agent rather than the request.
+        # Taking them from the body would let a caller pick a different voice
+        # than the business chose.
+        agent_overrides = {
+            "tts_speaker": agent.voice_id,
+            "stt_language": agent.language or "unknown",
+            "greet_on_connect": bool((agent.greeting or "").strip()),
+        }
+        if (agent.greeting or "").strip():
+            agent_overrides["greeting_text"] = agent.greeting.strip()
     else:
+        agent_overrides = {}
         # Personal workspaces keep the persona system they already use.
         instructions = build_instructions(
             rag_enabled=body.rag_enabled,
@@ -322,7 +346,9 @@ async def create_voice_token(
         meta["custom_llm_base_url"] = body.custom_llm_base_url
         if x_user_custom_llm_key:
             meta["custom_llm_api_key"] = x_user_custom_llm_key
-    meta["greet_on_connect"] = body.greet_on_connect
+    meta.update(agent_overrides)
+    if "greet_on_connect" not in agent_overrides:
+        meta["greet_on_connect"] = body.greet_on_connect
     if body.greeting_text:
         meta["greeting_text"] = body.greeting_text
     if body.temperature is not None:

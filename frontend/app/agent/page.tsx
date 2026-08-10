@@ -14,6 +14,7 @@ import { OwnerShell } from "../components/owner/OwnerShell";
 
 interface AgentConfig {
   name?: string;
+  language?: string;
   status?: string;
   script: string;
   voice_id: string;
@@ -39,6 +40,7 @@ export default function AgentPage() {
   const [deploying, setDeploying] = useState(false);
   const [docCount, setDocCount] = useState<number | null>(null);
   const [businessName, setBusinessName] = useState<string | null>(null);
+  const [languages, setLanguages] = useState<Array<{ id: string; label: string }>>([]);
 
   useEffect(() => {
     void (async () => {
@@ -57,6 +59,13 @@ export default function AgentPage() {
 
         // The rail names the business, so it is fetched alongside the agent
         // rather than by the shell — one request instead of one per screen.
+        try {
+          const langs = await fetch("/api/v1/voice/languages", { credentials: "include" });
+          if (langs.ok) setLanguages((await langs.json()).languages || []);
+        } catch {
+          // The picker falls back to auto-detect.
+        }
+
         try {
           const ws = await fetch("/api/v1/workspace", { credentials: "include" });
           if (ws.ok) setBusinessName((await ws.json()).business_name);
@@ -89,6 +98,7 @@ export default function AgentPage() {
           name: config.name,
           script: config.script,
           voice_id: config.voice_id,
+          language: config.language,
           rag_enabled: config.rag_enabled,
           greeting: config.greeting || undefined,
         }),
@@ -251,6 +261,27 @@ export default function AgentPage() {
             placeholder="Hello! Thanks for calling Sharma Clinic. How can I help?"
             maxLength={500}
           />
+        </section>
+
+        <section className="agent-section">
+          <label className="agent-label" htmlFor="agent-language">
+            What language will callers speak?
+          </label>
+          <p className="agent-hint">
+            Auto-detect works well, but naming a language is more reliable when
+            you already know what your customers use.
+          </p>
+          <select
+            id="agent-language"
+            className="agent-input"
+            value={config.language || "unknown"}
+            onChange={(e) => update({ language: e.target.value })}
+          >
+            {languages.length === 0 && <option value="unknown">Auto-detect</option>}
+            {languages.map((l) => (
+              <option key={l.id} value={l.id}>{l.label}</option>
+            ))}
+          </select>
         </section>
 
         <section className="agent-section">

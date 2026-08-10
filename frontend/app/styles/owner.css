@@ -348,3 +348,55 @@
 @media (prefers-reduced-motion: reduce) {
   .gate-spinner { animation-duration: 2s, 0.2s; }
 }
+
+/* ---- Test panel: channel tabs --------------------------------------------- */
+
+.agent-test-tabs {
+  display: flex; gap: 2px; padding: 2px;
+  border: 1px solid var(--owner-border); border-radius: var(--radius-md);
+  background: var(--owner-bg);
+}
+.agent-test-tab {
+  padding: var(--space-2) var(--space-4);
+  border: none; border-radius: var(--radius-sm);
+  background: transparent; color: var(--owner-muted);
+  font-size: var(--text-sm); font-weight: var(--weight-medium); cursor: pointer;
+}
+.agent-test-tab.is-active { background: var(--owner-rail); color: #fff; }
+
+/* ---- Voice test ----------------------------------------------------------- */
+
+.vtest {
+  display: flex; flex-direction: column; gap: var(--space-4);
+  padding: var(--space-5);
+  border: 1px solid var(--owner-border); border-radius: var(--radius-md);
+  background: var(--owner-surface);
+}
+
+.vtest-main { display: flex; align-items: center; gap: var(--space-4); }
+
+.vtest-orb {
+  width: 62px; height: 62px; flex-shrink: 0;
+  border-radius: var(--radius-full);
+  background: radial-gradient(circle at 35% 30%, #fff 0%, var(--owner-accent) 55%, #353F8A 100%);
+  box-shadow: 0 10px 26px -8px rgba(72, 84, 168, 0.5);
+  /* Fast, because it tracks live audio — a slow transition would lag speech. */
+  transition: transform 0.08s ease-out;
+}
+.vtest-orb.is-live { animation: vtest-breathe 4s ease-in-out infinite; }
+@keyframes vtest-breathe {
+  0%, 100% { box-shadow: 0 10px 26px -8px rgba(72, 84, 168, 0.5); }
+  50% { box-shadow: 0 10px 34px -4px rgba(72, 84, 168, 0.75); }
+}
+
+.vtest-status { display: flex; flex-direction: column; gap: 2px; }
+.vtest-status-main { font-size: var(--text-md); font-weight: var(--weight-medium); }
+.vtest-timer { font-size: var(--text-sm); font-variant-numeric: tabular-nums; color: var(--owner-muted); }
+
+.vtest-controls { display: flex; gap: var(--space-3); }
+.vtest-controls > * { flex: 1; }
+.vtest-controls .links-btn.is-on { background: var(--owner-rail); color: #fff; }
+
+@media (prefers-reduced-motion: reduce) {
+  .vtest-orb.is-live { animation: none; }
+}

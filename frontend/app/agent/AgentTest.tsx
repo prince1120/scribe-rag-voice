@@ -10,6 +10,8 @@
 
 import { useCallback, useRef, useState } from "react";
 
+import { AgentVoiceTest } from "./AgentVoiceTest";
+
 interface Turn {
   role: "user" | "assistant";
   content: string;
@@ -22,6 +24,7 @@ export function AgentTest({ deployed }: { deployed: boolean }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const abortRef = useRef<AbortController | null>(null);
+  const [channel, setChannel] = useState<"chat" | "voice">("voice");
 
   const send = useCallback(async () => {
     const question = input.trim();
@@ -117,7 +120,24 @@ export function AgentTest({ deployed }: { deployed: boolean }) {
   return (
     <section className="agent-section">
       <div className="agent-test-head">
-        <span className="agent-label">Testing your assistant</span>
+        <div className="agent-test-tabs" role="group" aria-label="Test channel">
+          <button
+            type="button"
+            className={`agent-test-tab ${channel === "voice" ? "is-active" : ""}`}
+            onClick={() => setChannel("voice")}
+            aria-pressed={channel === "voice"}
+          >
+            Voice
+          </button>
+          <button
+            type="button"
+            className={`agent-test-tab ${channel === "chat" ? "is-active" : ""}`}
+            onClick={() => setChannel("chat")}
+            aria-pressed={channel === "chat"}
+          >
+            Chat
+          </button>
+        </div>
         <button
           type="button"
           className="agent-test-close"
@@ -127,6 +147,10 @@ export function AgentTest({ deployed }: { deployed: boolean }) {
         </button>
       </div>
 
+      {channel === "voice" ? (
+        <AgentVoiceTest deployed={deployed} />
+      ) : (
+      <>
       {!deployed && (
         <p className="agent-hint">
           This agent is still a draft. Testing works, but shared links will not
@@ -168,6 +192,8 @@ export function AgentTest({ deployed }: { deployed: boolean }) {
           {sending ? "…" : "Ask"}
         </button>
       </div>
+      </>
+      )}
     </section>
   );
 }

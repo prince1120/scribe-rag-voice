@@ -119,10 +119,10 @@ class TestAgentConfig:
         async def get_agent(tenant_id):
             return saved.get(tenant_id)
 
-        async def upsert_agent(*, tenant_id, name=None, script=None, voice_id=None, rag_enabled=None, greeting=None):
+        async def upsert_agent(*, tenant_id, name=None, script=None, voice_id=None, language=None, rag_enabled=None, greeting=None):
             record = saved.get(tenant_id) or SimpleNamespace(
                 tenant_id=tenant_id, name="Assistant", status="draft", script="",
-                voice_id="anushka", rag_enabled=True, greeting=None,
+                voice_id="anushka", language="unknown", rag_enabled=True, greeting=None,
             )
             if name is not None:
                 record.name = name
@@ -130,6 +130,8 @@ class TestAgentConfig:
                 record.script = script
             if voice_id is not None:
                 record.voice_id = voice_id
+            if language is not None:
+                record.language = language
             if rag_enabled is not None:
                 record.rag_enabled = rag_enabled
             if greeting is not None:

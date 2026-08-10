@@ -108,6 +108,7 @@ async def get_agent(tenant_id: str) -> Optional[AgentRecord]:
 async def upsert_agent(
     *, tenant_id: str, name: Optional[str] = None,
     script: Optional[str] = None, voice_id: Optional[str] = None,
+    language: Optional[str] = None,
     rag_enabled: Optional[bool] = None, greeting: Optional[str] = None,
 ) -> AgentRecord:
     """Create the owner's agent, or update the one they already have.
@@ -132,6 +133,8 @@ async def upsert_agent(
             record.script = script
         if voice_id is not None:
             record.voice_id = voice_id
+        if language is not None:
+            record.language = language
         if rag_enabled is not None:
             record.rag_enabled = rag_enabled
         if greeting is not None:

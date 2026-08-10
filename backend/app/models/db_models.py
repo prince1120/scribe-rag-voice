@@ -203,6 +203,9 @@ class AgentRecord(Base):
     # The owner's main lever: who the assistant is and how it speaks.
     script: Mapped[str] = mapped_column(Text, default="")
     voice_id: Mapped[str] = mapped_column(String(64), default="anushka")
+    # STT language, or "unknown" to auto-detect. Set per agent because a
+    # business usually knows what its callers speak.
+    language: Mapped[str] = mapped_column(String(16), default="unknown")
     rag_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     greeting: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 

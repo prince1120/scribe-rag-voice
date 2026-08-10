@@ -168,6 +168,7 @@ async def get_agent_config(tenant_id: str) -> dict:
             "name": "Assistant",
             "script": DEFAULT_SCRIPT,
             "voice_id": "anushka",
+            "language": "unknown",
             "rag_enabled": True,
             "greeting": None,
             "status": DRAFT,
@@ -178,6 +179,7 @@ async def get_agent_config(tenant_id: str) -> dict:
         "status": record.status,
         "script": record.script or DEFAULT_SCRIPT,
         "voice_id": record.voice_id,
+        "language": record.language,
         "rag_enabled": record.rag_enabled,
         "greeting": record.greeting,
         "configured": True,
@@ -187,6 +189,7 @@ async def get_agent_config(tenant_id: str) -> dict:
 async def save_agent_config(
     tenant_id: str, *, name: Optional[str] = None,
     script: Optional[str] = None, voice_id: Optional[str] = None,
+    language: Optional[str] = None,
     rag_enabled: Optional[bool] = None, greeting: Optional[str] = None,
     allowed_voices: Optional[frozenset[str]] = None,
 ) -> dict:
@@ -208,6 +211,7 @@ async def save_agent_config(
         name=name.strip() if name is not None else None,
         script=script.strip() if script is not None else None,
         voice_id=voice_id,
+        language=language,
         rag_enabled=rag_enabled,
         greeting=greeting.strip() if greeting is not None else None,
     )
@@ -215,6 +219,7 @@ async def save_agent_config(
         "name": record.name,
         "script": record.script,
         "voice_id": record.voice_id,
+        "language": record.language,
         "rag_enabled": record.rag_enabled,
         "greeting": record.greeting,
         "configured": True,
