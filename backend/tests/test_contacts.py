@@ -225,3 +225,55 @@ class TestBlocking:
                 blocked_at=datetime.now(timezone.utc),
             )
         assert "blocked" not in str(exc.value).lower()
+
+
+class TestStableWorkspaceIdentity:
+    """A workspace must not move when the request headers change.
+
+    Identity used to be derived purely from whichever API keys a request
+    carried, so the same person resolved to different workspaces depending on
+    whether a given request happened to send them — which stranded an agent
+    under one tenant while the console asked about another. Rotating a key had
+    the same effect: the workspace built with it was silently abandoned.
+    """
+
+    @pytest.fixture(autouse=True)
+    def gate_enabled(self, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "APP_ACCESS_PASSCODE", "test-passcode")
+
+    def test_a_pinned_session_beats_the_keys_on_the_request(self):
+        """The cookie is the workspace. Headers may still be present — they
+        pay for the call — but they no longer decide whose workspace it is."""
+        identity = resolve_identity(
+            session_cookie=issue(kind="owner:tenant-abc"),
+            groq_key="a-completely-different-key",
+        )
+        assert identity.tenant_id == "tenant-abc"
+        assert identity.is_owner is True
+
+    def test_the_same_session_resolves_the_same_way_without_keys(self):
+        """The exact split that stranded the agent: one request with headers,
+        one without, must reach the same workspace."""
+        with_keys = resolve_identity(
+            session_cookie=issue(kind="owner:tenant-abc"), groq_key="gsk_x"
+        )
+        without_keys = resolve_identity(session_cookie=issue(kind="owner:tenant-abc"))
+        assert with_keys.tenant_id == without_keys.tenant_id
+
+    def test_rotating_a_key_keeps_the_workspace(self):
+        """An owner changing their Groq key should not lose their agent."""
+        first = resolve_identity(
+            session_cookie=issue(kind="owner:tenant-abc"), groq_key="old-key"
+        )
+        second = resolve_identity(
+            session_cookie=issue(kind="owner:tenant-abc"), groq_key="new-key"
+        )
+        assert first.tenant_id == second.tenant_id
+
+    def test_without_a_session_the_keys_still_decide(self):
+        """Personal visitors never pin anything, so they keep the derived
+        tenant — the same keys always reach the same documents."""
+        identity = resolve_identity(groq_key="gsk_personal")
+        assert identity.tenant_id.startswith("tenant-")
+        assert identity.is_owner is False

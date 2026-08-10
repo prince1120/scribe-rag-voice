@@ -68,8 +68,22 @@ async def list_categories():
 
 @router.post("/mode")
 async def choose_mode(
-    body: ChooseModeRequest, identity: Identity = Depends(get_identity)
+    response: Response,
+    body: ChooseModeRequest,
+    identity: Identity = Depends(get_identity),
 ):
+    """Answer Personal-or-Business, and pin the workspace to a session.
+
+    Until now identity was derived from whichever API keys a request carried,
+    so the *same person* resolved to different workspaces depending on whether
+    a given request happened to send its headers — which stranded an agent
+    under one tenant while the console asked about another. It also meant
+    rotating an API key silently abandoned the workspace built with it.
+
+    Choosing a mode now issues a cookie carrying the tenant, so from here on
+    the workspace is whatever the session says rather than whatever the
+    headers imply.
+    """
     _require_workspace_owner(identity)
     try:
         workspace = await owner_service.choose_mode(
@@ -82,6 +96,13 @@ async def choose_mode(
         # The service's messages are written for the person reading them, so
         # they are passed through rather than replaced with a generic 400.
         raise HTTPException(status_code=400, detail=str(exc))
+
+    response.set_cookie(
+        value=issue(kind=f"owner:{identity.tenant_id}"),
+        max_age=settings.SESSION_TTL_DAYS * 86400,
+        **cookie_params(),
+    )
+    logger.info("Workspace pinned to session: %s", identity.tenant_id)
     return workspace.to_dict()
 
 
