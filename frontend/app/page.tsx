@@ -138,6 +138,10 @@ export default function Home() {
   const [voiceCallOpen, setVoiceCallOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer
   const sidebarRef = useRef<HTMLElement>(null);
+  // Null until the workspace answers. The personal app must not render before
+  // then: a business owner would see a document library appear and vanish,
+  // which reads as the app being confused about what it is.
+  const [workspaceResolved, setWorkspaceResolved] = useState<boolean | null>(null);
 
   const handleOpenVoiceCall = useCallback(() => {
     setVoiceCallOpen(true);
@@ -1111,7 +1115,13 @@ export default function Home() {
           },
           signal: AbortSignal.timeout(6000),
         });
-        if (!response.ok || cancelled) return;
+        if (cancelled) return;
+        if (!response.ok) {
+          // Cannot tell what this workspace is, so show the personal app —
+          // it is what every existing user already had.
+          setWorkspaceResolved(true);
+          return;
+        }
 
         const workspace = await response.json();
         if (cancelled) return;
@@ -1121,14 +1131,19 @@ export default function Home() {
         // from here. Testing now happens inside the agent editor, so there is
         // no longer any reason to land here at all.
         if (workspace.needs_setup || !workspace.answered) {
+          // Left unresolved on purpose: the loader stays up through the
+          // navigation rather than flashing the chat behind it.
           window.location.href = "/setup";
         } else if (workspace.is_business) {
           window.location.href = "/agent";
+        } else {
+          setWorkspaceResolved(true);
         }
       } catch {
         // A workspace lookup that fails must not block the app. Staying on the
         // personal view is the safe default: it is what every existing user
         // already had.
+        if (!cancelled) setWorkspaceResolved(true);
       }
     })();
 
@@ -1157,6 +1172,16 @@ export default function Home() {
   // Gate: this is a public demo — every visitor pastes their own Groq and Sarvam API
   // keys before they can upload or chat. Their keys are billed to them, never
   // to us, and the backend isolates their session by hashing it.
+  // Keys are in but the workspace has not answered yet: hold, rather than
+  // render a product this person may not be here for.
+  if (groqKey && sarvamKey && workspaceResolved === null) {
+    return (
+      <div className="gate-loading" role="status" aria-label="Loading">
+        <span className="gate-spinner" />
+      </div>
+    );
+  }
+
   if (!groqKey || !sarvamKey) {
     return (
       <div
