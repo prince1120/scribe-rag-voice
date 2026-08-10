@@ -318,3 +318,33 @@
   font-size: var(--text-sm);
 }
 .settings-done a { color: inherit; text-decoration: underline; }
+
+/* ---- Gate loading --------------------------------------------------------- */
+
+/* A full-screen card saying "Checking access…" reads as a failure for what is
+   usually a sub-second request. A quiet spinner on the page background reads
+   as loading, which is what it is. */
+.gate-loading {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100dvh;
+  background: var(--claude-bg);
+}
+
+.gate-spinner {
+  width: 24px; height: 24px;
+  border: 2px solid var(--claude-border);
+  border-top-color: var(--claude-accent);
+  border-radius: var(--radius-full);
+  animation: gate-spin 0.7s linear infinite;
+}
+@keyframes gate-spin { to { transform: rotate(360deg); } }
+
+/* Delayed so a fast check shows nothing at all — a spinner that flashes for
+   80ms is more distracting than an unstyled pause. */
+.gate-spinner { animation-delay: 0s; opacity: 0; animation-name: gate-spin, gate-appear; animation-duration: 0.7s, 0.2s; }
+@keyframes gate-appear { to { opacity: 1; } }
+.gate-spinner { animation-fill-mode: none, forwards; animation-delay: 0s, 0.25s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .gate-spinner { animation-duration: 2s, 0.2s; }
+}

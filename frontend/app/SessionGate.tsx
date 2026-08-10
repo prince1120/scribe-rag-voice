@@ -9,8 +9,14 @@ import { useEffect, useState } from "react";
 
 type GateState = "checking" | "locked" | "open";
 
+// Module-level, so it survives a remount but not a reload. Once the gate has
+// opened, re-checking on every navigation only produces a blocking "Checking
+// access…" between screens — the cookie has not changed, and a 401 from any
+// real request will surface the problem anyway.
+let alreadyOpen = false;
+
 export default function SessionGate({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<GateState>("checking");
+  const [state, setState] = useState<GateState>(alreadyOpen ? "open" : "checking");
   const [passcode, setPasscode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -72,7 +78,7 @@ export default function SessionGate({ children }: { children: React.ReactNode })
       });
       if (res.ok) {
         setPasscode("");
-        setState("open");
+        (() => { alreadyOpen = true; setState("open"); })();
       } else if (res.status === 429) {
         setError("Too many attempts. Wait a minute and try again.");
       } else {
@@ -88,7 +94,9 @@ export default function SessionGate({ children }: { children: React.ReactNode })
   if (state === "checking") {
     return (
       <div className="gate">
-        <div className="gate-card gate-quiet">Checking access…</div>
+        <div className="gate-loading" role="status" aria-label="Loading">
+          <span className="gate-spinner" />
+        </div>
       </div>
     );
   }

@@ -11,6 +11,7 @@
 //
 // Same brand, different job.
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 
@@ -98,7 +99,7 @@ export function OwnerShell({
 
         <nav className="owner-nav" aria-label="Console">
           {NAV.map((item) => (
-            <a
+            <Link
               key={item.href}
               href={item.href}
               className={`owner-nav-item ${pathname === item.href ? "is-active" : ""}`}
@@ -107,7 +108,7 @@ export function OwnerShell({
             >
               {item.icon}
               <span>{item.label}</span>
-            </a>
+            </Link>
           ))}
         </nav>
 
