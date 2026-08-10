@@ -1088,6 +1088,40 @@ export default function Home() {
   // Above every early return — hook order must be identical on each render.
   useDrawer({ open: sidebarOpen, onClose: () => setSidebarOpen(false), panelRef: sidebarRef });
 
+  // Ask Personal-or-Business once, the first time a workspace is seen, and
+  // send business owners to their agent rather than a document library they
+  // did not come here for. Runs only once keys exist, because before that
+  // there is no workspace to resolve.
+  useEffect(() => {
+    if (!mounted || !groqKey) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("/api/v1/workspace", {
+          credentials: "include",
+          signal: AbortSignal.timeout(6000),
+        });
+        if (!response.ok || cancelled) return;
+
+        const workspace = await response.json();
+        if (cancelled) return;
+
+        if (workspace.needs_setup || !workspace.answered) {
+          window.location.href = "/setup";
+        } else if (workspace.is_business) {
+          window.location.href = "/agent";
+        }
+      } catch {
+        // A workspace lookup that fails must not block the app. Staying on the
+        // personal view is the safe default: it is what every existing user
+        // already had.
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [mounted, groqKey]);
+
   if (!mounted) {
     return (
       <div

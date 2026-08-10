@@ -59,6 +59,11 @@ async def update_owner(
             record.business_name = business_name
         if business_category is not None:
             record.business_category = business_category
+        if mode is not None:
+            # Stamped whenever a mode is explicitly set, which is what makes
+            # "have they answered?" a real question rather than a guess.
+            from datetime import datetime, timezone as _tz
+            record.mode_chosen_at = datetime.now(_tz.utc)
 
         await session.commit()
         await session.refresh(record)

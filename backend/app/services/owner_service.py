@@ -66,6 +66,8 @@ class Workspace:
     business_name: Optional[str]
     business_category: Optional[str]
     needs_setup: bool
+    # False until the owner has answered Personal-or-Business at least once.
+    answered: bool
 
     @property
     def is_business(self) -> bool:
@@ -77,6 +79,7 @@ class Workspace:
             "business_name": self.business_name,
             "business_category": self.business_category,
             "needs_setup": self.needs_setup,
+            "answered": self.answered,
             "is_business": self.is_business,
             "max_documents": MAX_BUSINESS_DOCUMENTS if self.is_business else None,
         }
@@ -92,6 +95,7 @@ def _to_workspace(record) -> Workspace:
         business_name=record.business_name,
         business_category=record.business_category,
         needs_setup=incomplete,
+        answered=getattr(record, "mode_chosen_at", None) is not None,
     )
 
 

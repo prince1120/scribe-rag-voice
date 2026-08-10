@@ -154,6 +154,12 @@ class OwnerRecord(Base):
     # "personal" is today's app unchanged. "business" replaces the document
     # library with an agent other people call. Asked once, changeable later.
     mode: Mapped[str] = mapped_column("workspace_mode", String(16), default="personal")
+    # Null until the owner actually answers Personal-or-Business. Without this
+    # the default mode is indistinguishable from a deliberate choice, so the
+    # question could never be asked exactly once.
+    mode_chosen_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # Business only. Category is asked because it is the cheapest way to learn
     # what people actually build with this.
