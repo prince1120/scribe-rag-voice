@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { AgentDocuments } from "./AgentDocuments";
 import { AgentTest } from "./AgentTest";
+import { OwnerShell } from "../components/owner/OwnerShell";
 
 interface AgentConfig {
   name?: string;
@@ -37,6 +38,7 @@ export default function AgentPage() {
   const [previewing, setPreviewing] = useState("");
   const [deploying, setDeploying] = useState(false);
   const [docCount, setDocCount] = useState<number | null>(null);
+  const [businessName, setBusinessName] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -52,6 +54,15 @@ export default function AgentPage() {
         }
         if (agentRes.ok) setConfig(await agentRes.json());
         if (voicesRes.ok) setVoices((await voicesRes.json()).voices || {});
+
+        // The rail names the business, so it is fetched alongside the agent
+        // rather than by the shell — one request instead of one per screen.
+        try {
+          const ws = await fetch("/api/v1/workspace", { credentials: "include" });
+          if (ws.ok) setBusinessName((await ws.json()).business_name);
+        } catch {
+          // The rail falls back to a generic label.
+        }
       } catch {
         setError("Could not load your agent.");
       } finally {
@@ -141,29 +152,34 @@ export default function AgentPage() {
 
   if (loading) {
     return (
-      <main className="agent-page">
-        <div className="agent-inner">
-          <span className="ds-skeleton agent-skeleton" />
-          <span className="ds-skeleton agent-skeleton" />
-        </div>
-      </main>
+      <OwnerShell businessName={businessName}>
+        <main className="agent-page">
+          <div className="agent-inner">
+            <span className="ds-skeleton agent-skeleton" />
+            <span className="ds-skeleton agent-skeleton" />
+          </div>
+        </main>
+      </OwnerShell>
     );
   }
 
   if (!config) {
     return (
-      <main className="agent-page">
-        <div className="agent-inner">
-          <p className="agent-error" role="alert">{error || "No agent found."}</p>
-        </div>
-      </main>
+      <OwnerShell businessName={businessName}>
+        <main className="agent-page">
+          <div className="agent-inner">
+            <p className="agent-error" role="alert">{error || "No agent found."}</p>
+          </div>
+        </main>
+      </OwnerShell>
     );
   }
 
   const allVoices = [...(voices.female || []), ...(voices.male || [])];
 
   return (
-    <main className="agent-page ds-scroll">
+    <OwnerShell businessName={businessName} status={config.status}>
+      <main className="agent-page ds-scroll">
       <div className="agent-inner">
         <header className="agent-header">
           <div>
@@ -172,7 +188,6 @@ export default function AgentPage() {
               This is what your customers hear when they call your link.
             </p>
           </div>
-          <a href="/links" className="agent-link">Share links →</a>
         </header>
 
         <div className={`agent-status ${config.status === "deployed" ? "is-live" : ""}`}>
@@ -308,6 +323,7 @@ export default function AgentPage() {
 
         <AgentTest deployed={config.status === "deployed"} />
       </div>
-    </main>
+      </main>
+    </OwnerShell>
   );
 }

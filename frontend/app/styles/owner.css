@@ -1,0 +1,159 @@
+/* Owner console.
+ *
+ * A separate visual language from the personal app, on purpose. The personal
+ * product is a reading surface: warm paper, wide margins, one column, nothing
+ * competing with the answer. This is a working surface — someone checks it
+ * daily to see what their assistant said to strangers — so it is cooler,
+ * flatter, denser, and always shows where you are and whether you are live.
+ *
+ * Same brand family. Different job, different feel.
+ */
+
+.owner-shell {
+  --owner-bg: #F7F7F5;          /* cooler than the personal warm beige */
+  --owner-surface: #FFFFFF;     /* flat white panels, not tinted card stock */
+  --owner-rail: #1D1E22;        /* dark rail — the console signature */
+  --owner-rail-text: #A8A9AE;
+  --owner-rail-active: #FFFFFF;
+  --owner-border: #E4E4E1;
+  --owner-text: #16171A;
+  --owner-muted: #6E7078;
+  --owner-accent: #4854A8;
+
+  display: flex;
+  min-height: 100dvh;
+  background: var(--owner-bg);
+  color: var(--owner-text);
+}
+
+/* ---- Rail ----------------------------------------------------------------- */
+
+.owner-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  width: 15rem;
+  flex-shrink: 0;
+  padding: var(--space-4) var(--space-3);
+  background: var(--owner-rail);
+}
+
+.owner-brand { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2); }
+.owner-brand-mark {
+  display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--owner-accent); color: #fff;
+}
+.owner-brand-text { display: flex; flex-direction: column; min-width: 0; }
+.owner-brand-name {
+  font-size: var(--text-sm); font-weight: var(--weight-semibold); color: #fff;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.owner-brand-sub { font-size: var(--text-xs); color: var(--owner-rail-text); }
+
+.owner-nav { display: flex; flex-direction: column; gap: 2px; }
+.owner-nav-item {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--owner-rail-text); text-decoration: none;
+  font-size: var(--text-sm); font-weight: var(--weight-medium);
+  transition: background-color var(--duration-fast) var(--ease-standard),
+              color var(--duration-fast) var(--ease-standard);
+}
+.owner-nav-item:hover { background: rgba(255,255,255,0.06); color: #fff; }
+.owner-nav-item.is-active { background: rgba(255,255,255,0.10); color: var(--owner-rail-active); }
+
+/* Live-or-draft pinned to the bottom of the rail: it is the one fact an owner
+   needs on every screen, not just the one where it is edited. */
+.owner-rail-status {
+  margin-top: auto;
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.05);
+  font-size: var(--text-xs); color: var(--owner-rail-text);
+}
+.owner-rail-dot { width: 7px; height: 7px; border-radius: var(--radius-full); background: var(--owner-muted); flex-shrink: 0; }
+.owner-rail-status.is-live { color: #7FD6A2; }
+.owner-rail-status.is-live .owner-rail-dot { background: #4FBF7F; }
+
+/* ---- Main ----------------------------------------------------------------- */
+
+.owner-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+/* Only exists to hold the drawer toggle, so it is hidden where the rail is
+   permanently visible. */
+.owner-topbar { display: none; }
+
+.owner-content { flex: 1; overflow-y: auto; padding: var(--space-6); }
+
+.owner-scrim { display: none; }
+
+/* Owner screens inherit the console palette, overriding the personal app's
+   warm surfaces without each page needing to know it is inside the shell. */
+.owner-shell .agent-page,
+.owner-shell .links-page {
+  min-height: 0; padding: 0; background: transparent;
+}
+.owner-shell .agent-inner,
+.owner-shell .links-inner { max-width: 44rem; margin: 0; }
+
+.owner-shell .agent-input,
+.owner-shell .agent-textarea,
+.owner-shell .links-input,
+.owner-shell .agent-voice,
+.owner-shell .agent-doc,
+.owner-shell .links-item,
+.owner-shell .agent-status,
+.owner-shell .agent-test-log,
+.owner-shell .agent-drop {
+  background: var(--owner-surface);
+  border-color: var(--owner-border);
+}
+
+.owner-shell .agent-title,
+.owner-shell .links-title { font-size: var(--text-xl); }
+
+/* The console already names the business in its rail, so the page-level brand
+   lockup would say it twice. */
+.owner-shell .links-brand { display: none; }
+
+/* ---- Mobile: rail becomes a drawer ---------------------------------------- */
+
+@media (max-width: 860px) {
+  .owner-topbar {
+    display: flex; align-items: center; gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--owner-border);
+    background: var(--owner-surface);
+  }
+  .owner-topbar-name { font-size: var(--text-sm); font-weight: var(--weight-semibold); }
+
+  .owner-menu {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 34px; height: 34px; flex-shrink: 0;
+    border: 1px solid var(--owner-border); border-radius: var(--radius-sm);
+    background: transparent; color: var(--owner-text); cursor: pointer;
+  }
+
+  .owner-rail {
+    position: fixed; inset-y: 0; left: 0; top: 0; bottom: 0;
+    z-index: var(--z-drawer);
+    transform: translateX(-100%);
+    transition: transform var(--duration-slow) var(--ease-decelerate);
+  }
+  .owner-rail.is-open { transform: none; }
+
+  .owner-scrim {
+    display: block; position: fixed; inset: 0;
+    z-index: calc(var(--z-drawer) - 1);
+    background: rgba(20, 20, 18, 0.4);
+    backdrop-filter: blur(2px);
+  }
+
+  .owner-content { padding: var(--space-4); }
+  .owner-shell .agent-inner,
+  .owner-shell .links-inner { max-width: none; }
+}

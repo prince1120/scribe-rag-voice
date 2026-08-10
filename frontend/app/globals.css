@@ -4,6 +4,7 @@
    component, and so component styles below can build on them. */
 @import "./styles/design-system.css";
 @import "./styles/chat.css";
+@import "./styles/owner.css";
 
 @theme {
   --breakpoint-sm: 640px;

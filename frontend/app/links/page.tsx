@@ -9,6 +9,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { OwnerShell } from "../components/owner/OwnerShell";
+
 interface Contact {
   contact_id: string;
   name: string;
@@ -219,7 +221,8 @@ export default function LinksPage() {
   }
 
   return (
-    <main className="links-page ds-scroll">
+    <OwnerShell>
+      <main className="links-page ds-scroll">
       <div className="links-inner">
         {/* Same brand lockup as the main app header, so this reads as part of
             Scribe rather than a detached admin tool. */}
@@ -417,6 +420,7 @@ export default function LinksPage() {
           </ul>
         )}
       </div>
-    </main>
+      </main>
+    </OwnerShell>
   );
 }
