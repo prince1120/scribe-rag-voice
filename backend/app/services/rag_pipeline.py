@@ -107,8 +107,24 @@ class RAGPipeline:
 
         return "\n\n".join(parts), allowed_ids
 
-    def _build_system_prompt(self, has_images: bool, has_text_context: bool) -> str:
-        """Build a system prompt that adapts to whether images / text context are present."""
+    def _build_system_prompt(
+        self, has_images: bool, has_text_context: bool,
+        agent_prompt: Optional[str] = None,
+    ) -> str:
+        """Assemble the system prompt.
+
+        When a business owner has written an agent prompt it leads, because it
+        is theirs and everything else is scaffolding. The citation rules still
+        follow it: those are not style, they are what keeps the model from
+        inventing a source, and an owner cannot opt out of that.
+        """
+        # The owner's voice, first. Prefixed rather than merged so what they
+        # wrote reaches the model unaltered — the same guarantee the voice path
+        # gives, so one assistant does not answer differently by channel.
+        lead = ""
+        if agent_prompt and agent_prompt.strip():
+            lead = agent_prompt.strip() + chr(10) + chr(10)
+
         base = (
             "LENGTH:\n"
             "- Match the question. Short Q -> short A. Detailed Q -> detailed A.\n"
@@ -138,7 +154,7 @@ class RAGPipeline:
         )
 
         if has_images and not has_text_context:
-            return (
+            return lead + (
                 "You are a helpful AI assistant. The user has attached one or more "
                 "images and is asking about them. Look carefully at the image(s) "
                 "and answer based on what you see.\n\n"
@@ -149,7 +165,7 @@ class RAGPipeline:
             )
 
         if has_images and has_text_context:
-            return (
+            return lead + (
                 "You answer questions using the attached image(s) AND the provided "
                 "document context. Combine both when relevant.\n\n"
                 + base
@@ -168,7 +184,7 @@ class RAGPipeline:
             )
 
         # Text-only path
-        return (
+        return lead + (
             "You answer questions about the user's documents using the provided context.\n\n"
             + base
             + "\nWHAT YOU CAN DO:\n"
@@ -367,7 +383,9 @@ class RAGPipeline:
         # Construct prompt
         has_images = bool(attached_images) or any((c.get("payload", c) or {}).get("is_image") for c in context_chunks)
         has_text_context = bool(context.strip())
-        system_prompt = self._build_system_prompt(has_images, has_text_context)
+        system_prompt = self._build_system_prompt(
+            has_images, has_text_context, agent_prompt=agent_prompt,
+        )
 
         newline = "\n"
         history_block = f"Conversation History:{newline}{history_str}{newline}" if history_str else ""
@@ -424,7 +442,8 @@ Answer with citations using ONLY the valid IDs listed above:"""
                                     groq_api_key: Optional[str] = None,
                                     override_model: Optional[str] = None,
                                     custom_base_url: Optional[str] = None,
-                                    custom_api_key: Optional[str] = None):
+                                    custom_api_key: Optional[str] = None,
+        agent_prompt: Optional[str] = None):
         """Generate streaming response.
 
         groq_api_key: when set (demo mode), the call is billed against the
@@ -440,7 +459,9 @@ Answer with citations using ONLY the valid IDs listed above:"""
 
         has_images = bool(attached_images) or any((c.get("payload", c) or {}).get("is_image") for c in context_chunks)
         has_text_context = bool(context.strip())
-        system_prompt = self._build_system_prompt(has_images, has_text_context)
+        system_prompt = self._build_system_prompt(
+            has_images, has_text_context, agent_prompt=agent_prompt,
+        )
 
         newline = "\n"
         history_block = f"Conversation History:{newline}{history_str}{newline}" if history_str else ""

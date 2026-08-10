@@ -120,6 +120,40 @@ async def _enforce_document_cap(identity: Identity):
         )
 
 
+async def _chat_overrides(identity: Identity, x_user_groq_key, x_custom_llm_base_url, x_custom_llm_key):
+    """Agent prompt and credentials for a chat turn.
+
+    Chat had neither. The agent prompt reached voice only, so the same
+    assistant answered differently depending on how it was reached; and the
+    key fallback existed only on the voice path, so a chat-mode link failed
+    with "Groq API Key is required" exactly as voice used to.
+
+    Headers still win — the personal app sends the visitor's own keys — and
+    the stored workspace credentials are the fallback for callers, who have
+    none of their own.
+    """
+    from app.services import owner_service
+
+    agent = await repositories.get_agent(identity.tenant_id)
+    agent_prompt = None
+    if agent is not None and (agent.script or "").strip():
+        workspace = await repositories.get_owner(identity.tenant_id)
+        agent_prompt = owner_service.build_agent_prompt(
+            script=agent.script,
+            agent_name=agent.name,
+            business_name=workspace.business_name if workspace else None,
+        )
+
+    stored = await owner_service.resolve_credentials(identity.tenant_id)
+    return {
+        "agent_prompt": agent_prompt,
+        "groq_api_key": x_user_groq_key or stored.get("groq_api_key"),
+        "custom_base_url": x_custom_llm_base_url or stored.get("custom_llm_base_url"),
+        "custom_api_key": x_custom_llm_key or stored.get("custom_llm_api_key"),
+        "model": stored.get("llm_model"),
+    }
+
+
 async def _resolve_image_paths(results: List[dict]) -> None:
     """Give retrieved image chunks a readable local path, in place.
 
@@ -418,6 +452,9 @@ async def query_documents(
         # Hierarchical citation numbering: doc.chunk (e.g. 1.1, 1.2, 2.1)
         results = assign_display_numbers(results)
         await _resolve_image_paths(results)
+        overrides = await _chat_overrides(
+            identity, x_user_groq_key, x_custom_llm_base_url, x_custom_llm_key
+        )
         retrieval_ms = int((time.time() - start_time) * 1000)
 
         if not results:
@@ -439,10 +476,11 @@ async def query_documents(
             attached_images=body.attached_images,
             temperature=body.temperature if body.temperature is not None else 0.1,
             max_tokens=body.max_tokens or 800,
-            groq_api_key=x_user_groq_key,
-            override_model=body.model,
-            custom_base_url=x_custom_llm_base_url,
-            custom_api_key=x_custom_llm_key,
+            groq_api_key=overrides["groq_api_key"],
+            override_model=body.model or overrides["model"],
+            custom_base_url=overrides["custom_base_url"],
+            custom_api_key=overrides["custom_api_key"],
+            agent_prompt=overrides["agent_prompt"],
         )
         llm_ms = int((time.time() - llm_start) * 1000)
 
@@ -555,6 +593,9 @@ async def query_stream(
         # Hierarchical citation numbering: doc.chunk (e.g. 1.1, 1.2, 2.1)
         results = assign_display_numbers(results)
         await _resolve_image_paths(results)
+        overrides = await _chat_overrides(
+            identity, x_user_groq_key, x_custom_llm_base_url, x_custom_llm_key
+        )
         retrieval_ms = int((time.time() - request_start) * 1000)
 
         if not results:
@@ -620,10 +661,11 @@ async def query_stream(
                     attached_images=body.attached_images,
                     temperature=body.temperature if body.temperature is not None else 0.1,
                     max_tokens=body.max_tokens or 800,
-                    groq_api_key=x_user_groq_key,
-                    override_model=body.model,
-                    custom_base_url=x_custom_llm_base_url,
-                    custom_api_key=x_custom_llm_key,
+                    groq_api_key=overrides["groq_api_key"],
+                    override_model=body.model or overrides["model"],
+                    custom_base_url=overrides["custom_base_url"],
+                    custom_api_key=overrides["custom_api_key"],
+                    agent_prompt=overrides["agent_prompt"],
                 ):
                     if first_token_at is None:
                         first_token_at = time.time()
