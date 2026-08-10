@@ -22,6 +22,18 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   {
+    href: "/dashboard",
+    label: "Overview",
+    icon: (
+      <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true">
+        <rect x="3" y="3" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.6" />
+        <rect x="11" y="3" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.6" />
+        <rect x="3" y="11" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.6" />
+        <rect x="11" y="11" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.6" />
+      </svg>
+    ),
+  },
+  {
     href: "/agent",
     label: "Assistant",
     icon: (

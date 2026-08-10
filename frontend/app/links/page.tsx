@@ -19,6 +19,7 @@ interface Contact {
   has_pin: boolean;
   device_bound: boolean;
   revoked: boolean;
+  blocked: boolean;
   last_seen_at?: string | null;
   created_at?: string | null;
 }
@@ -74,6 +75,14 @@ export default function LinksPage() {
   // Which row is mid-request. Keyed by contact id so one slow action disables
   // only its own row rather than the whole page.
   const [busy, setBusy] = useState<Record<string, string>>({});
+
+  // A business with two hundred callers cannot scroll. Filtering happens on the
+  // client because the whole list already arrives in one request — paging the
+  // API would add a round trip per page for data we are holding anyway.
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "active" | "blocked" | "revoked">("all");
+  const [page, setPage] = useState(0);
+  const PER_PAGE = 20;
 
   const load = useCallback(async () => {
     try {
@@ -185,6 +194,19 @@ export default function LinksPage() {
     }
   }
 
+  async function setBlocked(contactId: string, blocked: boolean) {
+    setBusy((b) => ({ ...b, [contactId]: "block" }));
+    try {
+      await fetch(
+        `/api/v1/contacts/${contactId}/${blocked ? "block" : "unblock"}`,
+        { method: "POST", credentials: "include" }
+      );
+      await load();
+    } finally {
+      setBusy((b) => ({ ...b, [contactId]: "" }));
+    }
+  }
+
   async function rotate(contactId: string, contactName: string) {
     setBusy((b) => ({ ...b, [contactId]: "rotate" }));
     try {
@@ -219,6 +241,25 @@ export default function LinksPage() {
       setBusy((b) => ({ ...b, [contactId]: "" }));
     }
   }
+
+  const matching = contacts.filter((contact) => {
+    const q = query.trim().toLowerCase();
+    if (q && !contact.name.toLowerCase().includes(q) &&
+        !(contact.note || "").toLowerCase().includes(q)) {
+      return false;
+    }
+    if (filter === "blocked") return contact.blocked;
+    if (filter === "revoked") return contact.revoked;
+    // "Active" means reachable right now — neither blocked nor retired.
+    if (filter === "active") return !contact.blocked && !contact.revoked;
+    return true;
+  });
+
+  const pageCount = Math.max(1, Math.ceil(matching.length / PER_PAGE));
+  // Clamped rather than reset: deleting the last row of page three should land
+  // on page two, not throw the owner back to the start of the list.
+  const currentPage = Math.min(page, pageCount - 1);
+  const visible = matching.slice(currentPage * PER_PAGE, (currentPage + 1) * PER_PAGE);
 
   return (
     <OwnerShell>
@@ -309,6 +350,31 @@ export default function LinksPage() {
           </button>
         </form>
 
+        {contacts.length > 0 && (
+          <div className="people-toolbar">
+            <input
+              className="links-input"
+              value={query}
+              onChange={(e) => { setQuery(e.target.value); setPage(0); }}
+              placeholder="Search by name…"
+              aria-label="Search people"
+            />
+            <div className="people-filters" role="group" aria-label="Filter">
+              {(["all", "active", "blocked", "revoked"] as const).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  className={`people-filter ${filter === f ? "is-active" : ""}`}
+                  onClick={() => { setFilter(f); setPage(0); }}
+                  aria-pressed={filter === f}
+                >
+                  {f[0].toUpperCase() + f.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {loading ? (
           <div className="links-skeletons">
             <span className="ds-skeleton" />
@@ -318,13 +384,14 @@ export default function LinksPage() {
           <p className="links-empty">No links yet. Create one above.</p>
         ) : (
           <ul className="links-list">
-            {contacts.map((contact) => (
+            {visible.map((contact) => (
               <li key={contact.contact_id} className="links-item">
                 <div className="links-item-main">
                   <div>
                     <p className="links-item-name">
                       {contact.name}
                       {contact.revoked && <span className="links-tag is-off">revoked</span>}
+                    {contact.blocked && <span className="links-tag is-off">blocked</span>}
                       {contact.has_pin && <span className="links-tag">PIN</span>}
                       {contact.device_bound && <span className="links-tag">device locked</span>}
                     </p>
@@ -351,6 +418,19 @@ export default function LinksPage() {
                       disabled={Boolean(busy[contact.contact_id])}
                     >
                       {busy[contact.contact_id] === "rotate" ? "Creating…" : "New link"}
+                    </button>
+                    <button
+                      type="button"
+                      className="links-btn ds-pressable ds-tap"
+                      onClick={() => setBlocked(contact.contact_id, !contact.blocked)}
+                      disabled={Boolean(busy[contact.contact_id])}
+                      title={contact.blocked
+                        ? "Let this person use their link again"
+                        : "Refuse this person, keeping their link and history"}
+                    >
+                      {busy[contact.contact_id] === "block"
+                        ? "Working…"
+                        : contact.blocked ? "Unblock" : "Block"}
                     </button>
                     {!contact.revoked && (
                       <button
@@ -418,6 +498,30 @@ export default function LinksPage() {
               </li>
             ))}
           </ul>
+        )}
+
+        {pageCount > 1 && (
+          <div className="people-pager">
+            <button
+              type="button"
+              className="links-btn ds-pressable ds-tap"
+              onClick={() => setPage((n) => Math.max(0, n - 1))}
+              disabled={currentPage === 0}
+            >
+              Previous
+            </button>
+            <span className="people-pager-count">
+              {currentPage + 1} of {pageCount} · {matching.length} people
+            </span>
+            <button
+              type="button"
+              className="links-btn ds-pressable ds-tap"
+              onClick={() => setPage((n) => Math.min(pageCount - 1, n + 1))}
+              disabled={currentPage >= pageCount - 1}
+            >
+              Next
+            </button>
+          </div>
         )}
       </div>
       </main>

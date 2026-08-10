@@ -114,6 +114,75 @@ async def list_contacts(identity: Identity = Depends(get_identity)):
     return [_contact_public(r) for r in records]
 
 
+@router.get("/overview")
+async def overview(identity: Identity = Depends(get_identity)):
+    """Everything the console's front page needs, in one request.
+
+    Assembled server-side rather than letting the dashboard fetch four
+    endpoints and stitch them: a dashboard that renders in four stages looks
+    broken, and each extra round trip is another chance for one to fail while
+    the others succeed.
+    """
+    _require_owner(identity)
+
+    contacts_list = await repositories.list_contacts(identity.tenant_id)
+    conversations = await repositories.list_conversations(identity.tenant_id)
+
+    since_week = datetime.now(timezone.utc) - timedelta(days=7)
+
+    sessions_all = []
+    for contact in contacts_list:
+        for session in await repositories.list_contact_sessions(contact.contact_id):
+            sessions_all.append((contact, session))
+
+    def _started(session):
+        value = session.started_at
+        if value is None:
+            return None
+        # Rows can come back naive depending on when they were written.
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+    recent = [pair for pair in sessions_all if (_started(pair[1]) or since_week) >= since_week]
+
+    # The most-asked questions are the highest-value thing here: they tell an
+    # owner what to put in their documents next.
+    questions: list[dict] = []
+    for conversation in conversations:
+        for message in conversation.messages:
+            if message.role == "user" and message.content.strip():
+                questions.append({
+                    "text": message.content.strip()[:200],
+                    "at": message.created_at.isoformat() if message.created_at else None,
+                })
+    questions.sort(key=lambda q: q["at"] or "", reverse=True)
+
+    return {
+        "totals": {
+            "people": len(contacts_list),
+            "active_people": sum(
+                1 for c in contacts_list if not c.revoked_at and not c.blocked_at
+            ),
+            "conversations": len(sessions_all),
+            "conversations_this_week": len(recent),
+            "voice_calls": sum(1 for _, s in sessions_all if s.channel == "voice"),
+        },
+        "recent": [
+            {
+                "contact_id": contact.contact_id,
+                "name": contact.name,
+                "channel": session.channel,
+                "started_at": session.started_at.isoformat() if session.started_at else None,
+            }
+            for contact, session in sorted(
+                sessions_all,
+                key=lambda pair: pair[1].started_at or datetime.min.replace(tzinfo=timezone.utc),
+                reverse=True,
+            )[:10]
+        ],
+        "questions": questions[:15],
+    }
+
+
 @router.get("/{contact_id}/sessions")
 async def contact_sessions(contact_id: str, identity: Identity = Depends(get_identity)):
     """Every visit by this contact — the owner's view of who talked, when, and
