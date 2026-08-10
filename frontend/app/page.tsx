@@ -1098,8 +1098,17 @@ export default function Home() {
     let cancelled = false;
     void (async () => {
       try {
+        // The demo key headers must travel here like they do on every other
+        // request. Without them the server cannot resolve which workspace is
+        // asking, answers 401, and the catch below silently leaves the owner
+        // in the personal app — which is exactly the bug this fixes.
         const response = await fetch("/api/v1/workspace", {
           credentials: "include",
+          headers: {
+            ...(groqKey ? { "X-User-Groq-Key": groqKey } : {}),
+            ...(sarvamKey ? { "X-User-Sarvam-Key": sarvamKey } : {}),
+            ...(clientId ? { "X-Client-Id": clientId } : {}),
+          },
           signal: AbortSignal.timeout(6000),
         });
         if (!response.ok || cancelled) return;
@@ -1124,7 +1133,7 @@ export default function Home() {
     })();
 
     return () => { cancelled = true; };
-  }, [mounted, groqKey]);
+  }, [mounted, groqKey, sarvamKey, clientId]);
 
   if (!mounted) {
     return (
