@@ -1,5 +1,7 @@
 "use client";
 
+import { ownerFetch } from "../lib/ownerFetch";
+
 // Account settings for a business owner.
 //
 // One job today: set the password that /signin expects. The workspace already
@@ -44,8 +46,8 @@ export default function SettingsPage() {
     void (async () => {
       try {
         const [wsRes, provRes] = await Promise.all([
-          fetch("/api/v1/workspace", { credentials: "include" }),
-          fetch("/api/v1/workspace/providers", { credentials: "include" }),
+          ownerFetch("/api/v1/workspace"),
+          ownerFetch("/api/v1/workspace/providers"),
         ]);
         if (cancelled) return;
         if (wsRes.ok) setBusinessName((await wsRes.json()).business_name);
@@ -75,10 +77,9 @@ export default function SettingsPage() {
     setBusy(true);
     setError("");
     try {
-      const response = await fetch("/api/v1/workspace/credentials", {
+      const response = await ownerFetch("/api/v1/workspace/credentials", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ email: email.trim(), password }),
       });
 
@@ -102,10 +103,9 @@ export default function SettingsPage() {
     setSavingKeys(true);
     setKeyError("");
     try {
-      const response = await fetch("/api/v1/workspace/providers", {
+      const response = await ownerFetch("/api/v1/workspace/providers", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         // Only send what was typed. Sending empty strings would clear keys the
         // owner never touched.
         body: JSON.stringify({

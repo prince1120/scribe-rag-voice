@@ -1,5 +1,7 @@
 "use client";
 
+import { ownerFetch } from "../lib/ownerFetch";
+
 // Call your own agent, from the console.
 //
 // Chat and voice are different pipelines: chat is HTTP → RAG → LLM → stream in
@@ -63,10 +65,9 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
     }
 
     try {
-      const response = await fetch("/api/v1/voice/token", {
+      const response = await ownerFetch("/api/v1/voice/token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         // Empty body on purpose: the server reads voice, greeting, language
         // and RAG from the saved agent, so this call tests what a customer
         // would actually reach rather than whatever the console asked for.

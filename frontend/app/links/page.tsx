@@ -1,5 +1,7 @@
 "use client";
 
+import { ownerFetch } from "../lib/ownerFetch";
+
 // Owner screen for invite links.
 //
 // The token is returned exactly once, by the request that creates it — only
@@ -86,7 +88,7 @@ export default function LinksPage() {
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch("/api/v1/contacts", { credentials: "include" });
+      const response = await ownerFetch("/api/v1/contacts");
       if (response.status === 403 || response.status === 401) {
         setError("Sign in as the owner to manage links.");
         return;
@@ -109,10 +111,9 @@ export default function LinksPage() {
 
     setCreating(true);
     try {
-      const response = await fetch("/api/v1/contacts", {
+      const response = await ownerFetch("/api/v1/contacts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({
           name: name.trim(),
           mode,
@@ -156,10 +157,8 @@ export default function LinksPage() {
     setOpenTranscript(sessionId);
     if (transcripts[sessionId]) return;
 
-    const response = await fetch(
-      `/api/v1/contacts/${contactId}/transcript?session_id=${sessionId}`,
-      { credentials: "include" }
-    );
+    const response = await ownerFetch(
+      `/api/v1/contacts/${contactId}/transcript?session_id=${sessionId}`);
     if (!response.ok) return;
     const data = await response.json();
     setTranscripts((prev) => ({ ...prev, [sessionId]: data.messages || [] }));
@@ -168,7 +167,7 @@ export default function LinksPage() {
   async function revoke(contactId: string) {
     setBusy((b) => ({ ...b, [contactId]: "revoke" }));
     try {
-      await fetch(`/api/v1/contacts/${contactId}/revoke`, {
+      await ownerFetch(`/api/v1/contacts/${contactId}/revoke`, {
         method: "POST", credentials: "include",
       });
       await load();
@@ -185,7 +184,7 @@ export default function LinksPage() {
     }
     setBusy((b) => ({ ...b, [contactId]: "delete" }));
     try {
-      await fetch(`/api/v1/contacts/${contactId}`, {
+      await ownerFetch(`/api/v1/contacts/${contactId}`, {
         method: "DELETE", credentials: "include",
       });
       await load();
@@ -197,7 +196,7 @@ export default function LinksPage() {
   async function setBlocked(contactId: string, blocked: boolean) {
     setBusy((b) => ({ ...b, [contactId]: "block" }));
     try {
-      await fetch(
+      await ownerFetch(
         `/api/v1/contacts/${contactId}/${blocked ? "block" : "unblock"}`,
         { method: "POST", credentials: "include" }
       );
@@ -210,7 +209,7 @@ export default function LinksPage() {
   async function rotate(contactId: string, contactName: string) {
     setBusy((b) => ({ ...b, [contactId]: "rotate" }));
     try {
-      const response = await fetch(`/api/v1/contacts/${contactId}/rotate`, {
+      const response = await ownerFetch(`/api/v1/contacts/${contactId}/rotate`, {
         method: "POST", credentials: "include",
       });
       if (!response.ok) return;
@@ -230,8 +229,7 @@ export default function LinksPage() {
     }
     setBusy((b) => ({ ...b, [contactId]: "history" }));
     try {
-      const response = await fetch(`/api/v1/contacts/${contactId}/sessions`, {
-        credentials: "include",
+      const response = await ownerFetch(`/api/v1/contacts/${contactId}/sessions`, {
       });
       if (!response.ok) return;
       const data = await response.json();

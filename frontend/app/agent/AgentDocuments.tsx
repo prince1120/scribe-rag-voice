@@ -1,5 +1,7 @@
 "use client";
 
+import { ownerFetch } from "../lib/ownerFetch";
+
 // Documents for a business agent.
 //
 // Lives on the agent screen rather than behind a link to the personal app,
@@ -32,7 +34,7 @@ export function AgentDocuments({
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch("/api/v1/documents", { credentials: "include" });
+      const response = await ownerFetch("/api/v1/documents");
       if (!response.ok) throw new Error();
       const data: Doc[] = await response.json();
       setDocs(data);
@@ -63,9 +65,8 @@ export function AgentDocuments({
         for (const file of Array.from(files).slice(0, max - docs.length)) {
           const form = new FormData();
           form.append("file", file);
-          const response = await fetch("/api/v1/documents/upload", {
+          const response = await ownerFetch("/api/v1/documents/upload", {
             method: "POST",
-            credentials: "include",
             body: form,
           });
           if (!response.ok) {
@@ -88,9 +89,8 @@ export function AgentDocuments({
   async function remove(documentId: string, filename: string) {
     if (!window.confirm(`Remove ${filename} from your assistant?`)) return;
     try {
-      await fetch(`/api/v1/documents/${encodeURIComponent(documentId)}`, {
+      await ownerFetch(`/api/v1/documents/${encodeURIComponent(documentId)}`, {
         method: "DELETE",
-        credentials: "include",
       });
       await load();
     } catch {

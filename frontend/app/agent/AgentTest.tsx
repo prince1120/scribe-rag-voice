@@ -1,5 +1,7 @@
 "use client";
 
+import { ownerFetch } from "../lib/ownerFetch";
+
 // Try the agent without leaving the owner panel.
 //
 // Testing used to mean a link into the personal document app, which is a
@@ -39,10 +41,9 @@ export function AgentTest({ deployed }: { deployed: boolean }) {
     abortRef.current = controller;
 
     try {
-      const response = await fetch("/api/v1/query/stream", {
+      const response = await ownerFetch("/api/v1/query/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         signal: controller.signal,
         body: JSON.stringify({ query: question }),
       });

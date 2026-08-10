@@ -1,5 +1,7 @@
 "use client";
 
+import { ownerFetch } from "../lib/ownerFetch";
+
 // The business owner's whole product surface: one agent, configured here.
 //
 // There is no agent list and no "create new" — one owner, one assistant. A
@@ -46,8 +48,8 @@ export default function AgentPage() {
     void (async () => {
       try {
         const [agentRes, voicesRes] = await Promise.all([
-          fetch("/api/v1/workspace/agent", { credentials: "include" }),
-          fetch("/api/v1/voice/voices", { credentials: "include" }),
+          ownerFetch("/api/v1/workspace/agent"),
+          ownerFetch("/api/v1/voice/voices"),
         ]);
 
         if (agentRes.status === 403) {
@@ -60,14 +62,14 @@ export default function AgentPage() {
         // The rail names the business, so it is fetched alongside the agent
         // rather than by the shell — one request instead of one per screen.
         try {
-          const langs = await fetch("/api/v1/voice/languages", { credentials: "include" });
+          const langs = await ownerFetch("/api/v1/voice/languages");
           if (langs.ok) setLanguages((await langs.json()).languages || []);
         } catch {
           // The picker falls back to auto-detect.
         }
 
         try {
-          const ws = await fetch("/api/v1/workspace", { credentials: "include" });
+          const ws = await ownerFetch("/api/v1/workspace");
           if (ws.ok) setBusinessName((await ws.json()).business_name);
         } catch {
           // The rail falls back to a generic label.
@@ -90,10 +92,9 @@ export default function AgentPage() {
     setSaving(true);
     setError("");
     try {
-      const response = await fetch("/api/v1/workspace/agent", {
+      const response = await ownerFetch("/api/v1/workspace/agent", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({
           name: config.name,
           script: config.script,
@@ -121,7 +122,7 @@ export default function AgentPage() {
     setDeploying(true);
     setError("");
     try {
-      const response = await fetch(
+      const response = await ownerFetch(
         `/api/v1/workspace/agent/${live ? "deploy" : "undeploy"}`,
         { method: "POST", credentials: "include" }
       );
@@ -143,10 +144,9 @@ export default function AgentPage() {
   async function preview(voiceId: string) {
     setPreviewing(voiceId);
     try {
-      const response = await fetch("/api/v1/voice/preview", {
+      const response = await ownerFetch("/api/v1/voice/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ speaker: voiceId }),
       });
       if (!response.ok) return;

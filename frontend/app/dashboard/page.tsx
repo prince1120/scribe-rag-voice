@@ -1,5 +1,7 @@
 "use client";
 
+import { ownerFetch } from "../lib/ownerFetch";
+
 // The console's front page.
 //
 // An owner opens this daily to answer one question: is my assistant working,
@@ -52,9 +54,9 @@ export default function DashboardPage() {
     void (async () => {
       try {
         const [overviewRes, wsRes, agentRes] = await Promise.all([
-          fetch("/api/v1/contacts/overview", { credentials: "include" }),
-          fetch("/api/v1/workspace", { credentials: "include" }),
-          fetch("/api/v1/workspace/agent", { credentials: "include" }),
+          ownerFetch("/api/v1/contacts/overview"),
+          ownerFetch("/api/v1/workspace"),
+          ownerFetch("/api/v1/workspace/agent"),
         ]);
 
         if (overviewRes.status === 403) {
