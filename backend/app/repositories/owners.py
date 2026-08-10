@@ -72,6 +72,31 @@ async def update_owner(
 
 # ---- Agent -----------------------------------------------------------------
 
+async def get_owner_by_email(email: str) -> Optional[OwnerRecord]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(OwnerRecord).where(OwnerRecord.email == email)
+        )
+        return result.scalar_one_or_none()
+
+
+async def set_owner_credentials(
+    *, tenant_id: str, email: str, password_hash: str
+) -> Optional[OwnerRecord]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(OwnerRecord).where(OwnerRecord.tenant_id == tenant_id)
+        )
+        record = result.scalar_one_or_none()
+        if record is None:
+            return None
+        record.email = email
+        record.password_hash = password_hash
+        await session.commit()
+        await session.refresh(record)
+        return record
+
+
 async def get_agent(tenant_id: str) -> Optional[AgentRecord]:
     async with async_session() as session:
         result = await session.execute(

@@ -22,6 +22,7 @@ from app import repositories
 from app.auth import verify_api_key, verify_internal_api_key
 from app.config import settings
 from app.identity import Identity, get_identity
+from app.services import owner_service
 from app.rate_limit import client_ip
 from app.models.schemas import (
     VoicePreviewRequest,
@@ -247,17 +248,41 @@ async def create_voice_token(
                 gender = g
                 break
 
-    # Resolve the final system prompt server-side: RAG-grounded, a named
-    # persona, or the caller's custom prompt.
-    instructions = build_instructions(
-        rag_enabled=body.rag_enabled,
-        persona=body.persona,
-        custom_prompt=body.custom_prompt,
-        gender=gender,
-    )
+    # A business workspace has an agent its owner wrote, and that prompt is
+    # passed through verbatim — the way every voice-agent builder works. Adding
+    # our own persona and style scaffolding on top would mean the owner tunes a
+    # prompt and hears something else, which makes the editor untrustworthy.
+    #
+    # Only the clock is appended, because it cannot be written in advance: a
+    # date typed into a prompt is stale the next day, and the model otherwise
+    # answers "what is today" from training data.
+    #
+    # Formatting safety is not lost by dropping the prompt rules — markdown is
+    # stripped in code at tts_node, which holds regardless of which model or
+    # prompt produced the text.
+    agent = await repositories.get_agent(tenant_id)
+    rag_enabled = body.rag_enabled
+
+    if agent is not None and (agent.script or "").strip():
+        workspace = await repositories.get_owner(tenant_id)
+        instructions = owner_service.build_agent_prompt(
+            script=agent.script,
+            agent_name=agent.name,
+            business_name=workspace.business_name if workspace else None,
+        )
+        # The owner's saved toggle wins for voice; chat always retrieves.
+        rag_enabled = agent.rag_enabled
+    else:
+        # Personal workspaces keep the persona system they already use.
+        instructions = build_instructions(
+            rag_enabled=body.rag_enabled,
+            persona=body.persona,
+            custom_prompt=body.custom_prompt,
+            gender=gender,
+        )
 
     meta: dict = {
-        "rag_enabled": body.rag_enabled,
+        "rag_enabled": rag_enabled,
         "tenant_id": tenant_id,
         "instructions": instructions,
     }

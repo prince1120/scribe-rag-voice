@@ -166,6 +166,12 @@ class OwnerRecord(Base):
     business_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     business_category: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
+    # Set only by business owners, who need to return daily on devices that may
+    # not be theirs. Personal users are identified by the keys they already
+    # hold; callers by the link they were sent. Neither ever signs in.
+    email: Mapped[Optional[str]] = mapped_column(String(320), unique=True, nullable=True, index=True)
+    password_hash: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 

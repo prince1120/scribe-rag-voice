@@ -89,7 +89,15 @@ def resolve_identity(
                     is_owner=False,
                     contact_id=contact_id,
                 )
+        elif isinstance(kind, str) and kind.startswith("owner:"):
+            # "owner:<tenant_id>" — a business owner who signed in with email
+            # and password. The tenant is inside the signature, so it cannot be
+            # edited to reach another workspace.
+            owner_tenant = kind.split(":", 1)[1]
+            if owner_tenant:
+                return Identity(tenant_id=owner_tenant, is_owner=True)
         elif kind == "owner":
+            # The original single-owner passcode session.
             return Identity(tenant_id=OWNER_TENANT_ID, is_owner=True)
     except SessionError:
         pass
