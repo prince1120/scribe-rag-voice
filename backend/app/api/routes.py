@@ -83,7 +83,30 @@ async def _require_document_manager(identity: Identity):
         )
 
 
-async def _enforce_demo_document_cap(identity: Identity):
+async def _enforce_document_cap(identity: Identity):
+    """Cap uploads by workspace type.
+
+    A business agent's documents are its working knowledge — an FAQ, a price
+    list, a policy sheet. The low cap is a product decision, not a resource
+    limit: a high one invites dumping a whole drive in and getting vague
+    answers back, which reads as the assistant being bad.
+    """
+    from app.services import owner_service
+
+    workspace = await owner_service.get_or_create_workspace(identity.tenant_id)
+    if workspace.is_business:
+        existing = await repositories.list_documents(identity.tenant_id)
+        if len(existing) >= owner_service.MAX_BUSINESS_DOCUMENTS:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"An assistant can use up to "
+                    f"{owner_service.MAX_BUSINESS_DOCUMENTS} documents. "
+                    "Remove one to add another."
+                ),
+            )
+        return
+
     if identity.is_owner:
         return
     existing = await repositories.list_documents(identity.tenant_id)
@@ -278,7 +301,7 @@ async def upload_document(
     """Upload and process a document."""
     tenant_id = identity.tenant_id
     await _require_document_manager(identity)
-    await _enforce_demo_document_cap(identity)
+    await _enforce_document_cap(identity)
 
     safe_name = sanitize_filename(file.filename)
     ext = os.path.splitext(safe_name)[1].lower()
@@ -324,7 +347,7 @@ async def paste_text(
     """Ingest pasted text as a document, through the same pipeline as a file upload."""
     tenant_id = identity.tenant_id
     await _require_document_manager(identity)
-    await _enforce_demo_document_cap(identity)
+    await _enforce_document_cap(identity)
 
     document_id = str(uuid4())
     safe_name = sanitize_filename(body.title) or "pasted-text"

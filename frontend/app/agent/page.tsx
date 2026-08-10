@@ -8,6 +8,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { AgentDocuments } from "./AgentDocuments";
+
 interface AgentConfig {
   name?: string;
   status?: string;
@@ -42,13 +44,6 @@ export default function AgentPage() {
           fetch("/api/v1/workspace/agent", { credentials: "include" }),
           fetch("/api/v1/voice/voices", { credentials: "include" }),
         ]);
-
-        try {
-          const docs = await fetch("/api/v1/documents", { credentials: "include" });
-          if (docs.ok) setDocCount((await docs.json()).length);
-        } catch {
-          // A missing count is cosmetic; the editor still works without it.
-        }
 
         if (agentRes.status === 403) {
           setError("Only the workspace owner can change the agent.");
@@ -270,6 +265,8 @@ export default function AgentPage() {
           </div>
         </section>
 
+        <AgentDocuments onCountChange={setDocCount} />
+
         <section className="agent-section">
           <label className="agent-toggle">
             <input
@@ -289,8 +286,7 @@ export default function AgentPage() {
                   : docCount === 0
                     ? "No documents yet — add some before turning this on."
                     : `${docCount} document${docCount === 1 ? "" : "s"} attached.`}
-                {" "}
-                <a href="/?test=1" className="agent-link">Manage documents →</a>
+
               </span>
             </span>
           </label>

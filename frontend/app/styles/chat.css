@@ -951,3 +951,49 @@
 @media (max-width: 640px) {
   .agent-status-btn { margin-left: 0; width: 100%; }
 }
+
+/* ---- Agent documents ------------------------------------------------------ */
+
+.agent-drop {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-1);
+  padding: var(--space-5) var(--space-4); text-align: center; cursor: pointer;
+  border: 1px dashed var(--claude-border-strong); border-radius: var(--radius-md);
+  background: var(--claude-surface);
+  transition: border-color var(--duration-fast) var(--ease-standard),
+              background-color var(--duration-fast) var(--ease-standard);
+}
+.agent-drop:hover, .agent-drop.is-over {
+  border-color: var(--claude-accent);
+  background: var(--claude-accent-soft);
+}
+/* Visually hidden rather than display:none, so the label stays clickable and
+   the input remains reachable by assistive tech. */
+.agent-drop-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.agent-drop-title { font-size: var(--text-base); font-weight: var(--weight-medium); }
+.agent-drop-hint { font-size: var(--text-xs); color: var(--claude-muted); }
+
+.agent-docs { display: flex; flex-direction: column; gap: var(--space-2); }
+.agent-doc {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--claude-border); border-radius: var(--radius-md);
+  background: var(--claude-surface);
+}
+.agent-doc-name {
+  flex: 1; min-width: 0; font-size: var(--text-sm);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.agent-doc-meta { font-size: var(--text-xs); color: var(--claude-muted); white-space: nowrap; }
+.agent-doc-remove {
+  padding: var(--space-1) var(--space-3); border-radius: var(--radius-sm);
+  border: 1px solid var(--color-danger-soft); background: transparent;
+  color: var(--color-danger); font-size: var(--text-xs); cursor: pointer;
+}
+.agent-doc-remove:hover { background: var(--color-danger-soft); }
+.agent-doc-skeleton { height: 3rem; border-radius: var(--radius-md); }
+
+@media (max-width: 640px) {
+  .agent-doc { flex-wrap: wrap; }
+  .agent-doc-name { flex: 1 1 100%; }
+}
