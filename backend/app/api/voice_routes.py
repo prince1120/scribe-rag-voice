@@ -219,17 +219,41 @@ async def create_voice_token(
 ) -> VoiceTokenResponse:
     """Issue a LiveKit access token so a client can join a voice room.
 
-    Requires both user Groq and Sarvam keys; no fallback to server keys is allowed.
+    Keys come from the caller's headers or, failing that, from the workspace.
+    Never from server config: voice must always be billed to whoever owns the
+    workspace, not to us.
+
+    The check has to happen after the workspace lookup, not before. It used to
+    reject on the headers alone, which meant an owner who had saved their keys
+    in the console — and every caller arriving by invite link, who has no keys
+    at all — was refused ninety lines before the stored credentials were ever
+    read.
     """
-    if not x_user_groq_key or not x_user_groq_key.strip():
+    resolved = await owner_service.resolve_credentials(identity.tenant_id)
+
+    effective_groq = (x_user_groq_key or resolved.get("groq_api_key") or "").strip()
+    effective_sarvam = (x_user_sarvam_key or resolved.get("sarvam_api_key") or "").strip()
+    # A custom OpenAI-compatible model replaces Groq entirely, so its presence
+    # makes a Groq key unnecessary rather than merely optional.
+    has_custom_llm = bool(
+        (x_custom_llm_base_url or resolved.get("custom_llm_base_url") or "").strip()
+    )
+
+    if not effective_groq and not has_custom_llm:
         raise HTTPException(
             status_code=400,
-            detail="Groq API Key is required to start a voice session."
+            detail=(
+                "Add your Groq API key in Account before starting a voice "
+                "session."
+            ),
         )
-    if not x_user_sarvam_key or not x_user_sarvam_key.strip():
+    if not effective_sarvam:
         raise HTTPException(
             status_code=400,
-            detail="Sarvam API Key is required to start a voice session."
+            detail=(
+                "Add your Sarvam API key in Account — voice needs it for "
+                "speech."
+            ),
         )
 
     if not (settings.LIVEKIT_URL and settings.LIVEKIT_API_KEY and settings.LIVEKIT_API_SECRET):
@@ -315,14 +339,12 @@ async def create_voice_token(
     # arrived by invite link has no keys of their own, and the owner's console
     # deliberately never holds them in the browser — so without this fallback
     # every shared link fails with "Groq API Key is required".
-    stored = await owner_service.resolve_credentials(tenant_id)
+    stored = resolved
 
-    groq_key = x_user_groq_key or stored.get("groq_api_key")
-    sarvam_key = x_user_sarvam_key or stored.get("sarvam_api_key")
-    if groq_key:
-        meta["groq_api_key"] = groq_key
-    if sarvam_key:
-        meta["sarvam_api_key"] = sarvam_key
+    if effective_groq:
+        meta["groq_api_key"] = effective_groq
+    if effective_sarvam:
+        meta["sarvam_api_key"] = effective_sarvam
     if stored.get("llm_model") and not body.llm_model:
         meta["llm_model"] = stored["llm_model"]
     if stored.get("custom_llm_base_url") and not body.custom_llm_base_url:
