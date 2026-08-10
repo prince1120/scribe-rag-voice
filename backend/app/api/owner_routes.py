@@ -170,6 +170,42 @@ async def logout(response: Response):
     return {"status": "signed out"}
 
 
+class ProviderSettingsRequest(BaseModel):
+    # Empty string clears; omitted leaves alone. The console sends only what
+    # the owner edited, so a blank field must not wipe a working key.
+    groq_key: Optional[str] = Field(default=None, max_length=300)
+    sarvam_key: Optional[str] = Field(default=None, max_length=300)
+    custom_llm_key: Optional[str] = Field(default=None, max_length=300)
+    custom_llm_base_url: Optional[str] = Field(default=None, max_length=500)
+    llm_model: Optional[str] = Field(default=None, max_length=120)
+
+
+@router.get("/providers")
+async def get_providers(identity: Identity = Depends(get_identity)):
+    """Masked hints only — enough to recognise a stored key, never enough to
+    use it."""
+    _require_workspace_owner(identity)
+    return await owner_service.get_provider_settings(identity.tenant_id)
+
+
+@router.put("/providers")
+async def save_providers(
+    body: ProviderSettingsRequest, identity: Identity = Depends(get_identity)
+):
+    _require_workspace_owner(identity)
+    try:
+        return await owner_service.save_provider_settings(
+            identity.tenant_id,
+            groq_key=body.groq_key,
+            sarvam_key=body.sarvam_key,
+            custom_llm_key=body.custom_llm_key,
+            custom_llm_base_url=body.custom_llm_base_url,
+            llm_model=body.llm_model,
+        )
+    except owner_service.OwnerError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.post("/agent/deploy")
 async def deploy_agent(identity: Identity = Depends(get_identity)):
     """Take the agent live. Links do nothing until this happens."""

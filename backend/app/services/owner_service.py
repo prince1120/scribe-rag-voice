@@ -300,3 +300,110 @@ async def undeploy_agent(tenant_id: str) -> dict:
     connecting; nothing else is lost."""
     updated = await repositories.set_agent_status(tenant_id, DRAFT)
     return {"status": updated.status, "deployed_at": None}
+
+
+# ---- Provider credentials --------------------------------------------------
+
+async def get_provider_settings(tenant_id: str) -> dict:
+    """What the console shows on the settings screen.
+
+    Keys come back **masked**, never in full. An owner needs to recognise which
+    key is stored so they know whether to replace it; they never need to read it
+    back, and returning it would put a live credential in a browser and in
+    every proxy log between here and there.
+    """
+    from app.services import secrets_box
+
+    record = await repositories.get_owner(tenant_id)
+    if record is None:
+        return {}
+
+    def hint(encrypted: Optional[str]) -> Optional[str]:
+        if not encrypted:
+            return None
+        try:
+            return secrets_box.mask(secrets_box.decrypt(encrypted))
+        except secrets_box.SecretError:
+            # A key that cannot be decrypted is a key that cannot be used —
+            # say so rather than showing a hint that implies it works.
+            return "unreadable — please re-enter"
+
+    return {
+        "groq_key": hint(record.groq_key_enc),
+        "sarvam_key": hint(record.sarvam_key_enc),
+        "custom_llm_key": hint(record.custom_llm_key_enc),
+        "custom_llm_base_url": record.custom_llm_base_url,
+        "llm_model": record.llm_model,
+        "has_groq": bool(record.groq_key_enc),
+        "has_sarvam": bool(record.sarvam_key_enc),
+    }
+
+
+async def save_provider_settings(
+    tenant_id: str, *, groq_key: Optional[str] = None,
+    sarvam_key: Optional[str] = None, custom_llm_key: Optional[str] = None,
+    custom_llm_base_url: Optional[str] = None, llm_model: Optional[str] = None,
+) -> dict:
+    """Store provider credentials, encrypting anything secret.
+
+    An empty string means "clear this", while None means "leave it alone" —
+    the distinction matters because the console sends only the fields the owner
+    actually edited, and a blank field should not wipe a working key.
+    """
+    from app.services import secrets_box
+
+    await get_or_create_workspace(tenant_id)
+
+    fields: dict = {}
+    for name, value in (
+        ("groq_key_enc", groq_key),
+        ("sarvam_key_enc", sarvam_key),
+        ("custom_llm_key_enc", custom_llm_key),
+    ):
+        if value is None:
+            continue
+        fields[name] = secrets_box.encrypt(value.strip()) if value.strip() else ""
+
+    if custom_llm_base_url is not None:
+        url = custom_llm_base_url.strip()
+        if url and not url.startswith(("http://", "https://")):
+            raise OwnerError("The model URL should start with https://")
+        fields["custom_llm_base_url"] = url
+    if llm_model is not None:
+        fields["llm_model"] = llm_model.strip()
+
+    if fields:
+        await repositories.set_owner_secrets(tenant_id=tenant_id, **fields)
+    logger.info("Provider settings updated for %s", tenant_id)
+    return await get_provider_settings(tenant_id)
+
+
+async def resolve_credentials(tenant_id: str) -> dict:
+    """The actual keys, for server-side use only.
+
+    Never goes to a browser. Callers reaching an owner's agent spend that
+    owner's quota, which is the point — but it means this must be resolved from
+    the workspace rather than from anything the caller sent.
+    """
+    from app.services import secrets_box
+
+    record = await repositories.get_owner(tenant_id)
+    if record is None:
+        return {}
+
+    def read(encrypted: Optional[str]) -> Optional[str]:
+        if not encrypted:
+            return None
+        try:
+            return secrets_box.decrypt(encrypted)
+        except secrets_box.SecretError:
+            logger.warning("Unreadable stored key for tenant %s", tenant_id)
+            return None
+
+    return {
+        "groq_api_key": read(record.groq_key_enc),
+        "sarvam_api_key": read(record.sarvam_key_enc),
+        "custom_llm_api_key": read(record.custom_llm_key_enc),
+        "custom_llm_base_url": record.custom_llm_base_url or None,
+        "llm_model": record.llm_model or None,
+    }

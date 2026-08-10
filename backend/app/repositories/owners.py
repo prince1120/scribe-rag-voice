@@ -97,6 +97,24 @@ async def set_owner_credentials(
         return record
 
 
+async def set_owner_secrets(*, tenant_id: str, **fields) -> Optional[OwnerRecord]:
+    """Write provider credentials. Only fields explicitly passed are touched,
+    so saving a model choice cannot silently clear a key."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(OwnerRecord).where(OwnerRecord.tenant_id == tenant_id)
+        )
+        record = result.scalar_one_or_none()
+        if record is None:
+            return None
+        for key, value in fields.items():
+            if value is not None:
+                setattr(record, key, value)
+        await session.commit()
+        await session.refresh(record)
+        return record
+
+
 async def get_agent(tenant_id: str) -> Optional[AgentRecord]:
     async with async_session() as session:
         result = await session.execute(

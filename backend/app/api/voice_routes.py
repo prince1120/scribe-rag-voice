@@ -310,10 +310,25 @@ async def create_voice_token(
         "tenant_id": tenant_id,
         "instructions": instructions,
     }
-    if x_user_groq_key:
-        meta["groq_api_key"] = x_user_groq_key
-    if x_user_sarvam_key:
-        meta["sarvam_api_key"] = x_user_sarvam_key
+    # Headers win when present (the personal app sends the visitor's own keys),
+    # otherwise fall back to what the workspace has stored. A caller who
+    # arrived by invite link has no keys of their own, and the owner's console
+    # deliberately never holds them in the browser — so without this fallback
+    # every shared link fails with "Groq API Key is required".
+    stored = await owner_service.resolve_credentials(tenant_id)
+
+    groq_key = x_user_groq_key or stored.get("groq_api_key")
+    sarvam_key = x_user_sarvam_key or stored.get("sarvam_api_key")
+    if groq_key:
+        meta["groq_api_key"] = groq_key
+    if sarvam_key:
+        meta["sarvam_api_key"] = sarvam_key
+    if stored.get("llm_model") and not body.llm_model:
+        meta["llm_model"] = stored["llm_model"]
+    if stored.get("custom_llm_base_url") and not body.custom_llm_base_url:
+        meta["custom_llm_base_url"] = stored["custom_llm_base_url"]
+        if stored.get("custom_llm_api_key"):
+            meta["custom_llm_api_key"] = stored["custom_llm_api_key"]
     # Only pass through a voice the worker will actually accept — silently
     # ignore anything else so a stale/bad client value can't crash the session.
     if body.tts_speaker and body.tts_speaker in SUPPORTED_TTS_VOICE_IDS:

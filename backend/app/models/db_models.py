@@ -172,6 +172,15 @@ class OwnerRecord(Base):
     email: Mapped[Optional[str]] = mapped_column(String(320), unique=True, nullable=True, index=True)
     password_hash: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
 
+    # Provider credentials, encrypted at rest (see services/secrets_box.py).
+    # These are money — whoever holds them spends this owner's quota — so they
+    # are never returned to the browser, only ever a masked hint.
+    groq_key_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sarvam_key_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    custom_llm_key_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    custom_llm_base_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    llm_model: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
