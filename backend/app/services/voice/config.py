@@ -13,6 +13,8 @@ subset of keys it actually needs.
 """
 from pydantic_settings import BaseSettings
 
+from app.services import prompt_rules
+
 
 class VoiceSettings(BaseSettings):
     # LiveKit connection (the worker registers with this server/Cloud
@@ -55,11 +57,26 @@ class VoiceSettings(BaseSettings):
     # the token request, but worker.py clamps it to VOICE_LLM_MAX_TOKENS_CAP
     # so a chat-sized value never gets sent straight to a voice reply.
     VOICE_LLM_TEMPERATURE: float = 0.3
-    # Raised from 200: at that ceiling a multi-part spoken answer got cut off
-    # mid-sentence, which is what made replies feel shallow. ~320 tokens is
-    # roughly 25 seconds of speech — enough for a real explanation, still far
-    # below anything that would feel like a lecture.
+    # ~320 tokens is roughly 25 seconds of speech. That is the ceiling for a
+    # reply that ran long, not the target — the delivery rules ask for one to
+    # three sentences, and a turn that hits this number has already ignored
+    # them.
     VOICE_LLM_MAX_TOKENS: int = 320
+    # The hard ceiling on whatever the caller or the owner asked for. Chat's
+    # slider goes to 4000; a spoken reply that long is unlistenable and
+    # expensive, so it is clamped rather than trusted.
+    #
+    # Two ceilings, because the owner's delivery-rules toggle decides who is
+    # responsible for length. With the rules on we asked for one to three
+    # sentences, so the backstop sits close to that — a cap only does work once
+    # the prompt has already failed, and the models fast enough for voice are
+    # exactly the ones that ignore a length instruction. ~200 tokens is about
+    # fifteen seconds, already a long conversational turn.
+    #
+    # With the rules off the owner has taken length into their own prompt, and
+    # clamping them to our number would make the toggle a lie. They still get a
+    # ceiling — this is a phone call — just a far looser one.
+    VOICE_LLM_STYLED_MAX_TOKENS_CAP: int = 200
     VOICE_LLM_MAX_TOKENS_CAP: int = 450
 
     # Generic OpenAI-compatible LLM (any provider: Mistral, OpenRouter, a
@@ -105,19 +122,120 @@ class VoiceSettings(BaseSettings):
     # any model choice. 0.35 sits just above natural inter-word pauses, which
     # is as low as it can go without the agent talking over a mid-sentence
     # breath. max_delay bounds the wait when the endpoint is ambiguous.
-    VOICE_ENDPOINTING_MIN_DELAY: float = 0.35
-    VOICE_ENDPOINTING_MAX_DELAY: float = 0.9
-    # Start synthesizing audio before the turn is fully confirmed, so the
-    # first sound comes back faster (framework runs the LLM early already;
-    # this extends that to TTS).
-    VOICE_PREEMPTIVE_TTS: bool = True
-    # Require at least this many spoken words to count as an interruption,
-    # so a cough / "uh" / background noise doesn't make the agent stop —
-    # barge-in stays deliberate and smooth.
-    VOICE_INTERRUPTION_MIN_WORDS: int = 1
-    # Silero end-of-speech silence window (s). Lower detects your turn end
-    # faster (framework default is 0.55).
-    VOICE_VAD_MIN_SILENCE: float = 0.45
+    # Silence (s) after you stop before the agent takes its turn.
+    #
+    # 0.35 was tuned purely for snappiness and it was below the length of an
+    # ordinary mid-sentence pause — the gap while someone thinks of the next
+    # word. The result was one sentence arriving as two turns, with the agent
+    # answering the first half ("मतलब सर में दर्द है।" → reply → "तो क्या कोई
+    # फिजियोलॉजिस्ट है?" → second reply). Splitting a turn is far more damaging
+    # than waiting an extra fifth of a second: the caller has to repeat
+    # themselves and the agent has already committed to answering a fragment.
+    VOICE_ENDPOINTING_MIN_DELAY: float = 0.4
+    # The hard stop for an *ambiguous* ending — when the framework isn't sure
+    # you're finished, this is how long it waits before taking the turn anyway.
+    #
+    # 0.9 was the bigger of the two bugs. A pause that reads as ambiguous (very
+    # common when switching languages mid-sentence, or reciting a phone number
+    # in groups) got force-ended at 0.9s no matter what. The framework's own
+    # default is 3.0; 2.0 keeps most of that safety without letting a genuinely
+    # finished turn hang.
+    VOICE_ENDPOINTING_MAX_DELAY: float = 2.0
+    # "dynamic" adapts the wait to the caller's own speaking rhythm rather than
+    # applying one fixed number to everyone. Free — no model, no extra process.
+    # "fixed" restores the previous single-value behaviour.
+    VOICE_ENDPOINTING_MODE: str = "dynamic"
+
+    # Use a local semantic end-of-turn model to decide whether the caller
+    # finished a *thought*, rather than inferring it from silence alone. This
+    # is the correct fix for one sentence arriving as two turns, and no timer
+    # value substitutes for it.
+    #
+    # OFF, and the reason is memory rather than quality. Measured on this
+    # project: the model runs in its own inference process at a 2.26 GB
+    # resident baseline with no call in progress, and ~31s to initialise. That
+    # does not fit a free hosting tier, which is what this product deploys to.
+    #
+    # It is deliberately left switched off in development too, rather than
+    # enabled locally and disabled in production. Tuning turn-taking against
+    # behaviour the deployed system will never have produces numbers that are
+    # wrong for the thing users actually call.
+    #
+    # To enable (needs ~4 GB): pip install livekit-plugins-turn-detector,
+    # run `python -m app.services.voice.worker download-files`, set this true,
+    # and drop VOICE_ENDPOINTING_MAX_DELAY to ~1.2 — the slack above exists
+    # purely to avoid guillotining an ambiguous pause, which the model would
+    # instead classify.
+    VOICE_SEMANTIC_TURN_DETECTION: bool = False
+    # Start synthesising audio before the turn is confirmed. OFF: the
+    # framework retries a preemptive generation as the transcript changes, and
+    # once TTS is running a superseded attempt can reach the speaker — heard as
+    # the agent giving two different answers to one question. The LLM still
+    # runs preemptively (see session_factory), which is the bulk of the win
+    # without the risk. Turn on only if you need the last ~200ms more than you
+    # need the agent to answer once.
+    VOICE_PREEMPTIVE_TTS: bool = False
+
+    # How overlapping speech is judged.
+    #
+    #   "vad"      — Silero hears speech, the agent stops. Local, instant, and
+    #                the only option that works without extra services.
+    #   "adaptive" — classifies the overlapping speech before deciding. Reads
+    #                better on paper, but it is backed by a HOSTED LiveKit
+    #                inference service (AdaptiveInterruptionDetector takes
+    #                base_url/api_key/api_secret). Without those credentials
+    #                there is no detector to consult and interruptions never
+    #                fire at all — the agent talks until its TTS drains, no
+    #                matter how loudly you talk over it. Do not enable this
+    #                without configuring the service.
+    #
+    # The bug that made barge-in feel broken was never the mode. It was
+    # min_duration below, at 0.2s — shorter than a breath, so a cough or an
+    # "okay" stopped the agent and the false-interruption resume then replayed
+    # the sentence from the start. Fixing the threshold fixes that while
+    # keeping barge-in instant.
+    VOICE_INTERRUPTION_MODE: str = "vad"
+    # Minimum words before overlapping speech counts as an interruption.
+    # Consulted in STT-driven modes only — "vad" cuts on audio, not words — so
+    # this is 0 to make it explicit that nothing here waits for a transcript.
+    VOICE_INTERRUPTION_MIN_WORDS: int = 0
+    # How long you must be speaking before the agent stops. This is the real
+    # barge-in knob — with mode="vad" it is measured on audio, so nothing waits
+    # for a transcript and the cut lands as soon as this elapses.
+    #
+    # 0.25 is about one syllable: effectively "stop the moment I start". This
+    # was 0.2 originally and caused false cuts on coughs and breaths, so the
+    # obvious read is that we are walking back into that bug. Two things
+    # changed since:
+    #
+    #   - The browser now explicitly requests echoCancellation. Before, the
+    #     agent's own voice came out the speaker and back in the mic, and the
+    #     loudest source of "random" interruptions was the agent interrupting
+    #     itself. That is gone, which is most of why 0.2 misbehaved.
+    #   - preemptive_tts is off, so a cut can no longer collide with a
+    #     half-spoken preemptive generation.
+    #
+    # If background noise still cuts the agent off mid-sentence, this is the
+    # number to raise — 0.4 is a good next step. Note the interaction with
+    # VOICE_RESUME_FALSE_INTERRUPTION below: a false cut is cheap to recover
+    # from only because the agent resumes.
+    VOICE_INTERRUPTION_MIN_DURATION: float = 0.25
+    # After an interruption turns out to be false — you were cut off by a noise
+    # and then said nothing for ~2s — resume what was being said.
+    #
+    # Kept ON, and it is the safety net that makes the aggressive
+    # min_duration above affordable. Without it a false cut leaves the agent
+    # silent mid-sentence with no user turn to answer, and the call just sits
+    # there dead until someone speaks. Resuming is the lesser fault: worst
+    # case you hear part of a sentence twice, rather than the assistant
+    # appearing to hang up on you.
+    VOICE_RESUME_FALSE_INTERRUPTION: bool = True
+    # Silero end-of-speech silence window (s) — how long Silero must hear
+    # nothing before it reports that speech ended. This is the floor under
+    # VOICE_ENDPOINTING_MIN_DELAY: no endpointing decision can happen sooner
+    # than Silero reports silence, so setting the two independently is how you
+    # end up with a min_delay that never actually applies. Tracks min_delay.
+    VOICE_VAD_MIN_SILENCE: float = 0.4
     # Greet the user out loud the moment the call connects, like a real
     # voice agent — avoids the awkward "is this working?" silence.
     VOICE_GREET_ON_CONNECT: bool = True
@@ -266,32 +384,15 @@ _HONESTY = (
     "- Distinguish facts from inferences naturally in conversation."
 )
 
-_VOICE_STYLE = (
-    "\n\nADVANCED VOICE & CONVERSATIONAL RULES\n"
-    "You are speaking in a real-time phone call. Think and act like a warm, attentive human colleague.\n\n"
-    "1. BREVITY & PACING (SPEAK FOR THE EAR)\n"
-    "- Target 1 to 3 short sentences per turn (around 8 to 12 seconds of spoken audio).\n"
-    "- ALWAYS use natural contractions ('I'm', 'it's', 'you'll', 'can't', 'that's', 'we're').\n"
-    "- Use commas ',' for natural breathing pauses, periods '.' for clear sentence stops, and ellipses '...' for brief human hesitations.\n\n"
-    "2. ACTIVE LISTENING & VERBAL NODS\n"
-    "- Use natural verbal nods and softeners ('Mmhmm', 'Gotcha', 'Oh, I see', 'Well...', 'Let's see', 'No worries').\n"
-    "- If the user sounds confused or stressed, validate them first before explaining ('No problem at all, let me clear that up for you.').\n\n"
-    "3. PHONETIC NUMBERS & SYMBOLS (TTS READY)\n"
-    "- Write out numbers, units, and dates as spoken words (e.g., 'twelve percent' instead of '12%', 'forty-five dollars' instead of '$45', 'March third' instead of '03/03').\n"
-    "- Spell out symbols naturally ('john dot doe at gmail dot com').\n\n"
-    "4. TURN CLOSING & SINGLE QUESTION RULE\n"
-    "- Ask AT MOST one single clear question at the end of a turn so the user knows it's their turn to speak.\n"
-    "- Use context-aware closers ('What would you like to check next?' or 'Does that make sense?') rather than robotic scripts.\n\n"
-    "5. STRICT FORMATTING & CORPORATE BAN\n"
-    "- STRICT PLAIN TEXT ONLY. Never output asterisks (*), carets (^), hashes (#), markdown tags, or parenthetical meta-notes like (aside).\n"
-    "- BAN CORPORATE CHATBOT PHRASES: Never say 'I would be happy to assist you with that', 'I apologize for the inconvenience', or 'Is there anything else I can assist you with today?'. Speak like a real person.\n"
-    "- If input is noisy, a cough, or unclear, stay warm: 'Sorry, I didn't catch that. Could you say that again?'.\n\n"
-    "CONVERSATIONAL EXAMPLES:\n"
-    "User: Yeah, hello, can you hear me?\n"
-    "Assistant: Yeah! I hear you loud and clear. How's your day going so far?\n\n"
-    "User: What did you say?\n"
-    "Assistant: Oh, my bad! I was just saying we can get started right away. What would you like to work on?\n"
-)
+# Delivery rules come from the shared module rather than a voice-local copy.
+# This used to be a fifty-line block with worked dialogue examples, a
+# verbal-nods section ("Mmhmm", "Gotcha") and a numbered structure. It was
+# replaced because length itself was the problem: personal-mode voice runs on
+# the same fast models as business mode, and their instruction-following falls
+# off as the prompt grows, so the long version bought fewer rules followed
+# rather than more. The verbal nods in particular produced exactly the padding
+# these rules exist to remove.
+_VOICE_STYLE = prompt_rules.VOICE_DELIVERY
 
 _RAG_PROMPT = (
     "You are Scribe, a research assistant who answers from the user's own "

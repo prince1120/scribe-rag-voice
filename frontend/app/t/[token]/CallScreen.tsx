@@ -5,7 +5,13 @@
 // Mobile-first layout — designed for 320px+ screens.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Room, RoomEvent, Track, createAudioAnalyser } from "livekit-client";
+import {
+  ConnectionQuality,
+  Room,
+  RoomEvent,
+  Track,
+  createAudioAnalyser,
+} from "livekit-client";
 import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
 import {
   ChevronDown,
@@ -16,6 +22,7 @@ import {
   Phone,
   PhoneOff,
   User,
+  WifiOff,
 } from "lucide-react";
 
 type Phase = "idle" | "connecting" | "live" | "ended" | "error";
@@ -239,6 +246,16 @@ export function CallScreen({ name }: { name?: string }) {
   const [muted, setMuted] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [agentSpeaking, setAgentSpeaking] = useState(false);
+  // The assistant greets first. Until it has, the screen must not say
+  // "Listening to you" — that invites the caller to start talking over the
+  // greeting, and a call that opens with both sides talking never recovers.
+  const [agentHasSpoken, setAgentHasSpoken] = useState(false);
+  // Reported by LiveKit from real packet loss and jitter on this call. Shown
+  // for the same reason WhatsApp does: choppy audio caused by the caller's own
+  // network is indistinguishable from a broken assistant unless you say so.
+  const [quality, setQuality] = useState<ConnectionQuality>(
+    ConnectionQuality.Excellent,
+  );
 
   // Live transcript state
   const [transcripts, setTranscripts] = useState<TranscriptMessage[]>([]);
@@ -313,6 +330,8 @@ export function CallScreen({ name }: { name?: string }) {
     setTranscripts([]);
     setCurrentSubtitle("");
     setPhase("connecting");
+    setAgentHasSpoken(false);
+    setQuality(ConnectionQuality.Excellent);
 
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
       setPhase("error");
@@ -401,6 +420,16 @@ export function CallScreen({ name }: { name?: string }) {
         }
       });
 
+      // Only the local participant's quality is actionable by the person
+      // holding the phone. The agent's side is our problem, not theirs, and
+      // showing it would just be a second bar they cannot act on.
+      room.on(RoomEvent.ConnectionQualityChanged, (q, participant) => {
+        if (participant?.isLocal) setQuality(q);
+      });
+
+      room.on(RoomEvent.Reconnecting, () => setQuality(ConnectionQuality.Lost));
+      room.on(RoomEvent.Reconnected, () => setQuality(ConnectionQuality.Good));
+
       room.on(RoomEvent.Disconnected, () => {
         setPhase("ended");
         void persistSession();
@@ -408,7 +437,16 @@ export function CallScreen({ name }: { name?: string }) {
       });
 
       await room.connect(url, token);
-      await room.localParticipant.setMicrophoneEnabled(true);
+      // Stated explicitly rather than left to browser defaults. Echo
+      // cancellation matters most: without it, the assistant's own voice comes
+      // back through the speaker into the mic, gets transcribed as if the
+      // caller said it, and both confuses the reply and triggers false
+      // interruptions — heard as the agent talking over itself.
+      await room.localParticipant.setMicrophoneEnabled(true, {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      });
       setPhase("live");
 
       const tick = () => {
@@ -417,7 +455,9 @@ export function CallScreen({ name }: { name?: string }) {
         if (orbRef.current) {
           orbRef.current.style.transform = `scale(${1 + level * 0.22})`;
         }
-        setAgentSpeaking(level > 0.05);
+        const speaking = level > 0.05;
+        setAgentSpeaking(speaking);
+        if (speaking) setAgentHasSpoken(true);
         rafRef.current = requestAnimationFrame(tick);
       };
       rafRef.current = requestAnimationFrame(tick);
@@ -450,7 +490,11 @@ export function CallScreen({ name }: { name?: string }) {
         ? "Microphone Muted"
         : agentSpeaking
         ? "Assistant Speaking…"
-        : "Listening to you…"
+        : agentHasSpoken
+        ? "Listening to you…"
+        // Connected, but the greeting has not arrived yet. Naming what is
+        // about to happen turns an ambiguous silence into an expected one.
+        : "Assistant is about to greet you…"
       : phase === "ended"
       ? "Call Ended"
       : phase === "error"
@@ -460,8 +504,46 @@ export function CallScreen({ name }: { name?: string }) {
   // Orb size: smaller on mobile
   const orbSize = phase === "live" ? 100 : 120;
 
+  // Only surfaced when it is bad. An "Excellent" badge on every call is noise
+  // that trains people to ignore the one time it says something useful.
+  const networkWarning =
+    phase === "live" && quality === ConnectionQuality.Lost
+      ? { text: "Reconnecting…", detail: "Your connection dropped.", bad: true }
+      : phase === "live" && quality === ConnectionQuality.Poor
+      ? {
+          text: "Weak network",
+          detail: "Audio may break up. Try moving closer to your router.",
+          bad: true,
+        }
+      : null;
+
   return (
     <main style={S.main}>
+      {networkWarning && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            padding: "8px 14px",
+            fontSize: 12,
+            fontWeight: 600,
+            color: "#7c2d12",
+            background: "#ffedd5",
+            borderBottom: "1px solid #fed7aa",
+          }}
+        >
+          <WifiOff size={14} aria-hidden="true" />
+          <span>{networkWarning.text}</span>
+          <span style={{ fontWeight: 500, opacity: 0.85 }}>
+            {networkWarning.detail}
+          </span>
+        </div>
+      )}
+
       {/* ── Top Bar ─────────────────────────────────────────── */}
       <header style={S.header}>
         {name ? (

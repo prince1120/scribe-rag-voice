@@ -171,6 +171,36 @@
   border-left: 3px solid #6366F1;
 }
 
+.owner-nav-item.is-navigating {
+  background: linear-gradient(90deg, rgba(79, 70, 229, 0.25) 0%, rgba(59, 130, 246, 0.08) 100%) !important;
+  color: #FFFFFF !important;
+  border-left: 3px solid #6366F1 !important;
+}
+
+.owner-nav-item.is-navigating .owner-nav-indicator {
+  background: #818CF8 !important;
+  box-shadow: 0 0 10px #818CF8 !important;
+  animation: pulse 0.8s infinite;
+}
+
+.owner-top-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #4F46E5 0%, #3B82F6 50%, #60A5FA 100%);
+  z-index: 99999;
+  box-shadow: 0 0 10px rgba(79, 70, 229, 0.6);
+  animation: owner-progress-bar 1.2s ease-in-out infinite;
+}
+
+@keyframes owner-progress-bar {
+  0% { transform: scaleX(0.1); transform-origin: left; }
+  50% { transform: scaleX(0.7); transform-origin: left; }
+  100% { transform: scaleX(1); transform-origin: right; }
+}
+
 .owner-nav-logout {
   background: transparent;
   border: none;

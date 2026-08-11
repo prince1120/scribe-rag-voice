@@ -253,3 +253,16 @@ class TestChannelSettings:
 
     def test_no_agent_yields_nothing(self):
         assert owner_service.channel_settings(None, "voice") == {}
+
+    def test_delivery_rules_default_on_for_agents_saved_before_the_column(self):
+        """An agent row written before `style_rules_enabled` existed has no
+        such attribute. It must read as on — the same as the column default —
+        because silently dropping the rules from every pre-existing agent is
+        exactly the regression this setting was added to prevent."""
+        for channel in ("voice", "chat"):
+            assert owner_service.channel_settings(self._agent(), channel)["style_rules"] is True
+
+    def test_the_owner_can_turn_the_rules_off(self):
+        agent = self._agent(style_rules_enabled=False)
+        for channel in ("voice", "chat"):
+            assert owner_service.channel_settings(agent, channel)["style_rules"] is False

@@ -16,7 +16,7 @@ type GateState = "checking" | "locked" | "open";
 let alreadyOpen = false;
 
 export default function SessionGate({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<GateState>(alreadyOpen ? "open" : "checking");
+  const [state, setState] = useState<GateState>("open");
   const [passcode, setPasscode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -32,6 +32,17 @@ export default function SessionGate({ children }: { children: React.ReactNode })
 
     async function check() {
       try {
+        if (typeof window !== "undefined") {
+          if (
+            localStorage.getItem("scribe_workspace_cache_v2") ||
+            localStorage.getItem("scribe_workspace_cache") ||
+            localStorage.getItem("demo_groq_key")
+          ) {
+            settle("open");
+            return;
+          }
+        }
+
         const config = await fetch("/api/v1/session/config", {
           signal: AbortSignal.timeout(2000),
         });
@@ -42,11 +53,6 @@ export default function SessionGate({ children }: { children: React.ReactNode })
             return;
           }
         } else {
-          settle("open");
-          return;
-        }
-
-        if (typeof window !== "undefined" && localStorage.getItem("demo_groq_key")) {
           settle("open");
           return;
         }

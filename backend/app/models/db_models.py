@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import (
+    Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -247,6 +249,19 @@ class AgentRecord(Base):
     language: Mapped[str] = mapped_column(String(16), default="unknown")
     rag_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     greeting: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    # Whether our delivery rules (reply length, spoken-vs-typed form, no
+    # markdown) are appended to the owner's script. On by default because the
+    # failure it prevents is invisible to the owner writing the prompt: they
+    # tune wording in a text box and never hear that the synthesiser is reading
+    # asterisks aloud, or that a four-paragraph answer takes forty seconds to
+    # speak. An owner who genuinely wants full control turns it off.
+    # `text("true")` rather than "1": Postgres rejects an integer default on a
+    # boolean column, and SQLite has accepted the TRUE keyword since 3.23. The
+    # server default is what backfills existing rows when the column is added.
+    style_rules_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

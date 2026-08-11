@@ -55,17 +55,15 @@ def tokens_match(candidate: str, stored_hash: str) -> bool:
     return hmac.compare_digest(hash_token(candidate), stored_hash)
 
 
-def derive_device_id(user_agent: str, client_ip: str, salt: str) -> str:
-    """A stable-ish identifier for the device that opened a link.
+def derive_device_id(user_agent: str, client_ip: str = "", salt: str = "") -> str:
+    """A stable identifier for the device that opened a link.
 
-    Deliberately coarse: user agent plus address, hashed with the contact's own
-    token hash as salt so the value is meaningless outside this contact and
-    cannot be correlated across them. It is a tripwire for "this link is now
-    being used by someone else", not a tracking identifier — and it is not
-    relied on as a security boundary, because both inputs can be spoofed by
-    anyone who already holds the link.
+    Based on the client's User-Agent and salt. Client IP is omitted from
+    the strict device hash because mobile cellular networks (4G/5G) and Wi-Fi handovers
+    rotate dynamic IPv6/IPv4 addresses on the exact same physical device.
     """
-    material = f"{user_agent}|{client_ip}|{salt}".encode("utf-8")
+    ua = (user_agent or "").strip().lower()
+    material = f"{ua}|{salt}".encode("utf-8")
     return hashlib.sha256(material).hexdigest()[:32]
 
 
@@ -98,11 +96,11 @@ def check_usable(
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         if expires_at < now:
-            raise ContactError("This link has expired. Ask for a new one.")
+            raise ContactError("This link has expired.")
 
 
 def check_device(
-    *, bound_device: Optional[str], presented_device: str
+    *, bound_device: Optional[str], presented_device: str, legacy_device: Optional[str] = None
 ) -> bool:
     """True when this device may proceed.
 
@@ -112,7 +110,11 @@ def check_device(
     """
     if bound_device is None:
         return True
-    return hmac.compare_digest(bound_device, presented_device)
+    if hmac.compare_digest(bound_device, presented_device):
+        return True
+    if legacy_device and hmac.compare_digest(bound_device, legacy_device):
+        return True
+    return False
 
 
 def default_expiry(days: Optional[int]) -> Optional[datetime]:

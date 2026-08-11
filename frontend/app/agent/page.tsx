@@ -15,6 +15,7 @@ import {
   Mic,
   Play,
   Radio,
+  RefreshCw,
   Save,
   Sliders,
   Sparkles,
@@ -51,6 +52,9 @@ interface AgentConfig {
   language?: string;
   rag_enabled: boolean;
   greeting: string | null;
+  // Whether our delivery rules (reply length, spoken form, no markdown) are
+  // appended to the owner's script. Shared across both channels.
+  style_rules_enabled: boolean;
   configured: boolean;
 }
 
@@ -109,17 +113,16 @@ import { getWorkspaceCache, setWorkspaceCache, useWorkspace } from "../lib/works
 
 export default function AgentPage() {
   const ws = useWorkspace();
-  const cached = getWorkspaceCache();
 
-  const [config, setConfig] = useState<AgentConfig | null>(() => cached.agentConfig || null);
-  const [voices, setVoices] = useState<Record<string, Voice[]>>(() => cached.voices || {});
-  const [languages, setLanguages] = useState<Array<{ id: string; label: string }>>(() => cached.languages || []);
+  const [config, setConfig] = useState<AgentConfig | null>(null);
+  const [voices, setVoices] = useState<Record<string, Voice[]>>({});
+  const [languages, setLanguages] = useState<Array<{ id: string; label: string }>>([]);
   const [channels, setChannels] = useState<Channels | null>(null);
   const [models, setModels] = useState<ModelOption[]>(DEFAULT_MODELS);
   const [businessName, setBusinessName] = useState<string | null>(() => ws.businessName);
 
   const [tab, setTab] = useState<Channel>("voice");
-  const [loading, setLoading] = useState(() => !cached.agentConfig);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [deploying, setDeploying] = useState(false);
@@ -129,8 +132,8 @@ export default function AgentPage() {
   const [error, setError] = useState("");
 
   // Custom provider states
-  const [isVoiceCustom, setIsVoiceCustom] = useState(() => Boolean(cached.agentConfig?.voice_base_url || cached.agentConfig?.voice_api_key));
-  const [isChatCustom, setIsChatCustom] = useState(() => Boolean(cached.agentConfig?.chat_base_url || cached.agentConfig?.chat_api_key));
+  const [isVoiceCustom, setIsVoiceCustom] = useState(false);
+  const [isChatCustom, setIsChatCustom] = useState(false);
   const [voiceKeyInput, setVoiceKeyInput] = useState("");
   const [chatKeyInput, setChatKeyInput] = useState("");
 
@@ -144,6 +147,16 @@ export default function AgentPage() {
   }, []);
 
   useEffect(() => {
+    const cached = getWorkspaceCache();
+    if (cached.agentConfig) {
+      setConfig(cached.agentConfig);
+      setLoading(false);
+      if (cached.agentConfig.voice_base_url || cached.agentConfig.voice_api_key) setIsVoiceCustom(true);
+      if (cached.agentConfig.chat_base_url || cached.agentConfig.chat_api_key) setIsChatCustom(true);
+    }
+    if (cached.voices) setVoices(cached.voices);
+    if (cached.languages) setLanguages(cached.languages);
+
     let cancelled = false;
     async function loadData() {
       try {
@@ -208,6 +221,7 @@ export default function AgentPage() {
         voice_id: config.voice_id,
         language: config.language,
         rag_enabled: config.rag_enabled,
+        style_rules_enabled: config.style_rules_enabled !== false,
         greeting: config.greeting || undefined,
       };
 
@@ -372,6 +386,23 @@ export default function AgentPage() {
       setChatKeyInput("");
     }
   };
+
+  if (!config) {
+    return (
+      <OwnerShell businessName={businessName} status="draft">
+        <main style={S.page}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 0", color: "#64748b", fontSize: 13 }}>
+              <RefreshCw size={16} className="animate-spin" style={{ color: "#3b82f6" }} />
+              <span>Loading assistant prompts and voice configuration from database…</span>
+            </div>
+            <div style={{ height: 180, borderRadius: 14, border: "1px solid #e2e8f0", background: "#f8fafc", opacity: 0.7 }} />
+            <div style={{ height: 260, borderRadius: 14, border: "1px solid #e2e8f0", background: "#f8fafc", opacity: 0.7 }} />
+          </div>
+        </main>
+      </OwnerShell>
+    );
+  }
 
   const isLive = config.status === "deployed";
 
@@ -632,6 +663,35 @@ export default function AgentPage() {
               </label>
             </div>
           )}
+
+          {/* Delivery rules. Shown on both tabs because the setting is shared —
+              an owner who wants their prompt honoured verbatim means it
+              everywhere, not on calls only. Framed as what turning it OFF
+              costs, since the default is on and the risk is switching it off
+              without realising the agent will start reading markdown aloud. */}
+          <label style={{ ...S.toggleBox, marginTop: 12 }}>
+            <input
+              type="checkbox"
+              // `!== false` rather than a plain read: a config cached from
+              // before this field existed has it undefined, and that must show
+              // as on (the server default) instead of silently rendering the
+              // rules as switched off.
+              checked={config.style_rules_enabled !== false}
+              onChange={(e) => update({ style_rules_enabled: e.target.checked })}
+              style={{ width: 16, height: 16, accentColor: "#4f46e5", cursor: "pointer" }}
+            />
+            <div>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "#0f172a", display: "block" }}>
+                Keep replies short and natural
+              </span>
+              <span style={{ fontSize: 11, color: "#64748b" }}>
+                {isVoice
+                  ? "Adds our speaking rules on top of your prompt: one to three sentences, plain spoken language, numbers and dates read aloud properly, no markdown. Turn this off only if your prompt already covers all of that — without it, replies tend to run long and callers wait."
+                  : "Adds our writing rules on top of your prompt: answer first, no filler openings or closing summaries. Your prompt still leads."}
+              </span>
+            </div>
+          </label>
+
           <div style={S.cardFooter}>
             <button
               type="button"

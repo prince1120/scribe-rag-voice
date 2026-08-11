@@ -49,12 +49,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def _none():
+    """A resolved awaitable for a lookup that doesn't apply this request.
+
+    Lets the batched gather below keep one slot per value regardless of whether
+    the caller is a known contact, instead of branching the whole batch.
+    """
+    return None
+
+
 @router.get("/voices", dependencies=[Depends(verify_api_key)])
+@router.get("/speakers", dependencies=[Depends(verify_api_key)])
 async def list_voices() -> dict:
     """The TTS voices the UI may offer, grouped male/female. Single source of
     truth is the backend so the picker can never present a voice the worker
     would reject."""
-    return {"voices": SUPPORTED_TTS_VOICES, "default": voice_settings.VOICE_TTS_SPEAKER}
+    return {"voices": SUPPORTED_TTS_VOICES, "speakers": SUPPORTED_TTS_VOICES, "default": voice_settings.VOICE_TTS_SPEAKER}
 
 
 @router.get("/languages", dependencies=[Depends(verify_api_key)])
@@ -230,7 +240,32 @@ async def create_voice_token(
     at all — was refused ninety lines before the stored credentials were ever
     read.
     """
-    resolved = await owner_service.resolve_credentials(identity.tenant_id)
+    # Everything this endpoint needs to read is independent: the workspace
+    # credentials, the agent, the business profile, the calling contact, and
+    # whether a worker is up. Fetched together rather than one after another.
+    #
+    # This is the difference between one round trip and five. That does not
+    # matter on a fast link and matters enormously on a slow one — a single
+    # trivial query has been measured at up to 3.5s against the Supabase
+    # pooler, and five of those in a row is the caller sitting on a
+    # "Connecting…" spinner for most of a minute. The worker health check is an
+    # HTTP call rather than a query, and it joins the same batch for the same
+    # reason.
+    resolved, agent, workspace, contact, _ = await asyncio.gather(
+        owner_service.resolve_credentials(identity.tenant_id),
+        repositories.get_agent(identity.tenant_id),
+        repositories.get_owner(identity.tenant_id),
+        (
+            repositories.get_contact(identity.contact_id, identity.tenant_id)
+            if identity.contact_id
+            else _none()
+        ),
+        # Local-dev convenience: make sure a worker is actually up before we
+        # hand out a token — otherwise the room gets created with nobody to
+        # dispatch the job to, and the call just times out with no obvious
+        # cause.
+        ensure_worker_running(),
+    )
 
     effective_groq = (
         x_user_groq_key
@@ -276,11 +311,6 @@ async def create_voice_token(
             ),
         )
 
-    # Local-dev convenience: make sure a worker is actually up before we hand
-    # out a token — otherwise the room gets created with nobody to dispatch
-    # the job to, and the call just times out with no obvious cause.
-    await ensure_worker_running()
-
     room_name = body.room_name or f"voice-{uuid4().hex[:12]}"
     participant_identity = f"user-{uuid4().hex[:8]}"
 
@@ -294,29 +324,28 @@ async def create_voice_token(
                 gender = g
                 break
 
-    # A business workspace has an agent its owner wrote, and that prompt is
-    # passed through verbatim — the way every voice-agent builder works. Adding
-    # our own persona and style scaffolding on top would mean the owner tunes a
-    # prompt and hears something else, which makes the editor untrustworthy.
+    # A business workspace has an agent its owner wrote, and their prompt leads
+    # — persona, knowledge and tone are theirs. What we append is the clock
+    # (which cannot be written in advance: a date typed into a prompt is stale
+    # the next day) and our delivery rules, which govern reply length and
+    # spoken form rather than character.
     #
-    # Only the clock is appended, because it cannot be written in advance: a
-    # date typed into a prompt is stale the next day, and the model otherwise
-    # answers "what is today" from training data.
-    #
-    # Formatting safety is not lost by dropping the prompt rules — markdown is
-    # stripped in code at tts_node, which holds regardless of which model or
-    # prompt produced the text.
-    agent = await repositories.get_agent(tenant_id)
+    # The delivery rules are appended by default because the failure they
+    # prevent is one the owner cannot see from the editor: they tune wording in
+    # a text box and never hear that a four-paragraph answer takes forty
+    # seconds to speak. An owner who wants their prompt honoured verbatim turns
+    # style_rules_enabled off and owns the result.
     rag_enabled = body.rag_enabled
 
     channel = owner_service.channel_settings(agent, "voice")
 
     if agent is not None and channel.get("script"):
-        workspace = await repositories.get_owner(tenant_id)
         instructions = owner_service.build_agent_prompt(
             script=channel["script"],
             agent_name=agent.name,
             business_name=workspace.business_name if workspace else None,
+            channel="voice",
+            style_rules=channel.get("style_rules", True),
         )
         # The owner's saved toggle wins for voice; chat always retrieves.
         rag_enabled = agent.rag_enabled
@@ -335,7 +364,6 @@ async def create_voice_token(
 
         # If caller identity is known (from contact link/directory connect), personalize instructions and greeting!
         if identity.contact_id:
-            contact = await repositories.get_contact(identity.contact_id, tenant_id)
             if contact and (contact.name or "").strip():
                 caller_name = contact.name.strip()
                 instructions += (
@@ -361,6 +389,11 @@ async def create_voice_token(
         "rag_enabled": rag_enabled,
         "tenant_id": tenant_id,
         "instructions": instructions,
+        # The worker needs this separately from the prompt: it decides which
+        # token ceiling applies, and it cannot infer that from instructions it
+        # only ever forwards. Personal workspaces have no agent and always get
+        # the styled behaviour, which is what build_instructions gives them.
+        "style_rules": channel.get("style_rules", True) if channel else True,
     }
     # Headers win when present (the personal app sends the visitor's own keys),
     # otherwise fall back to what the workspace has stored. A caller who
@@ -375,7 +408,19 @@ async def create_voice_token(
         meta["sarvam_api_key"] = effective_sarvam
     if stored.get("llm_model") and not body.llm_model:
         meta["llm_model"] = stored["llm_model"]
-    if stored.get("custom_llm_base_url") and not body.custom_llm_base_url:
+    # The workspace endpoint is a fallback for a channel that named no provider
+    # of its own. When the owner picked a model for *this* channel, it is not:
+    # the worker flips the whole provider to custom_openai the moment it sees a
+    # base URL, so leaving this in would send the channel's model name — a Groq
+    # model, say — to an unrelated endpoint and fail the call. The console
+    # clears the channel's own base_url when a hosted model is picked, but it
+    # has no way to clear this one.
+    channel_names_a_model = bool(channel.get("model") or channel.get("base_url"))
+    if (
+        stored.get("custom_llm_base_url")
+        and not body.custom_llm_base_url
+        and not channel_names_a_model
+    ):
         meta["custom_llm_base_url"] = stored["custom_llm_base_url"]
         if stored.get("custom_llm_api_key"):
             meta["custom_llm_api_key"] = stored["custom_llm_api_key"]
@@ -395,15 +440,21 @@ async def create_voice_token(
         meta["conversation_id"] = conversation_id
 
     if identity.contact_id:
-        await repositories.get_or_create_conversation(conversation_id, tenant_id)
-        await repositories.start_contact_session(
-            session_id=str(uuid4()),
-            contact_id=identity.contact_id,
-            conversation_id=conversation_id,
-            ip_address=client_ip(request),
-            user_agent=request.headers.get("user-agent"),
-            device_id=None,
-            channel="voice",
+        # Concurrent, not sequential: the session row references the
+        # conversation only by a plain nullable column, with no foreign key, so
+        # neither write needs the other to have landed. Two round trips here
+        # were two more seconds of spinner on a slow link.
+        await asyncio.gather(
+            repositories.get_or_create_conversation(conversation_id, tenant_id),
+            repositories.start_contact_session(
+                session_id=str(uuid4()),
+                contact_id=identity.contact_id,
+                conversation_id=conversation_id,
+                ip_address=client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                device_id=None,
+                channel="voice",
+            ),
         )
     if body.llm_model:
         meta["llm_model"] = body.llm_model
@@ -439,11 +490,21 @@ async def create_voice_token(
         if channel.get("api_key"):
             meta["custom_llm_api_key"] = channel["api_key"]
     dispatch_metadata = json.dumps(meta)
-    selected_llm = body.llm_model or settings.GROQ_MODEL
-    selected_speaker = body.tts_speaker or voice_settings.VOICE_TTS_SPEAKER
+    # Report what was actually dispatched, not what the request asked for. The
+    # two differ on every business call — the owner's channel model and voice
+    # override the caller's — and reading the request's values here made the
+    # log say a session ran on a model it did not, which is exactly the kind of
+    # thing you go on to debug for an hour.
     logger.info(
-        f"[VOICE TOKEN] Room: '{room_name}' | LLM Model: '{selected_llm}' | "
-        f"TTS Voice: '{selected_speaker}' (bulbul:v3) | STT: Sarvam AI (saaras:v2)"
+        "[VOICE TOKEN] Room: '%s' | LLM: '%s' | endpoint: %s | TTS voice: '%s' "
+        "| STT lang: '%s' | style rules: %s | RAG: %s",
+        room_name,
+        meta.get("llm_model") or voice_settings.VOICE_LLM_MODEL,
+        meta.get("custom_llm_base_url") or "groq",
+        meta.get("tts_speaker") or voice_settings.VOICE_TTS_SPEAKER,
+        meta.get("stt_language") or voice_settings.VOICE_STT_LANGUAGE,
+        channel.get("style_rules", True) if channel else "n/a (personal)",
+        meta.get("rag_enabled"),
     )
 
     token = (

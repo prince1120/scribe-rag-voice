@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from app import repositories
+from app.services import prompt_rules
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +199,7 @@ async def get_agent_config(tenant_id: str) -> dict:
             "language": "unknown",
             "rag_enabled": True,
             "greeting": None,
+            "style_rules_enabled": True,
             "status": DRAFT,
             "configured": False,
         }
@@ -221,6 +223,7 @@ async def get_agent_config(tenant_id: str) -> dict:
         "language": record.language,
         "rag_enabled": record.rag_enabled,
         "greeting": record.greeting,
+        "style_rules_enabled": bool(getattr(record, "style_rules_enabled", True)),
         "configured": True,
     }
 
@@ -230,6 +233,7 @@ async def save_agent_config(
     script: Optional[str] = None, voice_id: Optional[str] = None,
     language: Optional[str] = None,
     rag_enabled: Optional[bool] = None, greeting: Optional[str] = None,
+    style_rules_enabled: Optional[bool] = None,
     allowed_voices: Optional[frozenset[str]] = None,
     **channel_fields,
 ) -> dict:
@@ -265,6 +269,7 @@ async def save_agent_config(
         language=language,
         rag_enabled=rag_enabled,
         greeting=greeting.strip() if greeting is not None else None,
+        style_rules_enabled=style_rules_enabled,
         **channel_fields,
     )
     return {
@@ -286,6 +291,7 @@ async def save_agent_config(
         "language": record.language,
         "rag_enabled": record.rag_enabled,
         "greeting": record.greeting,
+        "style_rules_enabled": bool(getattr(record, "style_rules_enabled", True)),
         "configured": True,
     }
 
@@ -319,15 +325,30 @@ def current_context_line(timezone_name: str = "Asia/Kolkata") -> str:
     )
 
 
+# ---- Delivery rules --------------------------------------------------------
+# The owner's script says who the assistant is and what it knows. The rules in
+# `prompt_rules` say how it *delivers*. They are shared with the personal-mode
+# prompt builder in `voice/config.py` rather than duplicated here: two copies of
+# "how long should a spoken reply be" would drift, and the one that drifted
+# would be whichever nobody was testing that week.
+
+
 def build_agent_prompt(
     *, script: str, agent_name: str, business_name: Optional[str] = None,
     timezone_name: str = "Asia/Kolkata",
+    channel: str = "voice", style_rules: bool = True,
 ) -> str:
     """Assemble what the agent actually receives.
 
     The owner's script leads, because it is theirs and everything else is
     scaffolding. Identity and the clock follow so a script that forgets to
     mention either still produces a coherent assistant.
+
+    Delivery rules come last, and only when `style_rules` is on. They are last
+    rather than first for the same reason the script is first: the owner sets
+    the character, we set the format, and format should not be what the model
+    reads as its primary instruction. An owner who wants a deliberately verbose
+    or differently-formatted agent turns the toggle off and owns the result.
     """
     parts = [script.strip() or DEFAULT_SCRIPT]
 
@@ -338,6 +359,9 @@ def build_agent_prompt(
     parts.append(identity)
 
     parts.append(current_context_line(timezone_name))
+
+    if style_rules:
+        parts.append(prompt_rules.DELIVERY_RULES.get(channel, prompt_rules.VOICE_DELIVERY))
     return "".join(parts)
 
 
@@ -534,6 +558,12 @@ def channel_settings(agent, channel: str) -> dict:
         # A model name without one is just a name.
         "base_url": getattr(agent, f"{prefix}_base_url", None),
         "api_key": _decrypt_quietly(getattr(agent, f"{prefix}_api_key_enc", None)),
+        # Shared across channels rather than per-channel: an owner who wants
+        # our delivery rules off wants their own prompt honoured everywhere,
+        # and a per-channel version of this would be a setting nobody asked
+        # for. `getattr` default keeps agents saved before the column existed
+        # on the rules rather than silently off.
+        "style_rules": bool(getattr(agent, "style_rules_enabled", True)),
     }
 
 

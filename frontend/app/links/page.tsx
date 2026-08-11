@@ -3,7 +3,7 @@
 // People & Call History: Unique callers list, session history,
 // invite link management, custom delete modal, and full turn-by-turn dialogue transcript viewer.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Ban,
@@ -107,9 +107,8 @@ function initials(name: string): string {
 const ITEMS_PER_PAGE = 8;
 
 export default function LinksPage() {
-  const cached = getWorkspaceCache();
-  const [contacts, setContacts] = useState<Contact[]>(() => cached.contactsData || []);
-  const [loading, setLoading] = useState(() => !cached.contactsData);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
 
@@ -168,8 +167,16 @@ export default function LinksPage() {
   }, [contacts.length]);
 
   useEffect(() => {
+    const cached = getWorkspaceCache();
+    if (cached.contactsData && cached.contactsData.length > 0) {
+      setContacts(cached.contactsData);
+      setLoading(false);
+    }
     void loadContacts();
   }, [loadContacts]);
+
+  // In-memory cache so subsequent toggles are 0.00ms instantaneous
+  const sessionsCache = useRef<Record<string, Session[]>>({});
 
   const toggleSessions = async (contactId: string) => {
     if (openSessionsMap[contactId] !== undefined) {
@@ -182,6 +189,14 @@ export default function LinksPage() {
       return;
     }
 
+    // If cached in memory, open immediately with all 10 talk cards at 0ms!
+    if (sessionsCache.current[contactId]) {
+      setOpenSessionsMap((prev) => ({ ...prev, [contactId]: sessionsCache.current[contactId] }));
+      return;
+    }
+
+    // Instant 0ms open: Open drawer immediately showing the live database sync spinner
+    setOpenSessionsMap((prev) => ({ ...prev, [contactId]: [] }));
     setLoadingSessionsMap((prev) => ({ ...prev, [contactId]: true }));
     try {
       const res = await ownerFetch(`/api/v1/contacts/${contactId}/sessions`);
@@ -190,6 +205,7 @@ export default function LinksPage() {
         const list = (data.sessions || []).filter(
           (s: Session) => s.channel === "voice" || s.message_count > 0
         );
+        sessionsCache.current[contactId] = list;
         setOpenSessionsMap((prev) => ({ ...prev, [contactId]: list }));
       }
     } catch {
@@ -433,8 +449,36 @@ export default function LinksPage() {
         </div>
 
         {/* ── Callers List ───────────────────────────────────── */}
-        {loading ? (
-          <div style={S.loadingState}>Loading people & access links…</div>
+        {loading && contacts.length === 0 ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", color: "#64748b", fontSize: 13 }}>
+              <RefreshCw size={14} className="animate-spin" style={{ color: "#3b82f6" }} />
+              <span>Fetching callers and access links from database…</span>
+            </div>
+            {[1, 2, 3].map((i) => (
+              <div
+                key={i}
+                style={{
+                  ...S.contactCard,
+                  opacity: 0.75,
+                }}
+              >
+                <div style={S.contactTop}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div style={{ ...S.avatar, background: "#e2e8f0" }} />
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div style={{ width: 140, height: 16, background: "#e2e8f0", borderRadius: 4 }} />
+                      <div style={{ width: 80, height: 12, background: "#f1f5f9", borderRadius: 4 }} />
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <div style={{ width: 90, height: 28, background: "#f1f5f9", borderRadius: 8 }} />
+                    <div style={{ width: 70, height: 28, background: "#f1f5f9", borderRadius: 8 }} />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         ) : filteredContacts.length === 0 ? (
           <div style={S.emptyState}>
             <Users size={32} style={{ color: "#cbd5e1", marginBottom: 8 }} />
@@ -575,8 +619,9 @@ export default function LinksPage() {
                         </div>
 
                         {isLoadingSessions ? (
-                          <div style={{ textAlign: "center", padding: "20px 0", color: "#64748b" }}>
-                            Loading session history…
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "24px 0", color: "#64748b", fontSize: 13 }}>
+                            <RefreshCw size={15} className="animate-spin" style={{ color: "#4f46e5" }} />
+                            <span>Fetching conversation history from database…</span>
                           </div>
                         ) : contactSessions.length === 0 ? (
                           <p style={{ fontSize: 13, color: "#94a3b8", textAlign: "center", padding: "16px 0" }}>
@@ -820,8 +865,43 @@ export default function LinksPage() {
 
               <div style={S.modalBody}>
                 {loadingTranscript ? (
-                  <div style={{ textAlign: "center", padding: "40px 0", color: "#64748b" }}>
-                    Loading conversation transcript…
+                  <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: "12px 4px" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "8px 14px", background: "#f8fafc", borderRadius: 20, border: "1px solid #e2e8f0", width: "fit-content", margin: "0 auto 8px", fontSize: 12, color: "#64748b", fontWeight: 500 }}>
+                      <RefreshCw size={13} className="animate-spin" style={{ color: "#4f46e5" }} />
+                      <span>Loading dialogue transcript from database…</span>
+                    </div>
+
+                    {/* Turn 1: Assistant Skeleton */}
+                    <div style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: "80%" }}>
+                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#ede9fe", flexShrink: 0 }} />
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
+                        <div style={{ padding: "12px 16px", borderRadius: "4px 16px 16px 16px", background: "#f8fafc", border: "1px solid #f1f5f9", display: "flex", flexDirection: "column", gap: 8, width: 240 }}>
+                          <div style={{ width: "90%", height: 12, background: "#e2e8f0", borderRadius: 4 }} />
+                          <div style={{ width: "65%", height: 12, background: "#e2e8f0", borderRadius: 4 }} />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Turn 2: User Skeleton */}
+                    <div style={{ display: "flex", gap: 10, alignItems: "flex-start", justifyContent: "flex-end", maxWidth: "80%", alignSelf: "flex-end" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end", width: "100%" }}>
+                        <div style={{ padding: "12px 16px", borderRadius: "16px 4px 16px 16px", background: "#eff6ff", border: "1px solid #dbeafe", display: "flex", flexDirection: "column", gap: 8, width: 190 }}>
+                          <div style={{ width: "85%", height: 12, background: "#bfdbfe", borderRadius: 4 }} />
+                        </div>
+                      </div>
+                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#dbeafe", flexShrink: 0 }} />
+                    </div>
+
+                    {/* Turn 3: Assistant Skeleton */}
+                    <div style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: "80%" }}>
+                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#ede9fe", flexShrink: 0 }} />
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
+                        <div style={{ padding: "12px 16px", borderRadius: "4px 16px 16px 16px", background: "#f8fafc", border: "1px solid #f1f5f9", display: "flex", flexDirection: "column", gap: 8, width: 260 }}>
+                          <div style={{ width: "95%", height: 12, background: "#e2e8f0", borderRadius: 4 }} />
+                          <div style={{ width: "70%", height: 12, background: "#e2e8f0", borderRadius: 4 }} />
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ) : transcriptModal.turns.length === 0 ? (
                   <div style={{ textAlign: "center", padding: "40px 16px", color: "#64748b" }}>

@@ -18,15 +18,19 @@ try {
 # regardless of where the repo is cloned.
 Set-Location -Path (Join-Path $PSScriptRoot "backend")
 
-# Check if virtual environment exists
-if (-not (Test-Path -Path "venv")) {
+# The venv lives at the repo root, not under backend/. This used to look for
+# ".\venv" *after* switching into backend/, never find it, and helpfully build a
+# second environment there — then install every dependency into it and run the
+# server from the wrong one.
+$venvPath = Join-Path $PSScriptRoot "venv"
+if (-not (Test-Path -Path $venvPath)) {
     Write-Host "Creating virtual environment..." -ForegroundColor Yellow
-    python -m venv venv
+    python -m venv $venvPath
 }
 
 # Activate virtual environment
 Write-Host "Activating virtual environment..." -ForegroundColor Yellow
-.\venv\Scripts\Activate.ps1
+& (Join-Path $venvPath "Scripts\Activate.ps1")
 
 # Install requirements
 Write-Host "Installing Python dependencies..." -ForegroundColor Yellow
@@ -51,6 +55,31 @@ try {
     Write-Host "  1. Install Docker Desktop: https://www.docker.com/products/docker-desktop/" -ForegroundColor Cyan
     Write-Host "  2. Run: docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant" -ForegroundColor Cyan
     Write-Host "Or use Qdrant Cloud (free tier): https://cloud.qdrant.io" -ForegroundColor Cyan
+}
+
+# Stop any voice worker left over from a previous run.
+#
+# The worker is spawned *detached* on purpose, so it survives uvicorn's
+# --reload restarts instead of dying with them (see worker_supervisor.py). The
+# cost of that is it also survives your code changes: an old worker keeps
+# serving calls with whatever prompt and turn-taking settings it started with,
+# which reads as "my fix did nothing". Clearing it here means the next call
+# spawns a fresh one on current code.
+#
+# This lives in the start script rather than the app's own startup hook
+# deliberately: with --reload, that hook runs again on every file save, and
+# killing the worker mid-call each time you touch a file would be worse than
+# the problem it solves. Starting the backend is a thing you do on purpose.
+Write-Host "Clearing any stale voice worker..." -ForegroundColor Yellow
+$stale = Get-CimInstance Win32_Process -Filter "Name like '%python%'" |
+    Where-Object { $_.CommandLine -like '*voice.worker*' }
+if ($stale) {
+    $stale | ForEach-Object {
+        try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {}
+    }
+    Write-Host "Stopped $($stale.Count) stale worker process(es)." -ForegroundColor Green
+} else {
+    Write-Host "None running." -ForegroundColor Green
 }
 
 # Start the backend

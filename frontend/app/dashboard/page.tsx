@@ -98,10 +98,9 @@ const ITEMS_PER_PAGE = 5;
 
 export default function DashboardPage() {
   const ws = useWorkspace();
-  const cached = getWorkspaceCache();
 
-  const [data, setData] = useState<OverviewData | null>(() => cached.overviewData || null);
-  const [loading, setLoading] = useState(() => !cached.overviewData);
+  const [data, setData] = useState<OverviewData | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
 
@@ -131,6 +130,11 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
+    const cached = getWorkspaceCache();
+    if (cached.overviewData) {
+      setData(cached.overviewData);
+      setLoading(false);
+    }
     void fetchOverview();
   }, []);
 
@@ -274,8 +278,24 @@ export default function DashboardPage() {
             </Link>
           </div>
 
-          {loading ? (
-            <div style={S.loadingPlaceholder}>Loading conversation history…</div>
+          {loading && !data ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", color: "#64748b", fontSize: 13 }}>
+                <RefreshCw size={14} className="animate-spin" style={{ color: "#3b82f6" }} />
+                <span>Loading latest analytics and conversation history…</span>
+              </div>
+              {[1, 2, 3].map((i) => (
+                <div key={i} style={{ ...S.sessionRow, opacity: 0.7 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1 }}>
+                    <div style={{ ...S.avatar, background: "#e2e8f0" }} />
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div style={{ width: 140, height: 16, background: "#e2e8f0", borderRadius: 4 }} />
+                      <div style={{ width: 80, height: 12, background: "#f1f5f9", borderRadius: 4 }} />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : recentList.length === 0 ? (
             <div style={S.emptyState}>
               <Users size={32} style={{ color: "#cbd5e1", marginBottom: 8 }} />
@@ -448,8 +468,43 @@ export default function DashboardPage() {
               {/* Transcript Dialogue List */}
               <div style={S.modalBody}>
                 {loadingTranscript ? (
-                  <div style={{ textAlign: "center", padding: "40px 0", color: "#64748b" }}>
-                    Loading full conversation transcript…
+                  <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: "12px 4px" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "8px 14px", background: "#f8fafc", borderRadius: 20, border: "1px solid #e2e8f0", width: "fit-content", margin: "0 auto 8px", fontSize: 12, color: "#64748b", fontWeight: 500 }}>
+                      <RefreshCw size={13} className="animate-spin" style={{ color: "#4f46e5" }} />
+                      <span>Loading dialogue transcript from database…</span>
+                    </div>
+
+                    {/* Turn 1: Assistant Skeleton */}
+                    <div style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: "80%" }}>
+                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#ede9fe", flexShrink: 0 }} />
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
+                        <div style={{ padding: "12px 16px", borderRadius: "4px 16px 16px 16px", background: "#f8fafc", border: "1px solid #f1f5f9", display: "flex", flexDirection: "column", gap: 8, width: 240 }}>
+                          <div style={{ width: "90%", height: 12, background: "#e2e8f0", borderRadius: 4 }} />
+                          <div style={{ width: "65%", height: 12, background: "#e2e8f0", borderRadius: 4 }} />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Turn 2: User Skeleton */}
+                    <div style={{ display: "flex", gap: 10, alignItems: "flex-start", justifyContent: "flex-end", maxWidth: "80%", alignSelf: "flex-end" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end", width: "100%" }}>
+                        <div style={{ padding: "12px 16px", borderRadius: "16px 4px 16px 16px", background: "#eff6ff", border: "1px solid #dbeafe", display: "flex", flexDirection: "column", gap: 8, width: 190 }}>
+                          <div style={{ width: "85%", height: 12, background: "#bfdbfe", borderRadius: 4 }} />
+                        </div>
+                      </div>
+                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#dbeafe", flexShrink: 0 }} />
+                    </div>
+
+                    {/* Turn 3: Assistant Skeleton */}
+                    <div style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: "80%" }}>
+                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#ede9fe", flexShrink: 0 }} />
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
+                        <div style={{ padding: "12px 16px", borderRadius: "4px 16px 16px 16px", background: "#f8fafc", border: "1px solid #f1f5f9", display: "flex", flexDirection: "column", gap: 8, width: 260 }}>
+                          <div style={{ width: "95%", height: 12, background: "#e2e8f0", borderRadius: 4 }} />
+                          <div style={{ width: "70%", height: 12, background: "#e2e8f0", borderRadius: 4 }} />
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ) : transcriptTurns.length === 0 ? (
                   <div style={S.emptyTranscript}>

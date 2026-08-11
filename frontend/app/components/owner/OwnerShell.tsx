@@ -6,7 +6,7 @@
 // dark glassmorphism sidebar, live agent indicators, and mobile drawer support.
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   LayoutDashboard,
@@ -62,14 +62,35 @@ export function OwnerShell({
   status?: string;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
   const workspace = useWorkspace();
 
   const businessName = propBusinessName || workspace.businessName;
   const isLive = propStatus ? propStatus === "deployed" : workspace.isLive;
 
+  // Clear navigating state when route transitions
+  useEffect(() => {
+    setNavigatingTo(null);
+  }, [pathname]);
+
+  // Pre-warm route prefetching on mount for 0ms transitions
+  useEffect(() => {
+    NAV.forEach((item) => {
+      try {
+        router.prefetch(item.href);
+      } catch {
+        /* ignore */
+      }
+    });
+  }, [router]);
+
   return (
     <div className="owner-shell">
+      {/* Top progress sweep during route transitions */}
+      {navigatingTo && <div className="owner-top-progress" />}
+
       {/* ── Left Navigation Rail ─────────────────────────────── */}
       <aside className={`owner-rail ${menuOpen ? "is-open" : ""}`}>
         {/* Brand Lockup */}
@@ -99,14 +120,23 @@ export function OwnerShell({
         <nav className="owner-nav" aria-label="Console Navigation">
           <div className="owner-nav-section-label">MAIN MENU</div>
           {NAV.map((item) => {
-            const active = pathname === item.href;
+            const isCurrent = pathname === item.href;
+            const isNavigating = navigatingTo === item.href;
+            const active = isNavigating || (navigatingTo === null && isCurrent);
+
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                className={`owner-nav-item ${active ? "is-active" : ""}`}
+                prefetch={true}
+                className={`owner-nav-item ${active ? "is-active" : ""} ${isNavigating ? "is-navigating" : ""}`}
                 aria-current={active ? "page" : undefined}
-                onClick={() => setMenuOpen(false)}
+                onClick={() => {
+                  setMenuOpen(false);
+                  if (pathname !== item.href) {
+                    setNavigatingTo(item.href);
+                  }
+                }}
               >
                 <span className="owner-nav-icon">{item.icon}</span>
                 <span className="owner-nav-label">{item.label}</span>
@@ -121,6 +151,7 @@ export function OwnerShell({
 
           <Link
             href="/directory"
+            prefetch={true}
             className="owner-nav-item"
             target="_blank"
             rel="noopener noreferrer"

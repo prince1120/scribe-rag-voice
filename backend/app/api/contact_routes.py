@@ -159,51 +159,61 @@ async def list_contacts(identity: Identity = Depends(get_identity)):
 
 @router.get("/overview")
 async def overview(identity: Identity = Depends(get_identity)):
-    """Everything the console's front page needs, in one request.
-
-    Assembled server-side rather than letting the dashboard fetch four
-    endpoints and stitch them: a dashboard that renders in four stages looks
-    broken, and each extra round trip is another chance for one to fail while
-    the others succeed.
-    """
+    """Everything the console's front page needs, assembled in one fast batch query."""
     _require_owner(identity)
 
+    from app.database import async_session
+    from app.models.db_models import ContactSessionRecord
+    from sqlalchemy import select
+
     contacts_list = await repositories.list_contacts(identity.tenant_id)
-    conversations = await repositories.list_conversations(identity.tenant_id)
-
-    since_week = datetime.now(timezone.utc) - timedelta(days=7)
-
-    sessions_all = []
-    for contact in contacts_list:
-        for session in await repositories.list_contact_sessions(contact.contact_id):
-            sessions_all.append((contact, session))
-
-    def _started(session):
-        value = session.started_at
-        if value is None:
-            return None
-        # Rows can come back naive depending on when they were written.
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-
-    recent = [pair for pair in sessions_all if (_started(pair[1]) or since_week) >= since_week]
-
-    # The most-asked questions are the highest-value thing here: they tell an
-    # owner what to put in their documents next.
-    questions: list[dict] = []
-    for conversation in conversations:
-        for message in conversation.messages:
-            if message.role == "user" and message.content.strip():
-                questions.append({
-                    "text": message.content.strip()[:200],
-                    "at": message.created_at.isoformat() if message.created_at else None,
-                })
-    questions.sort(key=lambda q: q["at"] or "", reverse=True)
 
     # Fetch agent and business metadata for owner
     agent = await repositories.get_agent(identity.tenant_id)
     owner = await repositories.get_owner(identity.tenant_id)
     agent_name = (agent.name if agent else "Assistant") or "Assistant"
     business_name = (owner.business_name if owner else "Business") or "Business"
+
+    if not contacts_list:
+        return {
+            "totals": {
+                "total_sessions": 0,
+                "conversations": 0,
+                "conversations_this_week": 0,
+                "voice_calls": 0,
+                "chat_sessions": 0,
+                "people": 0,
+                "unique_users": 0,
+                "active_people": 0,
+                "agent_name": agent_name,
+                "business_name": business_name,
+            },
+            "recent": [],
+        }
+
+    contact_ids = [c.contact_id for c in contacts_list]
+    contact_map = {c.contact_id: c for c in contacts_list}
+
+    sessions_all = []
+    async with async_session() as session:
+        q = (
+            select(ContactSessionRecord)
+            .where(ContactSessionRecord.contact_id.in_(contact_ids))
+            .order_by(ContactSessionRecord.started_at.desc())
+        )
+        res = await session.execute(q)
+        for s in res.scalars().all():
+            c = contact_map.get(s.contact_id)
+            if c:
+                sessions_all.append((c, s))
+
+    since_week = datetime.now(timezone.utc) - timedelta(days=7)
+
+    def _started(session):
+        value = session.started_at
+        if value is None:
+            return None
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
     # Filter out empty 0-message unstarted page loads
     active_sessions_all = [
@@ -213,7 +223,6 @@ async def overview(identity: Identity = Depends(get_identity)):
         or s.conversation_id
     ]
 
-    # If all were unstarted, fall back to sessions_all so empty state displays gracefully
     display_sessions = active_sessions_all if active_sessions_all else []
 
     voice_count = sum(1 for _, s in display_sessions if s.channel == "voice")
@@ -237,7 +246,6 @@ async def overview(identity: Identity = Depends(get_identity)):
             "business_name": business_name,
         })
 
-    # Unique callers count based on distinct caller names
     unique_names = set(c.name.strip().lower() for c in contacts_list if c.name)
 
     return {
@@ -415,14 +423,17 @@ async def open_link(request: Request, response: Response, body: OpenLinkRequest)
     if record.pin and body.pin != record.pin:
         raise HTTPException(status_code=401, detail="Enter the PIN you were given.")
 
+    import hashlib
+    raw_ua = request.headers.get("user-agent", "")
     device_id = contacts.derive_device_id(
-        user_agent=request.headers.get("user-agent", ""),
+        user_agent=raw_ua,
         client_ip=client_ip(request),
         salt=record.token_hash,
     )
+    legacy_device_id = hashlib.sha256(f"{raw_ua}|{client_ip(request)}|{record.token_hash}".encode("utf-8")).hexdigest()[:32]
 
     if not contacts.check_device(
-        bound_device=record.bound_device, presented_device=device_id
+        bound_device=record.bound_device, presented_device=device_id, legacy_device=legacy_device_id
     ):
         raise HTTPException(
             status_code=403,
@@ -451,7 +462,7 @@ async def open_link(request: Request, response: Response, body: OpenLinkRequest)
             detail="This link has reached its daily limit. Try again tomorrow.",
         )
 
-    if record.bound_device is None:
+    if record.bound_device is None or record.bound_device == legacy_device_id:
         await repositories.bind_contact_device(record.contact_id, device_id)
     else:
         await repositories.touch_contact(record.contact_id)

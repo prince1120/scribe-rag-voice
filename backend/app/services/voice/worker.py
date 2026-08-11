@@ -14,20 +14,36 @@ the two remain independently runnable and restartable.
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Optional
 
 from livekit.agents import JobContext, WorkerOptions, cli, llm
 
 from app.logging_config import configure_logging
-from app.services.voice import rag_client
+from app.services.voice import rag_client, turn_metrics
 from app.services.voice.agent import VoiceAssistant
 from app.services.voice.config import VoiceSettings, voice_settings
 from app.services.voice.registry import default_registry
-from app.services.voice.session_factory import build_agent_session
+from app.services.voice.session_factory import (
+    build_agent_session,
+    load_turn_detector,
+    load_vad,
+)
 
 configure_logging(debug=False)
 logger = logging.getLogger(__name__)
+
+# Imported for its side effect: the plugin registers itself on import, and only
+# registered plugins are fetched by `python -m app.services.voice.worker
+# download-files`. Without this the model is missing at runtime and turn
+# detection silently falls back to timers — which is exactly the failure that
+# is hardest to notice, because calls still work, just worse.
+if voice_settings.VOICE_SEMANTIC_TURN_DETECTION:
+    try:
+        import livekit.plugins.turn_detector  # noqa: F401
+    except Exception:
+        logger.warning("Turn detector plugin not installed", exc_info=True)
 
 _registry = default_registry()
 
@@ -68,6 +84,13 @@ def _params_for_job(ctx: JobContext) -> SessionParams:
     if data.get("llm_model"):
         logger.info("Using caller-selected LLM model: %s", data["llm_model"])
         overrides["VOICE_LLM_MODEL"] = data["llm_model"]
+    if data.get("stt_language"):
+        # The token endpoint has always sent this for business agents; nothing
+        # here read it, so an owner who picked a language got auto-detect
+        # anyway. Auto-detect is a reasonable default but a worse answer than
+        # a known language, which is the whole reason the picker exists.
+        logger.info("Using caller-selected STT language: %s", data["stt_language"])
+        overrides["VOICE_STT_LANGUAGE"] = data["stt_language"]
     if data.get("custom_llm_base_url"):
         # Caller picked a fully custom OpenAI-compatible model (any provider,
         # own key) — swap the whole LLM provider for this session only.
@@ -84,14 +107,30 @@ def _params_for_job(ctx: JobContext) -> SessionParams:
     if data.get("temperature") is not None:
         logger.info("Using caller-selected temperature: %s", data["temperature"])
         overrides["VOICE_LLM_TEMPERATURE"] = data["temperature"]
+    # Which ceiling applies depends on who owns reply length for this session:
+    # us when our delivery rules are on, the owner's own prompt when they are
+    # off. Absent (personal workspaces, older tokens) means on, matching the
+    # column default.
+    styled = data.get("style_rules", True)
+    cap = (
+        voice_settings.VOICE_LLM_STYLED_MAX_TOKENS_CAP
+        if styled
+        else voice_settings.VOICE_LLM_MAX_TOKENS_CAP
+    )
     if data.get("max_tokens") is not None:
         # Clamped regardless of what the caller sent — this value comes from
         # the same Settings slider as text chat (up to 4000), but a voice
         # reply that long would be unlistenable and needlessly expensive.
-        # Capping keeps voice cheap even if chat's slider is turned way up.
-        capped = min(int(data["max_tokens"]), voice_settings.VOICE_LLM_MAX_TOKENS_CAP)
+        capped = min(int(data["max_tokens"]), cap)
         logger.info("Using caller-selected max tokens: %s (capped to %s)", data["max_tokens"], capped)
         overrides["VOICE_LLM_MAX_TOKENS"] = capped
+    elif voice_settings.VOICE_LLM_MAX_TOKENS > cap:
+        # Nobody asked for a length, and the default sits above this session's
+        # ceiling. Without this the cap would apply only to sessions that named
+        # a number, which is the wrong way round — a session that expressed no
+        # preference should get the tighter behaviour, not the looser one.
+        logger.info("Clamping default max tokens to %s", cap)
+        overrides["VOICE_LLM_MAX_TOKENS"] = cap
     settings = voice_settings.model_copy(update=overrides) if overrides else voice_settings
 
     return SessionParams(
@@ -141,12 +180,45 @@ async def _seed_chat_context(params: SessionParams) -> Optional[llm.ChatContext]
 
 
 async def entrypoint(ctx: JobContext) -> None:
+    # Everything from here to the first spoken word is time the caller spends
+    # watching a "Connecting…" spinner, so each phase is timed. Connect latency
+    # is the one part of a voice product that gets exactly one chance: a caller
+    # who hears nothing for ten seconds has already decided it is broken.
+    t0 = time.monotonic()
+
+    def _elapsed() -> float:
+        return time.monotonic() - t0
+
     await ctx.connect()
+    logger.info("[CONNECT %s] room joined at %.2fs", ctx.room.name, _elapsed())
 
     params = _params_for_job(ctx)
-    chat_ctx = await _seed_chat_context(params)
 
-    session = build_agent_session(params.settings, _registry)
+    # History fetch and session construction are independent, and the history
+    # fetch is a network round trip to the API server (which then queries the
+    # database). Serialising them put that whole round trip in front of the
+    # caller for no reason — the session does not need the history to be built,
+    # only to be started.
+    history_task = asyncio.create_task(_seed_chat_context(params))
+    session = build_agent_session(
+        params.settings,
+        _registry,
+        vad=ctx.proc.userdata.get("vad"),
+        # Constructed per job rather than prewarmed: the plugin requires a
+        # running job context. It is only a handle onto the process-wide
+        # inference executor, and the model file itself is already on disk, so
+        # this is cheap — the timing log below is there to keep us honest
+        # about that.
+        turn_detection=(
+            load_turn_detector()
+            if params.settings.VOICE_SEMANTIC_TURN_DETECTION
+            else None
+        ),
+    )
+    # Before start(), so the very first turn of the call is measured too.
+    turn_metrics.attach(session, room_name=ctx.room.name)
+    chat_ctx = await history_task
+    logger.info("[CONNECT %s] session built at %.2fs", ctx.room.name, _elapsed())
 
     logger.info(
         "Voice session starting (room=%s, rag=%s, tenant=%s, history_seeded=%s, stt=%s, tts=%s, llm=%s)",
@@ -175,6 +247,8 @@ async def entrypoint(ctx: JobContext) -> None:
     # Greet by *speaking the greeting text directly* (session.say → TTS only),
     # NOT session.generate_reply (which would burn an LLM call just to say
     # hello). Wait for the user to actually be in the room so they hear it.
+    logger.info("[CONNECT %s] session started at %.2fs", ctx.room.name, _elapsed())
+
     if params.settings.VOICE_GREET_ON_CONNECT:
         greeting_text = params.settings.VOICE_GREETING_TEXT or "Hello! How can I help you today?"
         if not ctx.room.remote_participants:
@@ -184,18 +258,38 @@ async def entrypoint(ctx: JobContext) -> None:
                 await asyncio.wait_for(wait_event.wait(), timeout=6.0)
             except asyncio.TimeoutError:
                 pass
-        await asyncio.sleep(0.3)
-        logger.info("Speaking greeting (TTS only, no LLM): %s", greeting_text)
+        logger.info("[CONNECT %s] caller present at %.2fs", ctx.room.name, _elapsed())
+        # The fixed 0.3s sleep that used to sit here was guarding against the
+        # audio track not being subscribed yet — but it paid the cost on every
+        # single call to cover a case that only sometimes happens, and it is
+        # 0.3s of silence at the exact moment a caller is deciding whether the
+        # thing works. session.start() has already wired the room output.
         try:
             await session.say(greeting_text, allow_interruptions=True)
+            logger.info(
+                "[CONNECT %s] greeting spoken at %.2fs — TOTAL TIME TO FIRST AUDIO",
+                ctx.room.name, _elapsed(),
+            )
         except Exception as e:
             logger.warning("Error playing greeting: %s", e)
+
+
+def prewarm(proc) -> None:
+    """Run once per job process, before any call is dispatched to it.
+
+    Anything loaded here is off the critical path of the first call that lands
+    on this process. Keep it to things that are the same for every session —
+    per-job configuration is not known yet.
+    """
+    proc.userdata["vad"] = load_vad(voice_settings)
+    logger.info("Prewarmed Silero VAD")
 
 
 def main() -> None:
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
+            prewarm_fnc=prewarm,
             agent_name=voice_settings.VOICE_AGENT_NAME,
             ws_url=voice_settings.LIVEKIT_URL or None,
             api_key=voice_settings.LIVEKIT_API_KEY or None,

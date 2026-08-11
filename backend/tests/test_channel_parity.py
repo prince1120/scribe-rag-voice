@@ -91,3 +91,55 @@ class TestPromptAssembly:
         from app.services import owner_service
 
         assert owner_service.current_context_line("Not/AZone")
+
+
+class TestDeliveryRules:
+    """The owner's script says who the assistant is. These say how it delivers
+    — length, register, spoken-vs-typed form. The split is the point: an owner
+    tuning wording should not also have to discover that they must forbid
+    markdown or the synthesiser reads asterisks aloud."""
+
+    def _prompt(self, **kwargs):
+        from app.services import owner_service
+
+        return owner_service.build_agent_prompt(
+            script="Answer politely.", agent_name="Asha", **kwargs
+        )
+
+    def test_the_owners_script_still_leads(self):
+        """Rules are appended, never prepended. What the owner wrote is what
+        the model reads first, with or without them."""
+        assert self._prompt(channel="voice").startswith("Answer politely.")
+        assert self._prompt(channel="voice", style_rules=False).startswith("Answer politely.")
+
+    def test_voice_gets_spoken_form_rules_by_default(self):
+        """The default matters more than the toggle: almost nobody changes it,
+        and a business agent without these is the long-winded assistant this
+        was written to fix."""
+        prompt = self._prompt(channel="voice").lower()
+        assert "one to three short sentences" in prompt
+        assert "markdown" in prompt
+
+    def test_turning_them_off_removes_them_entirely(self):
+        """A half-applied rule set would be worse than none — the owner would
+        be debugging against instructions they cannot see."""
+        prompt = self._prompt(channel="voice", style_rules=False)
+        assert "HOW YOU SPEAK" not in prompt
+        # The clock is not a style rule and must survive regardless: it is the
+        # one thing that cannot be written into a prompt in advance.
+        assert "CURRENT DATE AND TIME" in prompt
+
+    def test_chat_does_not_get_the_spoken_rules(self):
+        """Markdown is correct in a typed answer and length is not a latency
+        cost when the reader can skim. Sending voice's rules to chat would make
+        the text agent worse to fix the voice one."""
+        prompt = self._prompt(channel="chat")
+        assert "HOW YOU WRITE" in prompt
+        assert "HOW YOU SPEAK" not in prompt
+        assert "markdown" not in prompt.lower()
+
+    def test_identity_and_clock_are_unaffected_by_the_toggle(self):
+        for style_rules in (True, False):
+            prompt = self._prompt(channel="voice", style_rules=style_rules)
+            assert "Asha" in prompt
+            assert "CURRENT DATE AND TIME" in prompt

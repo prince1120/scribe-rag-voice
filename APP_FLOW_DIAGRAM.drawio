@@ -1,0 +1,146 @@
+<mxfile host="app.diagrams.net" modified="2026-08-11T12:00:00.000Z" agent="Antigravity" version="21.0.0" type="device">
+
+  <!-- =========================================================================================
+       PAGE 1: COMPLETE MASTER PLATFORM OVERVIEW
+       ========================================================================================= -->
+  <diagram id="tab-master" name="1. Master System Flow">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2400" pageHeight="1400" background="#F8FAFC" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Header -->
+        <mxCell id="m-hdr" value="&lt;b style=&quot;font-size: 24px; color: #0F172A;&quot;&gt;SCRIBE AI PLATFORM — COMPLETE MASTER SYSTEM WORKFLOW&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 14px; color: #475569;&quot;&gt;Dual Operational Modes: Personal 3-Pane Research Workspace &amp; Business Multi-Channel Voice Console&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=2;align=center;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="30" width="2300" height="80" as="geometry"/>
+        </mxCell>
+
+        <!-- STEP 0: ENTRY & IDENTITY RESOLUTION -->
+        <mxCell id="m-step0" value="&lt;b style=&quot;font-size: 16px; color: #0F172A;&quot;&gt;STEP 0: ENTRY &amp; IDENTITY RESOLUTION (/setup or SessionGate)&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size: 12px; color: #475569;&quot;&gt;Resolves Identity Headers (X-User-Groq-Key, X-User-Sarvam-Key, X-Client-Id) or Session Cookie ➔ Determines Mode&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#64748B;strokeWidth=2;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="140" width="2300" height="70" as="geometry"/>
+        </mxCell>
+
+        <!-- BRANCH A: PERSONAL 3-PANE MODE -->
+        <mxCell id="m-lane-personal" value="&lt;b style=&quot;font-size: 18px; color: #0369A1;&quot;&gt;📘 MODE A: PERSONAL 3-PANE RAG &amp; VOICE WORKSPACE (app/page.tsx)&lt;/b&gt;" style="swimlane;whiteSpace=wrap;html=1;fillColor=#F0F9FF;strokeColor=#0284C7;strokeWidth=2;startSize=35;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="240" width="1120" height="340" as="geometry"/>
+        </mxCell>
+        <mxCell id="mp-p1" value="&lt;b style=&quot;font-size: 14px;&quot;&gt;Pane 1: Knowledge Base&lt;/b&gt;&lt;hr&gt;• PDF/DOCX/TXT Ingestion&lt;br&gt;• 500-Token Chunking&lt;br&gt;• Document Selection Chips" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0284C7;strokeWidth=2;" vertex="1" parent="m-lane-personal">
+          <mxGeometry x="30" y="55" width="230" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="mp-p2" value="&lt;b style=&quot;font-size: 14px;&quot;&gt;Pane 2: Chat &amp; Citations&lt;/b&gt;&lt;hr&gt;• Multi-modal Composer&lt;br&gt;• Streaming Markdown&lt;br&gt;• In-Line Citations [1.1], [1.2]&lt;br&gt;• Latency: Retrieval &amp; TTFT" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0284C7;strokeWidth=2;" vertex="1" parent="m-lane-personal">
+          <mxGeometry x="300" y="55" width="250" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="mp-p3" value="&lt;b style=&quot;font-size: 14px;&quot;&gt;Pane 3: Source Inspector&lt;/b&gt;&lt;hr&gt;• Slide-Over Ground Truth&lt;br&gt;• Page # &amp; Chunk Index&lt;br&gt;• Vector Similarity Score" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0284C7;strokeWidth=2;" vertex="1" parent="m-lane-personal">
+          <mxGeometry x="590" y="55" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="mp-p4" value="&lt;b style=&quot;font-size: 14px;&quot;&gt;🎙️ Voice Call Modal&lt;/b&gt;&lt;hr&gt;Live Voice Dialogue with Documents via Sarvam STT/TTS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FAF5FF;strokeColor=#A855F7;strokeWidth=2;" vertex="1" parent="m-lane-personal">
+          <mxGeometry x="870" y="55" width="220" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="mp-track" value="&lt;b style=&quot;font-size: 13px; color: #0369A1;&quot;&gt;⚡ Personal Request Tracking:&lt;/b&gt; Query ➔ Vector Search (retrieval_ms) ➔ Groq LPU (ttft_ms) ➔ Streaming Markdown + Citations" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0284C7;strokeWidth=1;align=center;" vertex="1" parent="m-lane-personal">
+          <mxGeometry x="30" y="200" width="1060" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="mpe1" edge="1" source="mp-p1" target="mp-p2" parent="m-lane-personal" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#0284C7;strokeWidth=2;"/>
+        <mxCell id="mpe2" edge="1" source="mp-p2" target="mp-p3" parent="m-lane-personal" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#0284C7;strokeWidth=2;"/>
+        <mxCell id="mpe3" edge="1" source="mp-p2" target="mp-p4" parent="m-lane-personal" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#A855F7;strokeWidth=2;"/>
+
+        <!-- BRANCH B: BUSINESS CONSOLE MODE -->
+        <mxCell id="m-lane-business" value="&lt;b style=&quot;font-size: 18px; color: #1E40AF;&quot;&gt;🏢 MODE B: BUSINESS VOICE &amp; CHAT CONSOLE (/dashboard)&lt;/b&gt;" style="swimlane;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#3B82F6;strokeWidth=2;startSize=35;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="1230" y="240" width="1120" height="340" as="geometry"/>
+        </mxCell>
+        <mxCell id="mb-s1" value="&lt;b style=&quot;font-size: 14px;&quot;&gt;1. Overview (/dashboard)&lt;/b&gt;&lt;hr&gt;• 4 Metric Cards&lt;br&gt;• Completed Talks (5/page)&lt;br&gt;• Transcript Slide-Over" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#3B82F6;strokeWidth=2;" vertex="1" parent="m-lane-business">
+          <mxGeometry x="30" y="55" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="mb-s2" value="&lt;b style=&quot;font-size: 14px;&quot;&gt;2. Assistant (/agent)&lt;/b&gt;&lt;hr&gt;• Voice &amp; Chat Prompts&lt;br&gt;• Anushka / Abhishek Persona&lt;br&gt;• Live Deployment Toggle" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#3B82F6;strokeWidth=2;" vertex="1" parent="m-lane-business">
+          <mxGeometry x="300" y="55" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="mb-s3" value="&lt;b style=&quot;font-size: 14px;&quot;&gt;3. People (/links)&lt;/b&gt;&lt;hr&gt;• Unique Caller Deduplication&lt;br&gt;• PINs &amp; Hardware Device Lock&lt;br&gt;• Multi-Drawer History" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#3B82F6;strokeWidth=2;" vertex="1" parent="m-lane-business">
+          <mxGeometry x="570" y="55" width="250" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="mb-s4" value="&lt;b style=&quot;font-size: 14px;&quot;&gt;4. Settings (/settings)&lt;/b&gt;&lt;hr&gt;• Business Name &amp; Category&lt;br&gt;• Encrypted Groq/Sarvam Keys&lt;br&gt;• Owner Profile &amp; Password" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#3B82F6;strokeWidth=2;" vertex="1" parent="m-lane-business">
+          <mxGeometry x="850" y="55" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="mb-cache" value="&lt;b style=&quot;font-size: 13px; color: #16A34A;&quot;&gt;⚡ workspaceCache.ts:&lt;/b&gt; In-Memory Singleton + LocalStorage SWR ➔ 0ms Instant Rendering for Business Name &amp; Live Status" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F0FDF4;strokeColor=#16A34A;strokeWidth=1;align=center;" vertex="1" parent="m-lane-business">
+          <mxGeometry x="30" y="200" width="1060" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="mbe1" edge="1" source="mb-s1" target="mb-s2" parent="m-lane-business" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#3B82F6;strokeWidth=2;"/>
+        <mxCell id="mbe2" edge="1" source="mb-s2" target="mb-s3" parent="m-lane-business" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#3B82F6;strokeWidth=2;"/>
+        <mxCell id="mbe3" edge="1" source="mb-s3" target="mb-s4" parent="m-lane-business" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#3B82F6;strokeWidth=2;"/>
+
+        <!-- PUBLIC CALLER & SECURITY FLOW -->
+        <mxCell id="m-lane-caller" value="&lt;b style=&quot;font-size: 18px; color: #7E22CE;&quot;&gt;🌐 PUBLIC CUSTOMER ACCESS &amp; SMART CALLER RECEPTION FLOW&lt;/b&gt;" style="swimlane;whiteSpace=wrap;html=1;fillColor=#FAF5FF;strokeColor=#A855F7;strokeWidth=2;startSize=35;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="610" width="2300" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="mc-1" value="&lt;b&gt;1. Customer Entry&lt;/b&gt;&lt;br&gt;Directory (/directory) OR&lt;br&gt;Token Link (/t/:token)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#A855F7;strokeWidth=2;" vertex="1" parent="m-lane-caller">
+          <mxGeometry x="30" y="55" width="280" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="mc-2" value="&lt;b&gt;2. Smart Deduplication&lt;/b&gt;&lt;br&gt;Has caller contacted agent before?&lt;br&gt;&lt;font color=&quot;#059669&quot;&gt;YES ➔ Reuse contact &amp; history&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#2563EB&quot;&gt;NO ➔ Create new contact row&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#A855F7;strokeWidth=2;" vertex="1" parent="m-lane-caller">
+          <mxGeometry x="350" y="55" width="340" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="mc-3" value="&lt;b&gt;3. Security &amp; PIN Gate&lt;/b&gt;&lt;br&gt;• Validate Agent Live ('deployed')&lt;br&gt;• Check contact not blocked&lt;br&gt;• Check optional PIN passcode" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#A855F7;strokeWidth=2;" vertex="1" parent="m-lane-caller">
+          <mxGeometry x="730" y="55" width="320" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="mc-4" value="&lt;b&gt;4. Hardware Device Binding&lt;/b&gt;&lt;br&gt;Compute Hash(IP + UserAgent)&lt;br&gt;• If unbound ➔ Lock to device&lt;br&gt;• If bound ➔ Verify device match" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#A855F7;strokeWidth=2;" vertex="1" parent="m-lane-caller">
+          <mxGeometry x="1090" y="55" width="340" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="mc-5" value="&lt;b&gt;5. Channel Launch&lt;/b&gt;&lt;br&gt;Customer Chooses:&lt;br&gt;📞 Voice Call (Web Audio) OR&lt;br&gt;💬 Text Chat Interface" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#16A34A;strokeWidth=2;" vertex="1" parent="m-lane-caller">
+          <mxGeometry x="1470" y="55" width="340" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="mc-6" value="&lt;b&gt;6. Register Session&lt;/b&gt;&lt;br&gt;Create row in contact_sessions&lt;br&gt;Snapshot Agent &amp; Business Name" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#475569;strokeWidth=2;" vertex="1" parent="m-lane-caller">
+          <mxGeometry x="1850" y="55" width="320" height="85" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="mce1" edge="1" source="mc-1" target="mc-2" parent="m-lane-caller" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#A855F7;strokeWidth=2;"/>
+        <mxCell id="mce2" edge="1" source="mc-2" target="mc-3" parent="m-lane-caller" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#A855F7;strokeWidth=2;"/>
+        <mxCell id="mce3" edge="1" source="mc-3" target="mc-4" parent="m-lane-caller" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#A855F7;strokeWidth=2;"/>
+        <mxCell id="mce4" edge="1" source="mc-4" target="mc-5" parent="m-lane-caller" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#16A34A;strokeWidth=2;"/>
+        <mxCell id="mce5" edge="1" source="mc-5" target="mc-6" parent="m-lane-caller" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#475569;strokeWidth=2;"/>
+
+        <!-- REAL-TIME VOICE PIPELINE -->
+        <mxCell id="m-lane-voice" value="&lt;b style=&quot;font-size: 18px; color: #B45309;&quot;&gt;🎙️ REAL-TIME BIDIRECTIONAL VOICE CALL &amp; RAG ENGINE PIPELINE&lt;/b&gt;" style="swimlane;whiteSpace=wrap;html=1;fillColor=#FFFBEB;strokeColor=#F59E0B;strokeWidth=2;startSize=35;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="840" width="2300" height="420" as="geometry"/>
+        </mxCell>
+        <mxCell id="mv-1" value="&lt;b&gt;1. Web Audio Input&lt;/b&gt;&lt;br&gt;Microphone 16kHz PCM&lt;br&gt;WebSocket (/voice/stream)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#F59E0B;strokeWidth=2;" vertex="1" parent="m-lane-voice">
+          <mxGeometry x="30" y="60" width="260" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="mv-2" value="&lt;b&gt;2. Silero VAD&lt;/b&gt;&lt;br&gt;Detects Speech Start &amp; End&lt;br&gt;Filters silence &amp; noise" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#F59E0B;strokeWidth=2;" vertex="1" parent="m-lane-voice">
+          <mxGeometry x="330" y="60" width="260" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="mv-3" value="&lt;b&gt;3. Sarvam STT&lt;/b&gt;&lt;br&gt;Streaming Speech-to-Text&lt;br&gt;Transcribes user question" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#F59E0B;strokeWidth=2;" vertex="1" parent="m-lane-voice">
+          <mxGeometry x="630" y="60" width="260" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="mv-4" value="&lt;b&gt;4. Context &amp; RAG Search&lt;/b&gt;&lt;br&gt;Live Date/Time Context Line&lt;br&gt;+ Hybrid Vector Document Search" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#059669;strokeWidth=2;" vertex="1" parent="m-lane-voice">
+          <mxGeometry x="930" y="60" width="310" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="mv-5" value="&lt;b&gt;5. Groq LLaMA 3.1/3.3&lt;/b&gt;&lt;br&gt;Ultra Fast Token Stream&lt;br&gt;Voice Script Conciseness" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#EA580C;strokeWidth=2;" vertex="1" parent="m-lane-voice">
+          <mxGeometry x="1280" y="60" width="280" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="mv-6" value="&lt;b&gt;6. Sarvam TTS Persona&lt;/b&gt;&lt;br&gt;Voices: Anushka, Abhishek&lt;br&gt;Streaming Audio Waveform" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#DB2777;strokeWidth=2;" vertex="1" parent="m-lane-voice">
+          <mxGeometry x="1600" y="60" width="280" height="85" as="geometry"/>
+        </mxCell>
+        <mxCell id="mv-7" value="&lt;b&gt;7. Audio Playback&lt;/b&gt;&lt;br&gt;AudioContext Buffer Queue&lt;br&gt;Customer hears live answer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=2;" vertex="1" parent="m-lane-voice">
+          <mxGeometry x="1920" y="60" width="270" height="85" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="mv-db" value="&lt;b style=&quot;font-size: 15px; color: #831843;&quot;&gt;💾 Turn-by-Turn Logging &amp; Database State (Async SQLAlchemy)&lt;/b&gt;&lt;hr&gt;&lt;div align=&quot;left&quot; style=&quot;font-size: 12px; padding: 4px;&quot;&gt;• &lt;b&gt;session_turns:&lt;/b&gt; User query text + Assistant response text + Timestamps&lt;br&gt;• &lt;b&gt;contact_sessions:&lt;/b&gt; Increments message_count (e.g. 5 dialogue turns)&lt;br&gt;• &lt;b&gt;Zero-Turn Ghost Cleanup:&lt;/b&gt; Empty sessions pruned if caller leaves without talking&lt;br&gt;• &lt;b&gt;Dashboard Live Feed:&lt;/b&gt; Instantly appears in Overview 4 totals &amp; Completed Talks&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDF2F8;strokeColor=#EC4899;strokeWidth=2;" vertex="1" parent="m-lane-voice">
+          <mxGeometry x="30" y="180" width="2160" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="mve1" edge="1" source="mv-1" target="mv-2" parent="m-lane-voice" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#F59E0B;strokeWidth=2;"/>
+        <mxCell id="mve2" edge="1" source="mv-2" target="mv-3" parent="m-lane-voice" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#F59E0B;strokeWidth=2;"/>
+        <mxCell id="mve3" edge="1" source="mv-3" target="mv-4" parent="m-lane-voice" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#059669;strokeWidth=2;"/>
+        <mxCell id="mve4" edge="1" source="mv-4" target="mv-5" parent="m-lane-voice" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#EA580C;strokeWidth=2;"/>
+        <mxCell id="mve5" edge="1" source="mv-5" target="mv-6" parent="m-lane-voice" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#DB2777;strokeWidth=2;"/>
+        <mxCell id="mve6" edge="1" source="mv-6" target="mv-7" parent="m-lane-voice" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#2563EB;strokeWidth=2;"/>
+        <mxCell id="mve7" edge="1" source="mv-7" target="mv-db" parent="m-lane-voice" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#EC4899;strokeWidth=2;"/>
+
+        <!-- Inter-lane Connections -->
+        <mxCell id="c-link1" edge="1" source="m-step0" target="m-lane-personal" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#0284C7;strokeWidth=3;"/>
+        <mxCell id="c-link2" edge="1" source="m-step0" target="m-lane-business" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#3B82F6;strokeWidth=3;"/>
+        <mxCell id="c-link3" edge="1" source="mc-5" target="mv-1" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#16A34A;strokeWidth=3;dashed=1;"/>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+</mxfile>

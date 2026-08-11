@@ -144,6 +144,8 @@ async def _chat_overrides(identity: Identity, x_user_groq_key, x_custom_llm_base
             script=channel["script"],
             agent_name=agent.name,
             business_name=workspace.business_name if workspace else None,
+            channel="chat",
+            style_rules=channel.get("style_rules", True),
         )
 
     stored = await owner_service.resolve_credentials(identity.tenant_id)

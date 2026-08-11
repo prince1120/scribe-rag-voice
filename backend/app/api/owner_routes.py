@@ -36,6 +36,13 @@ class AgentConfigRequest(BaseModel):
     voice_id: Optional[str] = Field(default=None, max_length=64)
     rag_enabled: Optional[bool] = None
     greeting: Optional[str] = Field(default=None, max_length=500)
+    # STT language, or "unknown" to auto-detect. Was accepted by the service
+    # layer and stored on the model but never declared here, so an owner's
+    # choice was dropped between the console and the database.
+    language: Optional[str] = Field(default=None, max_length=16)
+    # Whether our delivery rules are appended to the owner's script. Null means
+    # "leave as-is", like every other field on this model.
+    style_rules_enabled: Optional[bool] = None
 
     # Per-channel overrides. Null means "use the shared setting" — the console
     # sends only what the owner edited, so absent must not mean cleared.
@@ -392,8 +399,10 @@ async def save_agent(
             name=body.name,
             script=body.script,
             voice_id=body.voice_id,
+            language=body.language,
             rag_enabled=body.rag_enabled,
             greeting=body.greeting,
+            style_rules_enabled=body.style_rules_enabled,
             # The allowed set is owned by the voice config, not duplicated here,
             # so adding a voice in one place is enough.
             allowed_voices=SUPPORTED_TTS_VOICE_IDS,

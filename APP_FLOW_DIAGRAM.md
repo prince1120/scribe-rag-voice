@@ -6,19 +6,129 @@ This document provides an exhaustive, end-to-end technical specification and vis
 
 ## Table of Contents
 1. [High-Level System Topology](#1-high-level-system-topology)
-2. [Business Owner Console Lifecycle & Subsystems](#2-business-owner-console-lifecycle--subsystems)
-   - 2.1 [Zero-Flicker Workspace Cache & SWR Navigation](#21-zero-flicker-workspace-cache--swr-navigation)
-   - 2.2 [Overview Dashboard & Metrics Pipeline](#22-overview-dashboard--metrics-pipeline)
-   - 2.3 [Assistant Studio & Dual-Channel Prompt Engine](#23-assistant-studio--dual-channel-prompt-engine)
-   - 2.4 [People, Calls & Token Lifecycle Subsystem](#24-people-calls--token-lifecycle-subsystem)
-   - 2.5 [Account, Encryption & API Vault](#25-account-encryption--api-vault)
-3. [Customer / Caller Interaction Flows](#3-customer--caller-interaction-flows)
-   - 3.1 [Public Directory & Smart Caller Deduplication](#31-public-directory--smart-caller-deduplication)
-   - 3.2 [Dedicated Token Link & Device Binding Security](#32-dedicated-token-link--device-binding-security)
-4. [Real-Time Bidirectional Voice Call Pipeline](#4-real-time-bidirectional-voice-call-pipeline)
-5. [Text Chat & RAG Document Grounding Engine](#5-text-chat--rag-document-grounding-engine)
-6. [Complete Database Schema & Entity-Relationship Model (ERD)](#6-complete-database-schema--entity-relationship-model-erd)
-7. [Comprehensive Backend API Route Directory](#7-comprehensive-backend-api-route-directory)
+2. [Dual-Mode Architecture Overview (Personal vs Business)](#2-dual-mode-architecture-overview-personal-vs-business)
+3. [Personal Mode Architecture (3-Pane RAG & Voice Studio)](#3-personal-mode-architecture-3-pane-rag--voice-studio)
+   - 3.1 [Pane 1: Knowledge Base & Document Ingestion](#31-pane-1-knowledge-base--document-ingestion)
+   - 3.2 [Pane 2: Interactive Chat Studio & Multi-Modal Composer](#32-pane-2-interactive-chat-studio--multi-modal-composer)
+   - 3.3 [Pane 3: Source Inspector & In-Line Citations](#33-pane-3-source-inspector--in-line-citations)
+   - 3.4 [Embedded Real-Time Voice Call Modal](#34-embedded-real-time-voice-call-modal)
+   - 3.5 [Request & Latency Tracking Pipeline](#35-request--latency-tracking-pipeline)
+4. [Business Owner Console Lifecycle & Subsystems](#4-business-owner-console-lifecycle--subsystems)
+   - 4.1 [Zero-Flicker Workspace Cache & SWR Navigation](#41-zero-flicker-workspace-cache--swr-navigation)
+   - 4.2 [Overview Dashboard & Metrics Pipeline](#42-overview-dashboard--metrics-pipeline)
+   - 4.3 [Assistant Studio & Dual-Channel Prompt Engine](#43-assistant-studio--dual-channel-prompt-engine)
+   - 4.4 [People, Calls & Token Lifecycle Subsystem](#44-people-calls--token-lifecycle-subsystem)
+   - 4.5 [Account, Encryption & API Vault](#45-account-encryption--api-vault)
+5. [Customer / Caller Interaction Flows](#5-customer--caller-interaction-flows)
+   - 5.1 [Public Directory & Smart Caller Deduplication](#51-public-directory--smart-caller-deduplication)
+   - 5.2 [Dedicated Token Link & Device Binding Security](#52-dedicated-token-link--device-binding-security)
+6. [Real-Time Bidirectional Voice Call Pipeline](#6-real-time-bidirectional-voice-call-pipeline)
+7. [Text Chat & RAG Document Grounding Engine](#7-text-chat--rag-document-grounding-engine)
+8. [Complete Database Schema & Entity-Relationship Model (ERD)](#8-complete-database-schema--entity-relationship-model-erd)
+9. [Comprehensive Backend API Route Directory](#9-comprehensive-backend-api-route-directory)
+
+---
+
+## 2. Dual-Mode Architecture Overview (Personal vs Business)
+
+The platform supports two distinct operational modes determined by the owner's selection in `/setup` and resolved by identity headers (`X-User-Groq-Key`, `X-User-Sarvam-Key`, `X-Client-Id` or session cookie):
+
+```mermaid
+flowchart TD
+    START["User Opens Application (/)"] --> GATE{"Mode Configured in DB?"}
+    GATE -- No --> SETUP["🚀 Setup Gate (/setup): Choose Personal vs Business Mode"]
+    
+    SETUP --> CHOICE{"Owner Choice"}
+    CHOICE -- "Personal Mode" --> PERS["📘 3-Pane Personal RAG & Voice Studio (app/page.tsx)"]
+    CHOICE -- "Business Mode" --> BIZ["🏢 Business Voice & Chat Platform Console (/dashboard)"]
+
+    GATE -- "Mode = personal" --> PERS
+    GATE -- "Mode = business" --> BIZ
+```
+
+---
+
+## 3. Personal Mode Architecture (3-Pane RAG & Voice Studio)
+
+In Personal Mode (`app/page.tsx`), the application presents a sleek, manuscript-toned 3-pane interface designed for intensive document research, multi-modal chat, source verification, and real-time voice conversations.
+
+```mermaid
+flowchart LR
+    subgraph Pane1["PANE 1: Knowledge Library"]
+        UPLOAD["📤 Upload PDF / DOCX / TXT / MD"]
+        LIST["📚 Document Selection Chips (Chunk Count, Status)"]
+        ACTIONS["🗑️ Delete & Multi-doc Select"]
+    end
+
+    subgraph Pane2["PANE 2: Interactive Chat Studio"]
+        COMPOSER["📝 Multi-Modal Composer (Text + Image Attachments)"]
+        STREAM["⚡ Streaming Markdown Response (Code, Tables)"]
+        CIT_MARK["🏷️ Clickable In-Line Citations [1.1], [1.2]"]
+        METRICS_BAR["⏱️ Latency Pills: Retrieval ms • TTFT ms • Total ms"]
+    end
+
+    subgraph Pane3["PANE 3: Source Inspector (Slide-Over)"]
+        CHUNK_VIEW["📄 Full Ground Truth Chunk Content"]
+        META["🔍 Filename, Page #, Chunk Index"]
+        SCORE["📊 Vector Cosine Similarity Score"]
+    end
+
+    subgraph VoiceModal["🎙️ Embedded Voice Modal"]
+        V_TALK["Real-Time Voice Call Grounded on Selected Documents"]
+    end
+
+    UPLOAD --> LIST --> COMPOSER
+    COMPOSER --> STREAM
+    STREAM --> CIT_MARK
+    CIT_MARK -->|Click Citation| CHUNK_VIEW
+    CHUNK_VIEW --> META --> SCORE
+    STREAM --> METRICS_BAR
+    LIST -.->|Grounding Context| V_TALK
+```
+
+### 3.1 Pane 1: Knowledge Base & Document Ingestion
+- **Document Uploader**: Ingests files up to 10MB per document (PDF, DOCX, TXT, Markdown).
+- **Processing**: Automatically parses text, chunks into overlapping token segments (500 tokens with 50-token overlap), generates vector embeddings, and stores in the local vector index.
+- **Selection Chips**: Allows the user to toggle which specific documents to ground their queries against.
+
+### 3.2 Pane 2: Interactive Chat Studio & Multi-Modal Composer
+- **Multi-modal Composer**: Accepts text prompts and attached images.
+- **In-Line Citations**: Displays clickable citation badges (e.g. `[1.1]`, `[1.2]`) indicating the exact source document and chunk that grounded each assertion.
+- **Real-Time Latency Metrics**: Displays detailed timing for transparency:
+  - `retrieval_ms`: Vector similarity search latency.
+  - `ttft_ms`: Time to first token from Groq LPU.
+  - `total_ms`: Total end-to-end response generation time.
+
+### 3.3 Pane 3: Source Inspector & In-Line Citations
+- Clicking any citation badge smoothly expands the right-hand slide-over drawer to inspect the exact paragraph, page number, and vector cosine similarity score.
+
+### 3.4 Embedded Real-Time Voice Call Modal
+- The floating phone button launches an audio session where the user can speak directly with their documents via Sarvam STT, Groq RAG generation, and Sarvam TTS.
+
+### 3.5 Request & Latency Tracking Pipeline
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as 👤 Personal User
+    participant UI as 🖥️ 3-Pane Chat (app/page.tsx)
+    participant API as 🚀 /api/v1/chat/message
+    participant RAG as 📄 Vector Search Engine
+    participant Groq as ⚡ Groq Cloud LPU
+
+    User->>UI: Submits question + selected documents
+    UI->>API: POST /api/v1/chat/message { prompt, document_ids, images }
+    
+    API->>RAG: Embed query & perform vector search (Top-K=3)
+    RAG-->>API: Returns relevant chunks + records retrieval_ms (e.g. 142ms)
+    
+    API->>Groq: Stream prompt with ground-truth chunk context
+    Groq-->>API: Stream token chunks + records ttft_ms (e.g. 210ms)
+    API-->>UI: Stream Markdown text with [display_number] citations
+    
+    UI-->>User: Live streaming Markdown + clickable citation chips + latency bar
+```
+
+---
 
 ---
 
