@@ -42,21 +42,36 @@ async def connect_to_agent(body: ConnectRequest):
             detail="Business not found.",
         )
 
-    token = contacts.generate_token()
-    contact_id = str(uuid4())
     caller_name = (body.name or "").strip() or "Guest Caller"
+    token = contacts.generate_token()
 
-    await repositories.create_contact(
-        contact_id=contact_id,
+    # Check if this caller already has an active contact for this specific agent
+    existing_contact = await repositories.get_active_contact_by_name(
         owner_tenant_id=body.owner_tenant_id,
         name=caller_name,
-        note=f"Connected via Public Directory ({body.mode})",
-        token_hash=contacts.hash_token(token),
-        pin=None,
-        expires_at=contacts.default_expiry(7),  # 7 day default for directory guest links
-        max_sessions_per_day=50,
-        mode=body.mode,
     )
+
+    if existing_contact:
+        # Re-issue active token for existing contact so all history stays unified
+        await repositories.rotate_contact_token(
+            contact_id=existing_contact.contact_id,
+            owner_tenant_id=body.owner_tenant_id,
+            token_hash=contacts.hash_token(token),
+        )
+    else:
+        # First time caller for this agent — create dedicated contact
+        contact_id = str(uuid4())
+        await repositories.create_contact(
+            contact_id=contact_id,
+            owner_tenant_id=body.owner_tenant_id,
+            name=caller_name,
+            note=f"Connected via Public Directory ({body.mode})",
+            token_hash=contacts.hash_token(token),
+            pin=None,
+            expires_at=contacts.default_expiry(7),  # 7 day default for directory guest links
+            max_sessions_per_day=50,
+            mode=body.mode,
+        )
 
     return {
         "token": token,

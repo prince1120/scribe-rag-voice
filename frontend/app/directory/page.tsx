@@ -97,16 +97,28 @@ export default function DirectoryPage() {
     return matchesSearch && matchesCategory;
   });
 
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const savedName = localStorage.getItem("directory_caller_name");
+      if (savedName) setCallerName(savedName);
+    }
+  }, []);
+
   const handleConnect = async (agent: AgentCard, mode: "voice" | "chat") => {
     setConnectingId(agent.owner_tenant_id);
     setError("");
+    const finalName = callerName.trim() || "Guest Caller";
+    if (typeof window !== "undefined" && finalName !== "Guest Caller") {
+      localStorage.setItem("directory_caller_name", finalName);
+    }
+
     try {
       const res = await fetch("/api/v1/directory/connect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           owner_tenant_id: agent.owner_tenant_id,
-          name: callerName.trim() || "Guest Caller",
+          name: finalName,
           mode,
         }),
       });

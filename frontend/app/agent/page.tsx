@@ -1,18 +1,27 @@
 "use client";
 
-// The business owner's whole product surface: one agent, configured here.
-//
-// Organised by channel rather than by field. Voice and chat are different
-// jobs — a spoken answer must be short and cannot use formatting, a typed one
-// can be structured and long — so each owns its prompt, model, and sampling
-// outright.
-//
-// A channel with no prompt is not offered anywhere: not in the test panel, not
-// in the link picker, not by the API. An unwritten prompt is an assistant with
-// nothing to say, and sending someone a link to one is worse than not
-// offering the channel at all.
+// Assistant Studio: Voice & Chat prompts, TTS voice selector, model configuration,
+// document knowledge integration, and real-time live deployment controls.
 
 import { useCallback, useEffect, useState } from "react";
+import {
+  AlertTriangle,
+  Bot,
+  CheckCircle2,
+  Cpu,
+  FileText,
+  Languages,
+  MessageSquare,
+  Mic,
+  Play,
+  Radio,
+  Save,
+  Sliders,
+  Sparkles,
+  Trash2,
+  Volume2,
+  Zap,
+} from "lucide-react";
 
 import { ownerFetch } from "../lib/ownerFetch";
 import { AgentDocuments } from "./AgentDocuments";
@@ -96,16 +105,21 @@ const DEFAULT_MODELS: ModelOption[] = [
   },
 ];
 
+import { getWorkspaceCache, setWorkspaceCache, useWorkspace } from "../lib/workspaceCache";
+
 export default function AgentPage() {
-  const [config, setConfig] = useState<AgentConfig | null>(null);
-  const [voices, setVoices] = useState<Record<string, Voice[]>>({});
-  const [languages, setLanguages] = useState<Array<{ id: string; label: string }>>([]);
+  const ws = useWorkspace();
+  const cached = getWorkspaceCache();
+
+  const [config, setConfig] = useState<AgentConfig | null>(() => cached.agentConfig || null);
+  const [voices, setVoices] = useState<Record<string, Voice[]>>(() => cached.voices || {});
+  const [languages, setLanguages] = useState<Array<{ id: string; label: string }>>(() => cached.languages || []);
   const [channels, setChannels] = useState<Channels | null>(null);
   const [models, setModels] = useState<ModelOption[]>(DEFAULT_MODELS);
-  const [businessName, setBusinessName] = useState<string | null>(null);
+  const [businessName, setBusinessName] = useState<string | null>(() => ws.businessName);
 
   const [tab, setTab] = useState<Channel>("voice");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !cached.agentConfig);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [deploying, setDeploying] = useState(false);
@@ -115,88 +129,82 @@ export default function AgentPage() {
   const [error, setError] = useState("");
 
   // Custom provider states
-  const [isVoiceCustom, setIsVoiceCustom] = useState(false);
-  const [isChatCustom, setIsChatCustom] = useState(false);
+  const [isVoiceCustom, setIsVoiceCustom] = useState(() => Boolean(cached.agentConfig?.voice_base_url || cached.agentConfig?.voice_api_key));
+  const [isChatCustom, setIsChatCustom] = useState(() => Boolean(cached.agentConfig?.chat_base_url || cached.agentConfig?.chat_api_key));
   const [voiceKeyInput, setVoiceKeyInput] = useState("");
   const [chatKeyInput, setChatKeyInput] = useState("");
 
   const loadChannels = useCallback(async () => {
     try {
-      const response = await ownerFetch("/api/v1/workspace/channels");
-      if (response.ok) setChannels(await response.json());
+      const res = await ownerFetch("/api/v1/workspace/channels");
+      if (res.ok) setChannels(await res.json());
     } catch {
-      // The panel assumes nothing rather than blocking on this; the server
-      // refuses an impossible channel anyway.
+      /* ignore */
     }
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    async function loadData() {
       try {
-        const [agentRes, voicesRes, langRes, wsRes, modelsRes] = await Promise.all([
+        const [agentRes, voicesRes, langsRes] = await Promise.all([
           ownerFetch("/api/v1/workspace/agent"),
-          ownerFetch("/api/v1/voice/voices"),
+          ownerFetch("/api/v1/voice/speakers"),
           ownerFetch("/api/v1/voice/languages"),
-          ownerFetch("/api/v1/workspace"),
-          ownerFetch("/api/v1/workspace/models"),
         ]);
-        if (cancelled) return;
 
-        if (agentRes.status === 403) {
-          setError("Only the workspace owner can change the agent.");
-          return;
-        }
+        if (cancelled) return;
         if (agentRes.ok) {
           const cfg = await agentRes.json();
           setConfig(cfg);
-          setIsVoiceCustom(Boolean(cfg.voice_base_url));
-          setIsChatCustom(Boolean(cfg.chat_base_url));
+          setWorkspaceCache({ agentConfig: cfg, status: cfg.status });
+          if (cfg.voice_base_url || cfg.voice_api_key) setIsVoiceCustom(true);
+          if (cfg.chat_base_url || cfg.chat_api_key) setIsChatCustom(true);
         }
-        if (voicesRes.ok) setVoices((await voicesRes.json()).voices || {});
-        if (langRes.ok) setLanguages((await langRes.json()).languages || []);
-        if (wsRes.ok) setBusinessName((await wsRes.json()).business_name);
-        if (modelsRes.ok) {
-          const data = await modelsRes.json();
-          if (Array.isArray(data.models) && data.models.length > 0) {
-            setModels(data.models);
-          }
+        if (voicesRes.ok) {
+          const vData = await voicesRes.json();
+          setVoices(vData);
+          setWorkspaceCache({ voices: vData });
+        }
+        if (langsRes.ok) {
+          const lData = (await langsRes.json()).languages || [];
+          setLanguages(lData);
+          setWorkspaceCache({ languages: lData });
         }
         await loadChannels();
-      } catch {
-        setError("Could not load your agent.");
+      } catch (err) {
+        if (!config && !cancelled) setError("Could not load assistant configuration.");
       } finally {
         if (!cancelled) setLoading(false);
       }
-    })();
+    }
+    void loadData();
     return () => {
       cancelled = true;
     };
   }, [loadChannels]);
 
-  const update = useCallback((patch: Partial<AgentConfig>) => {
+  function update(patch: Partial<AgentConfig>) {
     setConfig((prev) => (prev ? { ...prev, ...patch } : prev));
-    setSaved(false);
-  }, []);
+  }
 
   async function save() {
     if (!config) return;
     setSaving(true);
     setError("");
     try {
-      const payload: Record<string, unknown> = {
-        name: config.name,
-        script: config.script,
-        voice_script: config.voice_script || undefined,
-        chat_script: config.chat_script || undefined,
-        voice_model: config.voice_model || undefined,
-        chat_model: config.chat_model || undefined,
-        voice_base_url: isVoiceCustom ? config.voice_base_url || "" : "",
-        chat_base_url: isChatCustom ? config.chat_base_url || "" : "",
-        voice_temperature: config.voice_temperature ?? undefined,
-        chat_temperature: config.chat_temperature ?? undefined,
-        voice_max_tokens: config.voice_max_tokens ?? undefined,
-        chat_max_tokens: config.chat_max_tokens ?? undefined,
+      const payload: Record<string, any> = {
+        name: (config.name || "").trim() || "Assistant",
+        voice_script: config.voice_script,
+        chat_script: config.chat_script,
+        voice_model: config.voice_model,
+        chat_model: config.chat_model,
+        voice_base_url: config.voice_base_url,
+        chat_base_url: config.chat_base_url,
+        voice_temperature: config.voice_temperature,
+        chat_temperature: config.chat_temperature,
+        voice_max_tokens: config.voice_max_tokens,
+        chat_max_tokens: config.chat_max_tokens,
         voice_id: config.voice_id,
         language: config.language,
         rag_enabled: config.rag_enabled,
@@ -204,17 +212,13 @@ export default function AgentPage() {
       };
 
       if (isVoiceCustom) {
-        if (voiceKeyInput.trim()) {
-          payload.voice_api_key = voiceKeyInput.trim();
-        }
+        if (voiceKeyInput.trim()) payload.voice_api_key = voiceKeyInput.trim();
       } else if (config.voice_api_key) {
         payload.voice_api_key = "";
       }
 
       if (isChatCustom) {
-        if (chatKeyInput.trim()) {
-          payload.chat_api_key = chatKeyInput.trim();
-        }
+        if (chatKeyInput.trim()) payload.chat_api_key = chatKeyInput.trim();
       } else if (config.chat_api_key) {
         payload.chat_api_key = "";
       }
@@ -226,7 +230,7 @@ export default function AgentPage() {
       });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
-        throw new Error(body?.detail || "Could not save.");
+        throw new Error(body?.detail || "Could not save assistant.");
       }
       const updated = await response.json();
       setConfig(updated);
@@ -236,7 +240,7 @@ export default function AgentPage() {
       await loadChannels();
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save.");
+      setError(err instanceof Error ? err.message : "Could not save assistant.");
     } finally {
       setSaving(false);
     }
@@ -251,12 +255,12 @@ export default function AgentPage() {
       });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
-        throw new Error(body?.detail || "Could not change the status.");
+        throw new Error(body?.detail || "Could not update deployment status.");
       }
       const data = await response.json();
       setConfig((prev) => (prev ? { ...prev, status: data.status } : prev));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not change the status.");
+      setError(err instanceof Error ? err.message : "Could not update status.");
     } finally {
       setDeploying(false);
     }
@@ -271,22 +275,19 @@ export default function AgentPage() {
       });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
-        throw new Error(body?.detail || "Could not delete the assistant.");
+        throw new Error(body?.detail || "Could not reset assistant.");
       }
       const fresh = await ownerFetch("/api/v1/workspace/agent");
-      if (fresh.ok) {
-        setConfig(await fresh.json());
-      }
+      if (fresh.ok) setConfig(await fresh.json());
       setConfirmDelete(false);
       await loadChannels();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not delete the assistant.");
+      setError(err instanceof Error ? err.message : "Could not reset assistant.");
     } finally {
       setDeleting(false);
     }
   }
 
-  /** Hearing a voice before committing beats reading a one-line tagline */
   async function preview(voiceId: string) {
     setPreviewing(voiceId);
     try {
@@ -299,7 +300,7 @@ export default function AgentPage() {
       const data = await response.json();
       await new Audio(`data:${data.mime_type};base64,${data.audio_base64}`).play();
     } catch {
-      // A failed preview must not block configuring the agent.
+      /* ignore */
     } finally {
       setPreviewing("");
     }
@@ -308,12 +309,7 @@ export default function AgentPage() {
   if (loading) {
     return (
       <OwnerShell businessName={businessName}>
-        <main className="agent-page">
-          <div className="agent-inner">
-            <span className="ds-skeleton agent-skeleton" />
-            <span className="ds-skeleton agent-skeleton" />
-          </div>
-        </main>
+        <div style={S.loadingContainer}>Loading assistant studio…</div>
       </OwnerShell>
     );
   }
@@ -321,13 +317,7 @@ export default function AgentPage() {
   if (!config) {
     return (
       <OwnerShell businessName={businessName}>
-        <main className="agent-page">
-          <div className="agent-inner">
-            <p className="agent-error" role="alert">
-              {error || "No agent found."}
-            </p>
-          </div>
-        </main>
+        <div style={S.errorBanner}>{error || "No assistant record found."}</div>
       </OwnerShell>
     );
   }
@@ -383,361 +373,700 @@ export default function AgentPage() {
     }
   };
 
-  const blocked = isVoice ? channels?.voice_blocked_reason : channels?.chat_blocked_reason;
+  const isLive = config.status === "deployed";
 
   return (
     <OwnerShell businessName={businessName} status={config.status}>
-      <main className="agent-page ds-scroll">
-        <div className="agent-inner">
-          <header className="agent-header">
-            <div>
-              <h1 className="agent-title">Your assistant</h1>
-              <p className="agent-sub">What your customers hear and read when they use your link.</p>
-            </div>
-          </header>
-
-          <div className={`agent-status ${config.status === "deployed" ? "is-live" : ""}`}>
-            <span className="agent-status-dot" aria-hidden="true" />
-            <span>
-              {config.status === "deployed"
-                ? "Live — your links are working"
-                : "Draft — links will not connect until you deploy"}
-            </span>
-            <button
-              type="button"
-              className="agent-status-btn ds-pressable ds-tap"
-              onClick={() => deploy(config.status !== "deployed")}
-              disabled={deploying || !(channels?.voice || channels?.chat)}
-              title={
-                channels?.voice || channels?.chat
-                  ? undefined
-                  : "Write a prompt for at least one channel first"
-              }
-            >
-              {deploying ? "Working…" : config.status === "deployed" ? "Take offline" : "Deploy"}
-            </button>
+      <main style={S.page}>
+        {/* Header & Live Status Banner */}
+        <header style={S.header}>
+          <div>
+            <h1 style={S.title}>Your AI Assistant</h1>
+            <p style={S.subtitle}>
+              Configure conversational prompts, speech persona, and live answering behavior.
+            </p>
           </div>
 
-          <section className="agent-section">
-            <label className="agent-label" htmlFor="agent-name">
-              What is your assistant called?
-            </label>
-            <input
-              id="agent-name"
-              className="agent-input"
-              value={config.name || ""}
-              onChange={(e) => update({ name: e.target.value })}
-              placeholder="e.g. Asha"
-              maxLength={120}
-            />
-          </section>
-
-          {/* One tab per channel */}
-          <div className="chan-tabs" role="tablist" aria-label="Channel">
-            {(["voice", "chat"] as const).map((ch) => {
-              const ready = ch === "voice" ? channels?.voice : channels?.chat;
-              return (
-                <button
-                  key={ch}
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === ch}
-                  className={`chan-tab ${tab === ch ? "is-active" : ""}`}
-                  onClick={() => setTab(ch)}
-                >
-                  {ch === "voice" ? "Voice" : "Chat"}
-                  <span
-                    className={`chan-dot ${ready ? "is-ready" : ""}`}
-                    aria-label={ready ? "ready" : "not ready"}
-                  />
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="chan-panel">
-            {blocked && <p className="agent-hint">{blocked}</p>}
-
-            <section className="agent-section">
-              <label className="agent-label" htmlFor="chan-prompt">
-                What should it say on {isVoice ? "calls" : "chat"}?
-              </label>
-              <p className="agent-hint">
-                {isVoice
-                  ? "Keep it conversational. This is spoken aloud, so it cannot use lists or formatting."
-                  : "Answers here always use your documents, and can be longer and structured."}
-              </p>
-              <textarea
-                id="chan-prompt"
-                className="agent-textarea ds-scroll"
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                rows={8}
-                maxLength={8000}
-                placeholder={
-                  isVoice
-                    ? "You answer calls for this business. Be warm and brief…"
-                    : "You answer questions from our documents. Cite what you use…"
-                }
+          {/* Live / Draft Status Card */}
+          <div
+            style={{
+              ...S.statusCard,
+              background: isLive ? "#f0fdf4" : "#f8fafc",
+              borderColor: isLive ? "#bbf7d0" : "#e2e8f0",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span
+                style={{
+                  ...S.statusDot,
+                  background: isLive ? "#16a34a" : "#94a3b8",
+                  boxShadow: isLive ? "0 0 8px #22c55e" : "none",
+                }}
               />
-            </section>
+              <div>
+                <span style={{ fontSize: 13, fontWeight: 700, color: isLive ? "#15803d" : "#475569" }}>
+                  {isLive ? "Assistant is Live" : "Draft Mode (Offline)"}
+                </span>
+                <p style={{ margin: "2px 0 0", fontSize: 11, color: isLive ? "#166534" : "#64748b" }}>
+                  {isLive ? "Answering customer calls & chats" : "Links won't connect until deployed"}
+                </p>
+              </div>
+            </div>
 
-            {isVoice && (
-              <>
-                <section className="agent-section">
-                  <label className="agent-label" htmlFor="greeting">
-                    First thing it says <span className="agent-optional">optional</span>
-                  </label>
-                  <input
-                    id="greeting"
-                    className="agent-input"
-                    value={config.greeting || ""}
-                    onChange={(e) => update({ greeting: e.target.value })}
-                    placeholder="Hello! Thanks for calling. How can I help?"
-                    maxLength={500}
-                  />
-                </section>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                type="button"
+                onClick={save}
+                disabled={saving}
+                style={S.headerSaveBtn}
+              >
+                <Save size={14} />
+                <span>{saving ? "Saving…" : saved ? "Saved!" : "Save Changes"}</span>
+              </button>
 
-                <section className="agent-section">
-                  <label className="agent-label" htmlFor="agent-language">
-                    What language will callers speak?
-                  </label>
-                  <select
-                    id="agent-language"
-                    className="agent-input"
-                    value={config.language || "unknown"}
-                    onChange={(e) => update({ language: e.target.value })}
-                  >
-                    {languages.length === 0 && <option value="unknown">Auto-detect</option>}
-                    {languages.map((l) => (
-                      <option key={l.id} value={l.id}>
-                        {l.label}
-                      </option>
-                    ))}
-                  </select>
-                </section>
+              <button
+                type="button"
+                onClick={() => deploy(!isLive)}
+                disabled={deploying || !(channels?.voice || channels?.chat)}
+                style={{
+                  ...S.deployBtn,
+                  background: isLive ? "#ffffff" : "#4f46e5",
+                  color: isLive ? "#dc2626" : "#ffffff",
+                  border: isLive ? "1px solid #fecaca" : "none",
+                }}
+              >
+                {deploying ? "Working…" : isLive ? "Take Offline" : "Deploy Live"}
+              </button>
+            </div>
+          </div>
+        </header>
 
-                <section className="agent-section">
-                  <span className="agent-label">Voice</span>
-                  <div className="agent-voices">
-                    {allVoices.map((voice) => (
-                      <button
+        {error && <div style={S.errorBanner}>{error}</div>}
+
+        {/* ── Card 1: Identity & Name ─────────────────────────── */}
+        <div style={S.card}>
+          <div style={S.cardHeader}>
+            <div style={{ ...S.iconWrap, background: "#ede9fe", color: "#6d28d9" }}>
+              <Bot size={18} />
+            </div>
+            <div>
+              <h2 style={S.cardTitle}>Assistant Identity</h2>
+              <p style={S.cardSub}>How your AI assistant introduces itself to callers and visitors.</p>
+            </div>
+          </div>
+
+          <div style={S.formGrid}>
+            <div>
+              <label style={S.label}>Assistant Name</label>
+              <input
+                style={S.input}
+                value={config.name || ""}
+                onChange={(e) => update({ name: e.target.value })}
+                placeholder="e.g. Asha, Alex"
+                maxLength={120}
+              />
+            </div>
+
+            <div>
+              <label style={S.label}>
+                First Spoken Greeting <span style={{ color: "#94a3b8", fontWeight: 400 }}>(Optional)</span>
+              </label>
+              <input
+                style={S.input}
+                value={config.greeting || ""}
+                onChange={(e) => update({ greeting: e.target.value })}
+                placeholder="Hello! Thanks for calling. How can I help you today?"
+                maxLength={500}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* ── Channel Selector Tabs ───────────────────────────── */}
+        <div style={S.channelTabs}>
+          {(["voice", "chat"] as const).map((ch) => {
+            const ready = ch === "voice" ? channels?.voice : channels?.chat;
+            const active = tab === ch;
+            return (
+              <button
+                key={ch}
+                type="button"
+                onClick={() => setTab(ch)}
+                style={{
+                  ...S.channelTab,
+                  background: active ? "#ffffff" : "transparent",
+                  color: active ? "#0f172a" : "#64748b",
+                  boxShadow: active ? "0 2px 6px rgba(0,0,0,0.06)" : "none",
+                  fontWeight: active ? 700 : 500,
+                }}
+              >
+                {ch === "voice" ? <Mic size={15} /> : <MessageSquare size={15} />}
+                <span>{ch === "voice" ? "Voice Calls" : "Text Chat"}</span>
+                <span
+                  style={{
+                    ...S.channelDot,
+                    background: ready ? "#22c55e" : "#cbd5e1",
+                  }}
+                  title={ready ? "Configured & Ready" : "Prompt required"}
+                />
+              </button>
+            );
+          })}
+        </div>
+
+        {/* ── Card 2: Conversational Prompt ───────────────────── */}
+        <div style={S.card}>
+          <div style={S.cardHeader}>
+            <div style={{ ...S.iconWrap, background: isVoice ? "#fdf2f8" : "#eff6ff", color: isVoice ? "#db2777" : "#2563eb" }}>
+              {isVoice ? <Mic size={18} /> : <MessageSquare size={18} />}
+            </div>
+            <div>
+              <h2 style={S.cardTitle}>
+                {isVoice ? "Voice Call Prompt & Script" : "Text Chat Prompt & Guidelines"}
+              </h2>
+              <p style={S.cardSub}>
+                {isVoice
+                  ? "Spoken aloud over audio. Keep responses concise, friendly, and natural."
+                  : "Used for structured text chat. Answers can be detailed and cite uploaded documents."}
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <textarea
+              style={S.promptArea}
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              rows={8}
+              maxLength={8000}
+              placeholder={
+                isVoice
+                  ? "You are a customer assistant for our business. Answer inquiries politely and concisely…"
+                  : "You answer customer questions based on our store policies and documents…"
+              }
+            />
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 11, color: "#94a3b8" }}>
+              <span>Pro Tip: Specify required information (e.g. caller name, reason for visit).</span>
+              <span>{prompt.length} / 8000 characters</span>
+            </div>
+          </div>
+
+          {/* Voice-specific settings */}
+          {isVoice && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 10, paddingTop: 16, borderTop: "1px solid #f1f5f9" }}>
+              {/* Language Selection */}
+              <div>
+                <label style={S.label}>Caller Spoken Language</label>
+                <select
+                  style={S.input}
+                  value={config.language || "unknown"}
+                  onChange={(e) => update({ language: e.target.value })}
+                >
+                  {languages.length === 0 && <option value="unknown">Auto-detect Language</option>}
+                  {languages.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Speaker Voice Selection */}
+              <div>
+                <label style={S.label}>Assistant Voice Persona</label>
+                <div style={S.voicesGrid}>
+                  {allVoices.map((voice) => {
+                    const isSelected = config.voice_id === voice.id;
+                    return (
+                      <div
                         key={voice.id}
-                        type="button"
-                        className={`agent-voice ds-pressable ds-tap ${
-                          config.voice_id === voice.id ? "is-active" : ""
-                        }`}
                         onClick={() => update({ voice_id: voice.id })}
+                        style={{
+                          ...S.voiceCard,
+                          borderColor: isSelected ? "#4f46e5" : "#e2e8f0",
+                          background: isSelected ? "#eef2ff" : "#ffffff",
+                        }}
                       >
-                        <span className="agent-voice-name">{voice.label}</span>
-                        <span className="agent-voice-tag">{voice.tagline}</span>
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          className="agent-voice-play"
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: isSelected ? "#4338ca" : "#0f172a" }}>
+                            {voice.label}
+                          </span>
+                          <p style={{ margin: "2px 0 0", fontSize: 11, color: "#64748b" }}>
+                            {voice.tagline}
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             void preview(voice.id);
                           }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.stopPropagation();
-                              void preview(voice.id);
-                            }
-                          }}
+                          style={S.playVoiceBtn}
+                          title="Listen to sample"
                         >
-                          {previewing === voice.id ? "…" : "▶"}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </section>
-
-                <section className="agent-section">
-                  <label className="agent-toggle">
-                    <input
-                      type="checkbox"
-                      checked={config.rag_enabled}
-                      onChange={(e) => update({ rag_enabled: e.target.checked })}
-                    />
-                    <span>
-                      <span className="agent-label">Answer from my documents</span>
-                      <span className="agent-hint">
-                        Chat always uses them; this is for calls, where every lookup costs a pause before
-                        the assistant speaks.
-                      </span>
-                    </span>
-                  </label>
-                </section>
-              </>
-            )}
-
-            {/* Model per channel picker */}
-            <ChannelModelPicker
-              channel={tab}
-              models={models}
-              selectedModel={currentModel}
-              baseUrl={currentBaseUrl}
-              savedApiKey={currentSavedKey}
-              apiKeyInput={currentKeyInput}
-              isCustom={isCurrentCustom}
-              onSelectGroqModel={handleSelectGroqModel}
-              onEnableCustom={handleEnableCustom}
-              onDisableCustom={handleDisableCustom}
-              onChangeBaseUrl={(val) =>
-                update(isVoice ? { voice_base_url: val } : { chat_base_url: val })
-              }
-              onChangeApiKey={(val) => {
-                if (isVoice) setVoiceKeyInput(val);
-                else setChatKeyInput(val);
-              }}
-              onChangeCustomModel={(val) =>
-                update(isVoice ? { voice_model: val } : { chat_model: val })
-              }
-            />
-
-            {/* Sampling controls */}
-            <section className="agent-section">
-              <span className="agent-label">Sampling</span>
-              <div className="chan-row">
-                <div>
-                  <label className="agent-hint" htmlFor="chan-temp">
-                    Temperature
-                  </label>
-                  <input
-                    id="chan-temp"
-                    className="agent-input"
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    max="2"
-                    placeholder="default"
-                    value={temperature}
-                    onChange={(e) =>
-                      setTemperature(e.target.value === "" ? null : Number(e.target.value))
-                    }
-                  />
-                </div>
-                <div>
-                  <label className="agent-hint" htmlFor="chan-tokens">
-                    Max tokens
-                  </label>
-                  <input
-                    id="chan-tokens"
-                    className="agent-input"
-                    type="number"
-                    min="50"
-                    max={isVoice ? 800 : 4000}
-                    placeholder="default"
-                    value={maxTokens}
-                    onChange={(e) =>
-                      setMaxTokens(e.target.value === "" ? null : Number(e.target.value))
-                    }
-                  />
+                          <Play size={12} className={previewing === voice.id ? "animate-spin" : ""} />
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-              {isVoice && (
-                <p className="agent-hint">
-                  Kept short on purpose — past roughly 500 tokens a caller is listening to a lecture.
-                </p>
-              )}
-            </section>
-          </div>
 
-          <AgentDocuments />
-
-          {error && (
-            <p className="agent-error" role="alert">
-              {error}
-            </p>
+              {/* RAG on Voice Toggle */}
+              <label style={S.toggleBox}>
+                <input
+                  type="checkbox"
+                  checked={config.rag_enabled}
+                  onChange={(e) => update({ rag_enabled: e.target.checked })}
+                  style={{ width: 16, height: 16, accentColor: "#4f46e5", cursor: "pointer" }}
+                />
+                <div>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: "#0f172a", display: "block" }}>
+                    Enable Document Knowledge Search on Voice Calls
+                  </span>
+                  <span style={{ fontSize: 11, color: "#64748b" }}>
+                    Look up answers from uploaded documents during live phone calls.
+                  </span>
+                </div>
+              </label>
+            </div>
           )}
-
-          <div className="agent-actions">
+          <div style={S.cardFooter}>
             <button
               type="button"
-              className="agent-save ds-pressable ds-tap"
               onClick={save}
               disabled={saving}
+              style={S.primarySaveBtn}
             >
-              {saving ? "Saving…" : saved ? "Saved" : "Save agent"}
+              <Save size={14} />
+              <span>{saving ? "Saving…" : saved ? "Saved!" : "Save Prompt & Persona"}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* ── Card 3: Model & Sampling ────────────────────────── */}
+        <ChannelModelPicker
+          channel={tab}
+          models={models}
+          selectedModel={currentModel}
+          baseUrl={currentBaseUrl}
+          savedApiKey={currentSavedKey}
+          apiKeyInput={currentKeyInput}
+          isCustom={isCurrentCustom}
+          onSelectGroqModel={handleSelectGroqModel}
+          onEnableCustom={handleEnableCustom}
+          onDisableCustom={handleDisableCustom}
+          onChangeBaseUrl={(val) =>
+            update(isVoice ? { voice_base_url: val } : { chat_base_url: val })
+          }
+          onChangeApiKey={(val) => {
+            if (isVoice) setVoiceKeyInput(val);
+            else setChatKeyInput(val);
+          }}
+          onChangeCustomModel={(val) =>
+            update(isVoice ? { voice_model: val } : { chat_model: val })
+          }
+        />
+
+        {/* ── Card 4: Knowledge Documents ─────────────────────── */}
+        <AgentDocuments />
+
+        {/* ── Card 5: Danger Zone / Reset ─────────────────────── */}
+        <div style={{ ...S.card, borderColor: "#fee2e2", background: "#fef2f2" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+            <div>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "#991b1b" }}>
+                Reset Assistant
+              </span>
+              <p style={{ margin: "2px 0 0", fontSize: 12, color: "#b91c1c" }}>
+                Clear all custom prompts and restore default assistant settings.
+              </p>
+            </div>
+
+            {confirmDelete ? (
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  disabled={deleting}
+                  onClick={deleteAgent}
+                  style={S.confirmDeleteBtn}
+                >
+                  {deleting ? "Resetting…" : "Confirm Reset"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(false)}
+                  style={S.cancelBtn}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(true)}
+                style={S.deleteBtn}
+              >
+                <Trash2 size={13} />
+                <span>Reset to Default</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* ── Bottom Main Action Bar ─────────────────────────── */}
+        <div style={S.bottomActionBar}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={save}
+              disabled={saving}
+              style={S.mainSaveBtn}
+            >
+              <Save size={16} />
+              <span>{saving ? "Saving Changes…" : saved ? "Changes Saved!" : "Save Assistant Changes"}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => deploy(!isLive)}
+              disabled={deploying || !(channels?.voice || channels?.chat)}
+              style={{
+                ...S.mainDeployBtn,
+                background: isLive ? "#fee2e2" : "#16a34a",
+                color: isLive ? "#b91c1c" : "#ffffff",
+                border: isLive ? "1px solid #fecaca" : "none",
+              }}
+            >
+              <Radio size={15} />
+              <span>
+                {deploying
+                  ? "Updating…"
+                  : isLive
+                  ? "Disable / Take Offline"
+                  : "Enable / Deploy Live"}
+              </span>
             </button>
           </div>
 
-          {/* Assistant Lifecycle & Danger Zone */}
-          <section className="agent-section rounded-2xl border p-4 flex flex-col gap-3 mt-4" style={{ borderColor: "var(--owner-border)", background: "var(--owner-surface)" }}>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <span className="agent-label block">Assistant Status</span>
-                <p className="agent-hint">
-                  {config.status === "deployed"
-                    ? "Live — callers and directory visitors can talk to your assistant."
-                    : "Offline (Draft) — your links and directory listing will not connect until enabled."}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => deploy(config.status !== "deployed")}
-                disabled={deploying || (!channels?.voice && !channels?.chat)}
-                className="agent-status-btn ds-pressable ds-tap whitespace-nowrap text-xs font-semibold px-3 py-1.5 rounded-lg border cursor-pointer"
-                style={{
-                  background: config.status === "deployed" ? "#FDF2F2" : "#EAF7EE",
-                  color: config.status === "deployed" ? "#C53030" : "#1F7344",
-                  borderColor: config.status === "deployed" ? "#F5C2C2" : "#B8E5C8",
-                }}
-              >
-                {deploying
-                  ? "Working…"
-                  : config.status === "deployed"
-                  ? "Disable / Take Offline"
-                  : "Enable / Deploy Live"}
-              </button>
-            </div>
-
-            <div className="pt-3 border-t flex items-center justify-between gap-3" style={{ borderColor: "var(--owner-border)" }}>
-              <div>
-                <span className="text-xs font-semibold text-red-600 block">Delete Assistant</span>
-                <p className="agent-hint">Reset all custom prompts, voice choices, and settings back to a fresh draft.</p>
-              </div>
-              {confirmDelete ? (
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={deleteAgent}
-                    disabled={deleting}
-                    className="text-xs font-semibold px-3 py-1.5 rounded-lg text-white bg-red-600 hover:bg-red-700 cursor-pointer"
-                  >
-                    {deleting ? "Deleting…" : "Confirm Delete"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmDelete(false)}
-                    className="text-xs font-medium px-2.5 py-1.5 rounded-lg border cursor-pointer"
-                    style={{ borderColor: "var(--owner-border)", color: "var(--owner-muted)" }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setConfirmDelete(true)}
-                  className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 cursor-pointer"
-                >
-                  Delete Assistant
-                </button>
-              )}
-            </div>
-          </section>
-
-          <AgentTest
-            deployed={config.status === "deployed"}
-            voiceAvailable={channels?.voice ?? false}
-            chatAvailable={channels?.chat ?? false}
-            voiceBlockedReason={channels?.voice_blocked_reason}
-            chatBlockedReason={channels?.chat_blocked_reason}
-          />
+          {saved && (
+            <span style={{ fontSize: 13, fontWeight: 600, color: "#16a34a", display: "flex", alignItems: "center", gap: 6 }}>
+              <CheckCircle2 size={16} /> All configuration saved & updated
+            </span>
+          )}
         </div>
       </main>
     </OwnerShell>
   );
 }
+
+/* ─────────────────────────── Styles ─────────────────────────────────────── */
+
+const S: Record<string, React.CSSProperties> = {
+  page: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 20,
+    maxWidth: "56rem",
+    paddingBottom: 80,
+  },
+  header: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: 14,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 700,
+    letterSpacing: "-0.02em",
+    margin: 0,
+    color: "#0f172a",
+  },
+  subtitle: {
+    fontSize: 13,
+    color: "#64748b",
+    marginTop: 4,
+    margin: 0,
+  },
+  statusCard: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
+    padding: "10px 16px",
+    borderRadius: 12,
+    border: "1px solid #e2e8f0",
+  },
+  statusDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 9999,
+  },
+  deployBtn: {
+    padding: "6px 14px",
+    borderRadius: 8,
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+    transition: "all 0.15s",
+  },
+  card: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 16,
+    padding: "20px 22px",
+    borderRadius: 16,
+    background: "#ffffff",
+    border: "1px solid #e2e8f0",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
+  },
+  cardHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    borderBottom: "1px solid #f1f5f9",
+    paddingBottom: 12,
+  },
+  iconWrap: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    flexShrink: 0,
+  },
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: 700,
+    color: "#0f172a",
+    margin: 0,
+  },
+  cardSub: {
+    fontSize: 12,
+    color: "#64748b",
+    margin: "2px 0 0",
+  },
+  formGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+    gap: 14,
+  },
+  label: {
+    display: "block",
+    fontSize: 12,
+    fontWeight: 600,
+    color: "#334155",
+    marginBottom: 5,
+  },
+  input: {
+    width: "100%",
+    padding: "9px 12px",
+    borderRadius: 8,
+    border: "1px solid #cbd5e1",
+    background: "#ffffff",
+    fontSize: 13,
+    color: "#0f172a",
+    boxSizing: "border-box",
+    outline: "none",
+  },
+  channelTabs: {
+    display: "flex",
+    gap: 6,
+    background: "#f1f5f9",
+    padding: 4,
+    borderRadius: 10,
+    width: "fit-content",
+  },
+  channelTab: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "8px 16px",
+    borderRadius: 8,
+    border: "none",
+    fontSize: 13,
+    cursor: "pointer",
+    transition: "all 0.12s",
+  },
+  channelDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 9999,
+    marginLeft: 4,
+  },
+  promptArea: {
+    width: "100%",
+    padding: "12px 14px",
+    borderRadius: 10,
+    border: "1px solid #cbd5e1",
+    background: "#ffffff",
+    fontSize: 13,
+    lineHeight: 1.6,
+    color: "#0f172a",
+    boxSizing: "border-box",
+    outline: "none",
+    fontFamily: "inherit",
+  },
+  voicesGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+    gap: 10,
+  },
+  voiceCard: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid #e2e8f0",
+    cursor: "pointer",
+    transition: "all 0.12s",
+  },
+  playVoiceBtn: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 28,
+    height: 28,
+    borderRadius: 9999,
+    border: "1px solid #cbd5e1",
+    background: "#ffffff",
+    color: "#4f46e5",
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  toggleBox: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 10,
+    padding: "12px 14px",
+    borderRadius: 10,
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    cursor: "pointer",
+  },
+  headerSaveBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "6px 14px",
+    borderRadius: 8,
+    border: "none",
+    background: "#4f46e5",
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+    boxShadow: "0 2px 6px rgba(79, 70, 229, 0.25)",
+  },
+  cardFooter: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    paddingTop: 12,
+    borderTop: "1px solid #f1f5f9",
+  },
+  bottomActionBar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "16px 20px",
+    borderRadius: 14,
+    background: "#ffffff",
+    border: "1px solid #e2e8f0",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+    flexWrap: "wrap",
+    gap: 12,
+    marginTop: 8,
+  },
+  mainSaveBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 7,
+    padding: "10px 22px",
+    borderRadius: 8,
+    border: "none",
+    background: "#4f46e5",
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: "pointer",
+    boxShadow: "0 2px 8px rgba(79, 70, 229, 0.3)",
+  },
+  mainDeployBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "10px 18px",
+    borderRadius: 8,
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  primarySaveBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "8px 16px",
+    borderRadius: 8,
+    border: "none",
+    background: "#4f46e5",
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+    boxShadow: "0 2px 6px rgba(79, 70, 229, 0.25)",
+  },
+  deleteBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    padding: "6px 12px",
+    borderRadius: 6,
+    border: "1px solid #fca5a5",
+    background: "#ffffff",
+    color: "#dc2626",
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  confirmDeleteBtn: {
+    padding: "6px 12px",
+    borderRadius: 6,
+    border: "none",
+    background: "#dc2626",
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  cancelBtn: {
+    padding: "6px 12px",
+    borderRadius: 6,
+    border: "1px solid #cbd5e1",
+    background: "#ffffff",
+    color: "#475569",
+    fontSize: 12,
+    fontWeight: 500,
+    cursor: "pointer",
+  },
+  loadingContainer: {
+    textAlign: "center",
+    padding: "60px 0",
+    color: "#64748b",
+    fontSize: 14,
+  },
+  errorBanner: {
+    padding: "12px 16px",
+    borderRadius: 10,
+    background: "#fef2f2",
+    border: "1px solid #fecaca",
+    color: "#b91c1c",
+    fontSize: 13,
+    fontWeight: 500,
+  },
+};

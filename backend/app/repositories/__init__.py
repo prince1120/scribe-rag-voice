@@ -185,6 +185,24 @@ async def get_contact(contact_id: str, owner_tenant_id: str) -> Optional[Contact
         return result.scalar_one_or_none()
 
 
+async def get_active_contact_by_name(owner_tenant_id: str, name: str) -> Optional[ContactRecord]:
+    """Find an existing active contact by name under this owner tenant."""
+    from sqlalchemy import func
+    async with async_session() as session:
+        result = await session.execute(
+            select(ContactRecord)
+            .where(
+                ContactRecord.owner_tenant_id == owner_tenant_id,
+                func.lower(ContactRecord.name) == name.strip().lower(),
+                ContactRecord.revoked_at.is_(None),
+                ContactRecord.blocked_at.is_(None),
+            )
+            .order_by(ContactRecord.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+
 async def list_contacts(owner_tenant_id: str) -> List[ContactRecord]:
     async with async_session() as session:
         result = await session.execute(

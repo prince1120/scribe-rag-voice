@@ -68,6 +68,7 @@ class Workspace:
     needs_setup: bool
     # False until the owner has answered Personal-or-Business at least once.
     answered: bool
+    email: Optional[str] = None
 
     @property
     def is_business(self) -> bool:
@@ -81,6 +82,7 @@ class Workspace:
             "needs_setup": self.needs_setup,
             "answered": self.answered,
             "is_business": self.is_business,
+            "email": self.email,
             "max_documents": MAX_BUSINESS_DOCUMENTS if self.is_business else None,
         }
 
@@ -96,6 +98,7 @@ def _to_workspace(record) -> Workspace:
         business_category=record.business_category,
         needs_setup=incomplete,
         answered=getattr(record, "mode_chosen_at", None) is not None,
+        email=getattr(record, "email", None),
     )
 
 
@@ -341,15 +344,24 @@ def build_agent_prompt(
 # ---- Deployment ------------------------------------------------------------
 
 async def deploy_agent(tenant_id: str) -> dict:
-    """Make the agent live.
-
-    Gated on having a script, because the failure it prevents is a stranger
-    calling a link and reaching an empty prompt — which sounds broken and
-    reflects on the owner, not on us.
-    """
+    """Make the agent live."""
     record = await repositories.get_agent(tenant_id)
-    if record is None or not (record.script or "").strip():
+    has_prompt = bool(
+        record
+        and (
+            (record.script or "").strip()
+            or (record.voice_script or "").strip()
+            or (record.chat_script or "").strip()
+        )
+    )
+    if record is None or not has_prompt:
         raise OwnerError("Write what your assistant should say before deploying.")
+
+    # If script column is blank, sync it from voice_script or chat_script
+    if not (record.script or "").strip():
+        sync_script = (record.voice_script or record.chat_script or "").strip()
+        if sync_script:
+            await repositories.upsert_agent(tenant_id=tenant_id, script=sync_script)
 
     updated = await repositories.set_agent_status(tenant_id, DEPLOYED)
     logger.info("Agent deployed for tenant %s", tenant_id)

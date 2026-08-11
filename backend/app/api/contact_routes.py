@@ -126,7 +126,35 @@ async def create_contact(
 async def list_contacts(identity: Identity = Depends(get_identity)):
     _require_owner(identity)
     records = await repositories.list_contacts(identity.tenant_id)
-    return [_contact_public(r) for r in records]
+    if not records:
+        return []
+
+    from app.database import async_session
+    from app.models.db_models import ContactSessionRecord
+    from sqlalchemy import select, or_, and_
+
+    contact_ids = [r.contact_id for r in records]
+    session_counts: dict[str, int] = {cid: 0 for cid in contact_ids}
+
+    async with async_session() as session:
+        q = select(ContactSessionRecord).where(
+            ContactSessionRecord.contact_id.in_(contact_ids),
+            or_(
+                and_(ContactSessionRecord.channel == "voice", ContactSessionRecord.conversation_id.isnot(None)),
+                ContactSessionRecord.message_count > 0,
+                ContactSessionRecord.conversation_id.isnot(None),
+            )
+        )
+        res = await session.execute(q)
+        for s in res.scalars().all():
+            session_counts[s.contact_id] = session_counts.get(s.contact_id, 0) + 1
+
+    out = []
+    for r in records:
+        info = _contact_public(r)
+        info["session_count"] = session_counts.get(r.contact_id, 0)
+        out.append(info)
+    return out
 
 
 @router.get("/overview")
@@ -171,30 +199,63 @@ async def overview(identity: Identity = Depends(get_identity)):
                 })
     questions.sort(key=lambda q: q["at"] or "", reverse=True)
 
+    # Fetch agent and business metadata for owner
+    agent = await repositories.get_agent(identity.tenant_id)
+    owner = await repositories.get_owner(identity.tenant_id)
+    agent_name = (agent.name if agent else "Assistant") or "Assistant"
+    business_name = (owner.business_name if owner else "Business") or "Business"
+
+    # Filter out empty 0-message unstarted page loads
+    active_sessions_all = [
+        (c, s) for c, s in sessions_all
+        if (s.channel == "voice" and s.conversation_id)
+        or (s.message_count and s.message_count > 0)
+        or s.conversation_id
+    ]
+
+    # If all were unstarted, fall back to sessions_all so empty state displays gracefully
+    display_sessions = active_sessions_all if active_sessions_all else []
+
+    voice_count = sum(1 for _, s in display_sessions if s.channel == "voice")
+    chat_count = sum(1 for _, s in display_sessions if s.channel != "voice")
+
+    recent_sessions = []
+    for contact, session in sorted(
+        display_sessions,
+        key=lambda pair: pair[1].started_at or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    ):
+        recent_sessions.append({
+            "session_id": session.session_id,
+            "contact_id": contact.contact_id,
+            "name": contact.name,
+            "channel": session.channel or "voice",
+            "started_at": session.started_at.isoformat() if session.started_at else None,
+            "message_count": session.message_count or 0,
+            "has_transcript": bool(session.conversation_id),
+            "agent_name": agent_name,
+            "business_name": business_name,
+        })
+
+    # Unique callers count based on distinct caller names
+    unique_names = set(c.name.strip().lower() for c in contacts_list if c.name)
+
     return {
         "totals": {
+            "total_sessions": len(display_sessions),
+            "conversations": len(display_sessions),
+            "conversations_this_week": len([p for p in display_sessions if (_started(p[1]) or since_week) >= since_week]),
+            "voice_calls": voice_count,
+            "chat_sessions": chat_count,
             "people": len(contacts_list),
+            "unique_users": max(len(unique_names), 1 if contacts_list else 0),
             "active_people": sum(
                 1 for c in contacts_list if not c.revoked_at and not c.blocked_at
             ),
-            "conversations": len(sessions_all),
-            "conversations_this_week": len(recent),
-            "voice_calls": sum(1 for _, s in sessions_all if s.channel == "voice"),
+            "agent_name": agent_name,
+            "business_name": business_name,
         },
-        "recent": [
-            {
-                "contact_id": contact.contact_id,
-                "name": contact.name,
-                "channel": session.channel,
-                "started_at": session.started_at.isoformat() if session.started_at else None,
-            }
-            for contact, session in sorted(
-                sessions_all,
-                key=lambda pair: pair[1].started_at or datetime.min.replace(tzinfo=timezone.utc),
-                reverse=True,
-            )[:10]
-        ],
-        "questions": questions[:15],
+        "recent": recent_sessions,
     }
 
 

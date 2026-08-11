@@ -22,17 +22,18 @@ export default function SessionGate({ children }: { children: React.ReactNode })
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    // Cancelled on unmount so a slow response can't set state afterwards.
+    if (alreadyOpen) return;
+
     let active = true;
     const settle = (next: GateState) => {
+      if (next === "open") alreadyOpen = true;
       if (active) setState(next);
     };
 
     async function check() {
       try {
         const config = await fetch("/api/v1/session/config", {
-          cache: "no-store",
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(2000),
         });
         if (config.ok) {
           const { gate_enabled } = await config.json();
@@ -45,14 +46,13 @@ export default function SessionGate({ children }: { children: React.ReactNode })
           return;
         }
 
-        if (localStorage.getItem("demo_groq_key")) {
+        if (typeof window !== "undefined" && localStorage.getItem("demo_groq_key")) {
           settle("open");
           return;
         }
 
         const session = await fetch("/api/v1/session", {
-          cache: "no-store",
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(2000),
         });
         settle(session.ok ? "open" : "locked");
       } catch {

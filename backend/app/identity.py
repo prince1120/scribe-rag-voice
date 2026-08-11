@@ -123,32 +123,48 @@ def resolve_identity(
     )
 
 
-# Cache the single-owner tenant id so we don't query the DB on every request.
-_cached_single_owner_tenant: Optional[str] = None
+# Cache the resolved owner tenant id so we don't query the DB on every request.
+_cached_real_owner_tenant: Optional[str] = None
 
 
-async def _resolve_single_owner_tenant() -> str:
-    """In dev mode (no passcode), look up the actual registered owner tenant
+async def _resolve_real_owner_tenant() -> str:
+    """In dev mode (no passcode), find the actual registered business owner
     so dashboard queries match the data created by directory callers.
 
-    Falls back to OWNER_TENANT_ID if no owner is registered yet.
+    Picks the first owner with a real (non-test) email. Falls back to
+    OWNER_TENANT_ID if no such owner exists.
     """
-    global _cached_single_owner_tenant
-    if _cached_single_owner_tenant is not None:
-        return _cached_single_owner_tenant
+    global _cached_real_owner_tenant
+    if _cached_real_owner_tenant is not None:
+        return _cached_real_owner_tenant
 
     try:
         from app.repositories.owners import get_all_owners
         owners = await get_all_owners()
-        if len(owners) == 1:
-            _cached_single_owner_tenant = owners[0].tenant_id
-            logger.info("Dev mode: using real owner tenant %s", _cached_single_owner_tenant)
-            return _cached_single_owner_tenant
+
+        # Prefer the owner with a real email (not test_*)
+        for owner in owners:
+            if (
+                owner.email
+                and not owner.email.startswith("test_")
+                and owner.tenant_id != OWNER_TENANT_ID
+            ):
+                _cached_real_owner_tenant = owner.tenant_id
+                logger.info("Dev mode: using real owner tenant %s (%s)",
+                            owner.tenant_id, owner.email)
+                return _cached_real_owner_tenant
+
+        # Fallback: any owner with a non-default tenant_id
+        for owner in owners:
+            if owner.tenant_id != OWNER_TENANT_ID and not owner.tenant_id.startswith("test_"):
+                _cached_real_owner_tenant = owner.tenant_id
+                logger.info("Dev mode: using owner tenant %s", owner.tenant_id)
+                return _cached_real_owner_tenant
     except Exception:
         pass
 
-    _cached_single_owner_tenant = OWNER_TENANT_ID
-    return _cached_single_owner_tenant
+    _cached_real_owner_tenant = OWNER_TENANT_ID
+    return _cached_real_owner_tenant
 
 
 async def get_identity(
@@ -165,14 +181,10 @@ async def get_identity(
         client_id=x_client_id,
     )
 
-    # In dev mode the sync fallback returns tenant_id="default". Replace it
-    # with the actual registered owner's tenant so queries hit real data.
-    if (
-        identity.is_owner
-        and identity.tenant_id == OWNER_TENANT_ID
-        and not settings.APP_ACCESS_PASSCODE
-    ):
-        real_tenant = await _resolve_single_owner_tenant()
+    # When tenant_id is "default", resolve to the actual registered business owner's
+    # tenant dynamically so queries always hit the real data.
+    if identity.is_owner and identity.tenant_id == OWNER_TENANT_ID:
+        real_tenant = await _resolve_real_owner_tenant()
         if real_tenant != OWNER_TENANT_ID:
             return Identity(tenant_id=real_tenant, is_owner=True)
 

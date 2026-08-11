@@ -2,18 +2,25 @@
 
 // The frame every owner screen sits in.
 //
-// Deliberately not the personal app's chrome. The personal product is a
-// reading surface — wide margins, warm paper, one column, nothing competing
-// with the answer. An owner panel is a working surface: someone checking on a
-// deployed assistant, scanning who called, changing a prompt. It gets
-// persistent navigation, tighter density, a cooler and flatter palette, and
-// status that is visible without hunting for it.
-//
-// Same brand, different job.
+// Modern, sleek console interface with persistent responsive navigation,
+// dark glassmorphism sidebar, live agent indicators, and mobile drawer support.
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import {
+  LayoutDashboard,
+  Bot,
+  Users,
+  Settings,
+  LogOut,
+  Menu,
+  X,
+  Radio,
+  ExternalLink,
+  Sparkles,
+} from "lucide-react";
+import { useWorkspace } from "../../lib/workspaceCache";
 
 interface NavItem {
   href: string;
@@ -25,95 +32,109 @@ const NAV: NavItem[] = [
   {
     href: "/dashboard",
     label: "Overview",
-    icon: (
-      <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true">
-        <rect x="3" y="3" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.6" />
-        <rect x="11" y="3" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.6" />
-        <rect x="3" y="11" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.6" />
-        <rect x="11" y="11" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.6" />
-      </svg>
-    ),
+    icon: <LayoutDashboard size={18} />,
   },
   {
     href: "/agent",
     label: "Assistant",
-    icon: (
-      <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true">
-        <circle cx="10" cy="10" r="6.5" stroke="currentColor" strokeWidth="1.6" />
-        <path d="M10 6.5v3.5l2.2 1.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      </svg>
-    ),
+    icon: <Bot size={18} />,
   },
   {
     href: "/links",
-    label: "People",
-    icon: (
-      <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true">
-        <circle cx="7.5" cy="7" r="2.8" stroke="currentColor" strokeWidth="1.6" />
-        <path d="M3 16c0-2.5 2-4.2 4.5-4.2S12 13.5 12 16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-        <path d="M13.5 6.2a2.6 2.6 0 0 1 0 4.6M15 15.8c0-1.9-.7-3.2-1.8-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      </svg>
-    ),
+    label: "People & Calls",
+    icon: <Users size={18} />,
   },
   {
     href: "/settings",
-    label: "Account",
-    icon: (
-      <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true">
-        <circle cx="10" cy="10" r="2.6" stroke="currentColor" strokeWidth="1.6" />
-        <path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      </svg>
-    ),
+    label: "Account & Keys",
+    icon: <Settings size={18} />,
   },
 ];
 
 export function OwnerShell({
   children,
-  businessName,
-  status,
+  businessName: propBusinessName,
+  status: propStatus,
 }: {
   children: React.ReactNode;
   businessName?: string | null;
-  /** "deployed" | "draft" — shown in the rail because whether an assistant is
-   *  answering strangers is the fact an owner most needs at a glance. */
+  /** "deployed" | "draft" — shown in the rail so status is visible at a glance */
   status?: string;
 }) {
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
+  const workspace = useWorkspace();
+
+  const businessName = propBusinessName || workspace.businessName;
+  const isLive = propStatus ? propStatus === "deployed" : workspace.isLive;
 
   return (
     <div className="owner-shell">
+      {/* ── Left Navigation Rail ─────────────────────────────── */}
       <aside className={`owner-rail ${menuOpen ? "is-open" : ""}`}>
+        {/* Brand Lockup */}
         <div className="owner-brand">
-          <span className="owner-brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none">
-              <path d="M7 4h7l4 4v12H7z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-              <path d="M14 4v4h4" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-            </svg>
-          </span>
-          <span className="owner-brand-text">
-            <span className="owner-brand-name">{businessName || "Your business"}</span>
-            <span className="owner-brand-sub">Scribe console</span>
-          </span>
+          <div className="owner-brand-mark" aria-hidden="true">
+            <Sparkles size={16} className="text-white animate-pulse" />
+          </div>
+          <div className="owner-brand-text">
+            <span className="owner-brand-name" title={businessName || "Your business"}>
+              {businessName || "Your business"}
+            </span>
+            <span className="owner-brand-sub">Scribe Voice Console</span>
+          </div>
+          {menuOpen && (
+            <button
+              type="button"
+              className="owner-close-btn"
+              onClick={() => setMenuOpen(false)}
+              aria-label="Close navigation"
+            >
+              <X size={18} />
+            </button>
+          )}
         </div>
 
-        <nav className="owner-nav" aria-label="Console">
-          {NAV.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`owner-nav-item ${pathname === item.href ? "is-active" : ""}`}
-              aria-current={pathname === item.href ? "page" : undefined}
-              onClick={() => setMenuOpen(false)}
-            >
-              {item.icon}
-              <span>{item.label}</span>
-            </Link>
-          ))}
+        {/* Navigation Items */}
+        <nav className="owner-nav" aria-label="Console Navigation">
+          <div className="owner-nav-section-label">MAIN MENU</div>
+          {NAV.map((item) => {
+            const active = pathname === item.href;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`owner-nav-item ${active ? "is-active" : ""}`}
+                aria-current={active ? "page" : undefined}
+                onClick={() => setMenuOpen(false)}
+              >
+                <span className="owner-nav-icon">{item.icon}</span>
+                <span className="owner-nav-label">{item.label}</span>
+                {active && <span className="owner-nav-indicator" />}
+              </Link>
+            );
+          })}
+
+          <div className="owner-nav-section-label" style={{ marginTop: "1rem" }}>
+            LINKS & ACTIONS
+          </div>
+
+          <Link
+            href="/directory"
+            className="owner-nav-item"
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => setMenuOpen(false)}
+          >
+            <span className="owner-nav-icon">
+              <ExternalLink size={17} />
+            </span>
+            <span className="owner-nav-label">Public Directory</span>
+          </Link>
+
           <button
             type="button"
-            className="owner-nav-item"
-            style={{ textAlign: "left", width: "100%", background: "transparent", border: "none", cursor: "pointer" }}
+            className="owner-nav-item owner-nav-logout"
             onClick={async () => {
               try {
                 await fetch("/api/v1/workspace/logout", { method: "POST", credentials: "include" });
@@ -123,21 +144,33 @@ export function OwnerShell({
               window.location.href = "/signin";
             }}
           >
-            <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true">
-              <path d="M7 4H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3M12 14l4-4-4-4M16 10H7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            <span>Sign out</span>
+            <span className="owner-nav-icon">
+              <LogOut size={17} />
+            </span>
+            <span className="owner-nav-label">Sign out</span>
           </button>
         </nav>
 
-        {status && (
-          <div className={`owner-rail-status ${status === "deployed" ? "is-live" : ""}`}>
-            <span className="owner-rail-dot" aria-hidden="true" />
-            {status === "deployed" ? "Assistant is live" : "Draft — not answering"}
+        {/* Live Status Pill at Bottom of Rail */}
+        <div className="owner-rail-bottom">
+          <div className={`owner-rail-status ${isLive ? "is-live" : ""}`}>
+            <span className="owner-rail-dot-wrap">
+              <span className={`owner-rail-dot ${isLive ? "is-live" : ""}`} />
+              {isLive && <span className="owner-rail-pulse" />}
+            </span>
+            <div className="owner-rail-status-info">
+              <span className="owner-rail-status-title">
+                {isLive ? "Assistant is Live" : "Draft Mode"}
+              </span>
+              <span className="owner-rail-status-desc">
+                {isLive ? "Accepting calls & chats" : "Not answering public calls"}
+              </span>
+            </div>
           </div>
-        )}
+        </div>
       </aside>
 
+      {/* Mobile Backdrop Scrim */}
       {menuOpen && (
         <div
           className="owner-scrim"
@@ -146,23 +179,30 @@ export function OwnerShell({
         />
       )}
 
+      {/* ── Main Content Area ───────────────────────────────── */}
       <div className="owner-main">
+        {/* Mobile Top Bar */}
         <header className="owner-topbar">
           <button
             type="button"
-            className="owner-menu ds-pressable ds-tap"
-            onClick={() => setMenuOpen((v) => !v)}
-            aria-label="Menu"
-            aria-expanded={menuOpen}
+            className="owner-menu"
+            onClick={() => setMenuOpen(true)}
+            aria-label="Open menu"
           >
-            <svg viewBox="0 0 20 20" width="18" height="18" fill="none">
-              <path d="M3 5.5h14M3 10h14M3 14.5h14" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-            </svg>
+            <Menu size={20} />
           </button>
-          <span className="owner-topbar-name">{businessName || "Your business"}</span>
+          <div className="owner-topbar-info">
+            <span className="owner-topbar-name">{businessName || "Your business"}</span>
+            <span className="owner-topbar-sub">Scribe Console</span>
+          </div>
+          <div className={`owner-topbar-badge ${isLive ? "is-live" : ""}`}>
+            <span className={`owner-rail-dot ${isLive ? "is-live" : ""}`} />
+            <span>{isLive ? "Live" : "Draft"}</span>
+          </div>
         </header>
 
-        <div className="owner-content ds-scroll">{children}</div>
+        {/* Scrollable Content Viewport */}
+        <div className="owner-content">{children}</div>
       </div>
     </div>
   );
