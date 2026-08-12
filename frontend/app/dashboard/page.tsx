@@ -25,6 +25,7 @@ import {
 
 import { ownerFetch } from "../lib/ownerFetch";
 import { OwnerShell } from "../components/owner/OwnerShell";
+import { UsageCard } from "../components/owner/UsageCard";
 
 interface SessionItem {
   session_id: string;
@@ -260,6 +261,10 @@ export default function DashboardPage() {
         </div>
 
         {/* ── Main Section: Recent Completed Conversations & Calls ──────── */}
+        {/* Spend before activity: a workspace being turned away at its limit
+            is more urgent than how many calls it took. */}
+        <UsageCard />
+
         <section style={S.sectionCard} className="dash-section-card">
           <div style={S.sectionHeader} className="dash-section-header">
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

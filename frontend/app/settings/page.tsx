@@ -20,6 +20,7 @@ import {
 
 import { ownerFetch } from "../lib/ownerFetch";
 import { OwnerShell } from "../components/owner/OwnerShell";
+import { DirectoryHandle } from "../components/owner/DirectoryHandle";
 import { getWorkspaceCache, setWorkspaceCache, useWorkspace } from "../lib/workspaceCache";
 
 export default function SettingsPage() {
@@ -287,6 +288,12 @@ export default function SettingsPage() {
         </form>
 
         {/* ── Card 2: AI Keys & Models ─────────────────────────── */}
+        {/* Sits with the business profile rather than with the API keys: it is
+            part of how the business is found, not a credential. */}
+        <div style={S.card}>
+          <DirectoryHandle />
+        </div>
+
         <form style={S.card} onSubmit={saveKeys}>
           <div style={S.cardHeader}>
             <div style={{ ...S.iconWrap, background: "#e0e7ff", color: "#4f46e5" }}>
