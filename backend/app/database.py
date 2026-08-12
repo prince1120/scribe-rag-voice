@@ -75,6 +75,7 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     # Nullable: handles are minted on demand for workspaces that appear in the
     # directory, so a backfill is neither needed nor correct.
     ("owners", "public_handle", "VARCHAR(32)"),
+    ("contact_sessions", "duration_seconds", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 

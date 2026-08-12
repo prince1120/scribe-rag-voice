@@ -142,6 +142,29 @@ class Settings(BaseSettings):
     # be an unpleasant surprise. Set True for a purely ephemeral deployment.
     CLEANUP_INCLUDES_OWNER: bool = False
 
+    # ---- Cost ceilings -------------------------------------------------
+    # LiveKit room minutes are billed to the platform and recovered from owners
+    # afterwards, so an unbounded call is an unbounded cost carried by us until
+    # it is invoiced — and an abusive one may never be recoverable at all. These
+    # are therefore margin protection first and owner protection second, which
+    # is why the defaults are deliberately tight rather than generous.
+    #
+    # Per workspace, per day. 0 disables. Enforced at /voice/token, which is the
+    # only point where a call is authorised — a link is cheap, a call is not.
+    DAILY_CALL_BUDGET: int = 100
+    DAILY_MINUTE_BUDGET: int = 200
+
+    # Applied to callers who arrived through the public directory: strangers,
+    # unauthenticated, spending money that is ours before it is anyone's.
+    DIRECTORY_MAX_CALL_SECONDS: int = 180
+    DIRECTORY_IDLE_TIMEOUT_SECONDS: int = 25
+    DIRECTORY_SESSIONS_PER_DAY: int = 3
+    DIRECTORY_LINK_TTL_DAYS: int = 1
+    # Reaching this many different businesses in DIRECTORY_VELOCITY_WINDOW_MIN
+    # is not a customer. 0 disables the check.
+    DIRECTORY_VELOCITY_MAX_BUSINESSES: int = 5
+    DIRECTORY_VELOCITY_WINDOW_MIN: int = 10
+
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     # Optional regex for origins that cannot be enumerated ahead of time — a

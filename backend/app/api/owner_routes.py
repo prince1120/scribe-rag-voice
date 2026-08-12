@@ -451,3 +451,16 @@ async def rotate_directory_handle(identity: Identity = Depends(get_identity)):
         raise HTTPException(status_code=404, detail="Workspace not found.")
     logger.info("Directory handle rotated for %s", identity.tenant_id)
     return {"handle": handle}
+
+
+@router.get("/usage")
+async def get_usage(identity: Identity = Depends(get_identity)):
+    """What this workspace has spent today, against its ceiling.
+
+    Without this, abuse is invisible until a provider bill or a wall of 429s —
+    neither of which tells an owner what happened or when it started.
+    """
+    _require_workspace_owner(identity)
+    from app.services import usage
+
+    return (await usage.usage_today(identity.tenant_id)).to_dict()

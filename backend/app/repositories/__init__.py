@@ -520,6 +520,7 @@ async def record_voice_transcript(
             if latest_session:
                 latest_session.conversation_id = conversation_id
                 latest_session.message_count = len(messages)
+                latest_session.duration_seconds = max(0, int(duration_seconds or 0))
                 latest_session.channel = "voice"
                 latest_session.last_activity_at = now
 

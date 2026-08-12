@@ -22,7 +22,9 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from app import contacts, repositories
-from app.rate_limit import limiter
+from app.config import settings
+from app.rate_limit import client_ip, limiter
+from app.services import usage
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -53,8 +55,7 @@ class ConnectRequest(BaseModel):
 # The per-contact cap is not a budget on its own — /connect can mint contacts —
 # so this bounds a single link, not the total. A per-workspace daily budget is
 # the thing that bounds the total, and is tracked separately.
-DIRECTORY_SESSIONS_PER_DAY = 3
-DIRECTORY_LINK_TTL_DAYS = 1
+# Values live in settings so they are tunable without a deploy.
 
 
 # The listing changes only when an owner deploys, undeploys, or edits their
@@ -119,6 +120,29 @@ async def connect_to_agent(request: Request, body: ConnectRequest):
             detail="This assistant is not currently available or deployed.",
         )
 
+    # Cross-tenant velocity. Every other limit in this app is scoped to one
+    # workspace, so a caller working through the directory looks unremarkable to
+    # each owner individually while the aggregate is plainly an attack. This is
+    # the only check that sees the pattern.
+    if settings.DIRECTORY_VELOCITY_MAX_BUSINESSES > 0:
+        reached = await usage.distinct_businesses_contacted(
+            device_id=None,
+            ip_address=client_ip(request),
+            minutes=settings.DIRECTORY_VELOCITY_WINDOW_MIN,
+        )
+        if reached >= settings.DIRECTORY_VELOCITY_MAX_BUSINESSES:
+            logger.warning(
+                "Directory velocity limit: %s reached %d businesses in %d min",
+                client_ip(request), reached, settings.DIRECTORY_VELOCITY_WINDOW_MIN,
+            )
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "You've connected to a lot of assistants in a short time. "
+                    "Please wait a few minutes and try again."
+                ),
+            )
+
     caller_name = (body.name or "").strip() or "Guest Caller"
     token = contacts.generate_token()
 
@@ -129,8 +153,8 @@ async def connect_to_agent(request: Request, body: ConnectRequest):
         note=f"Connected via Public Directory ({body.mode})",
         token_hash=contacts.hash_token(token),
         pin=None,
-        expires_at=contacts.default_expiry(DIRECTORY_LINK_TTL_DAYS),
-        max_sessions_per_day=DIRECTORY_SESSIONS_PER_DAY,
+        expires_at=contacts.default_expiry(settings.DIRECTORY_LINK_TTL_DAYS),
+        max_sessions_per_day=settings.DIRECTORY_SESSIONS_PER_DAY,
         mode=body.mode,
         source=DIRECTORY_SOURCE,
     )

@@ -155,6 +155,11 @@ class ContactSessionRecord(Base):
         DateTime(timezone=True), default=_utcnow
     )
     message_count: Mapped[int] = mapped_column(Integer, default=0)
+    # How long the call actually ran. The client has always sent this and it was
+    # discarded — so nothing could answer "how many minutes did this workspace
+    # spend today", which is the only unit an owner's provider bill is measured
+    # in. Zero for chat sessions and for calls that never reported.
+    duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class OwnerRecord(Base):

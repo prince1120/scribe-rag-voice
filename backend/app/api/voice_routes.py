@@ -23,7 +23,7 @@ from app import repositories
 from app.auth import verify_api_key, verify_internal_api_key
 from app.config import settings
 from app.identity import Identity, get_identity
-from app.services import owner_service
+from app.services import owner_service, usage
 from app.rate_limit import client_ip
 from app.models.schemas import (
     VoicePreviewRequest,
@@ -50,8 +50,6 @@ logger = logging.getLogger(__name__)
 # real conversation with a business and well past a nuisance call; thirty
 # seconds of total silence is a line someone opened and walked away from.
 DIRECTORY_SOURCE = "directory"
-DIRECTORY_MAX_CALL_SECONDS = 300
-DIRECTORY_IDLE_TIMEOUT_SECONDS = 30
 
 router = APIRouter()
 
@@ -347,6 +345,27 @@ async def create_voice_token(
             ),
         )
 
+    # The daily ceiling, checked before a room is created rather than after.
+    #
+    # This is the only limit that bounds total spend: every other cap is
+    # per-link, and links are free to mint. Checked for contacts rather than for
+    # the owner testing their own agent — an owner locked out of their own
+    # console by their own callers would be a worse failure than the overspend.
+    if identity.contact_id:
+        spend = await usage.usage_today(identity.tenant_id)
+        if spend.over_budget:
+            logger.warning(
+                "Refusing call for %s: daily budget reached (%d calls, %d min)",
+                identity.tenant_id, spend.calls, spend.minutes,
+            )
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "This assistant has reached its limit for today. "
+                    "Please try again tomorrow."
+                ),
+            )
+
     room_name = body.room_name or f"voice-{uuid4().hex[:12]}"
     participant_identity = f"user-{uuid4().hex[:8]}"
 
@@ -480,8 +499,8 @@ async def create_voice_token(
     # quota, so their calls are bounded in wall-clock time and hung up if the
     # line goes quiet. Someone the owner sent a link to is not treated that way.
     if contact is not None and getattr(contact, "source", "owner") == DIRECTORY_SOURCE:
-        meta["max_call_seconds"] = DIRECTORY_MAX_CALL_SECONDS
-        meta["idle_timeout_seconds"] = DIRECTORY_IDLE_TIMEOUT_SECONDS
+        meta["max_call_seconds"] = settings.DIRECTORY_MAX_CALL_SECONDS
+        meta["idle_timeout_seconds"] = settings.DIRECTORY_IDLE_TIMEOUT_SECONDS
 
     if identity.contact_id:
         # Concurrent, not sequential: the session row references the
