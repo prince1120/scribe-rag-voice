@@ -4,7 +4,7 @@
 // Eliminates screen-switching loading flickers across the whole app by providing
 // instant in-memory and localStorage caching with silent background revalidation (SWR pattern).
 
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { ownerFetch } from "./ownerFetch";
 
 export interface WorkspaceCacheData {
@@ -29,12 +29,6 @@ export interface WorkspaceCacheData {
 const STORAGE_KEY = "scribe_workspace_cache_v2";
 const CACHE_TTL_MS = 60_000; // 1 minute background freshness window
 
-// Empty, not placeholder data. This used to be seeded with a real business's
-// name and email ("Shiro art and craft" / "shiro@mail.com", status "deployed"),
-// which meant every user saw a stranger's identity until the first fetch
-// resolved — and permanently if it failed — while a draft agent rendered as
-// live. The zero-flicker first paint comes from localStorage below, which is
-// this browser's own previously-loaded workspace and is safe to trust.
 const EMPTY_CACHE: WorkspaceCacheData = {
   businessName: null,
   businessCategory: null,
@@ -74,16 +68,33 @@ export function clearWorkspaceCache() {
   notifyListeners();
 }
 
-type CacheListener = (data: WorkspaceCacheData) => void;
+type CacheListener = () => void;
 const listeners = new Set<CacheListener>();
 
+function subscribe(listener: CacheListener) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
 function notifyListeners() {
-  listeners.forEach((fn) => fn({ ...memoryCache }));
+  listeners.forEach((fn) => {
+    try {
+      fn();
+    } catch {
+      /* ignore */
+    }
+  });
 }
 
 /** Get current cached workspace data synchronously (0ms latency). */
 export function getWorkspaceCache(): WorkspaceCacheData {
-  return { ...memoryCache };
+  return memoryCache;
+}
+
+function getServerSnapshot(): WorkspaceCacheData {
+  return EMPTY_CACHE;
 }
 
 /** Update the workspace cache in memory and localStorage, and notify all subscribers. */
@@ -148,18 +159,16 @@ export async function revalidateWorkspace(force = false): Promise<WorkspaceCache
   return memoryCache;
 }
 
-/** React hook to access workspace identity and status with 0ms first-render guarantee. */
+/** React hook to access workspace identity and status with 0ms first-render guarantee and SSR hydration safety. */
 export function useWorkspace() {
-  const [data, setData] = useState<WorkspaceCacheData>(() => getWorkspaceCache());
+  const data = useSyncExternalStore(
+    subscribe,
+    getWorkspaceCache,
+    getServerSnapshot
+  );
 
   useEffect(() => {
-    const handler: CacheListener = (fresh) => setData(fresh);
-    listeners.add(handler);
     void revalidateWorkspace();
-
-    return () => {
-      listeners.delete(handler);
-    };
   }, []);
 
   return {

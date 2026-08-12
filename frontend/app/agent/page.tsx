@@ -113,13 +113,13 @@ import { getWorkspaceCache, setWorkspaceCache, useWorkspace } from "../lib/works
 
 export default function AgentPage() {
   const ws = useWorkspace();
+  const businessName = ws.businessName;
 
   const [config, setConfig] = useState<AgentConfig | null>(null);
   const [voices, setVoices] = useState<Record<string, Voice[]>>({});
   const [languages, setLanguages] = useState<Array<{ id: string; label: string }>>([]);
   const [channels, setChannels] = useState<Channels | null>(null);
   const [models, setModels] = useState<ModelOption[]>(DEFAULT_MODELS);
-  const [businessName, setBusinessName] = useState<string | null>(() => ws.businessName);
 
   const [tab, setTab] = useState<Channel>("voice");
   const [loading, setLoading] = useState(true);

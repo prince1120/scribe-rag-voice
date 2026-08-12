@@ -99,7 +99,11 @@ export function OwnerShell({
             <Sparkles size={16} className="text-white animate-pulse" />
           </div>
           <div className="owner-brand-text">
-            <span className="owner-brand-name" title={businessName || "Your business"}>
+            <span
+              className="owner-brand-name"
+              title={businessName || "Your business"}
+              suppressHydrationWarning
+            >
               {businessName || "Your business"}
             </span>
             <span className="owner-brand-sub">Scribe Voice Console</span>
@@ -188,17 +192,17 @@ export function OwnerShell({
         </nav>
 
         {/* Live Status Pill at Bottom of Rail */}
-        <div className="owner-rail-bottom">
+        <div className="owner-rail-bottom" suppressHydrationWarning>
           <div className={`owner-rail-status ${isLive ? "is-live" : ""}`}>
             <span className="owner-rail-dot-wrap">
               <span className={`owner-rail-dot ${isLive ? "is-live" : ""}`} />
               {isLive && <span className="owner-rail-pulse" />}
             </span>
             <div className="owner-rail-status-info">
-              <span className="owner-rail-status-title">
+              <span className="owner-rail-status-title" suppressHydrationWarning>
                 {isLive ? "Assistant is Live" : "Draft Mode"}
               </span>
-              <span className="owner-rail-status-desc">
+              <span className="owner-rail-status-desc" suppressHydrationWarning>
                 {isLive ? "Accepting calls & chats" : "Not answering public calls"}
               </span>
             </div>
@@ -228,10 +232,12 @@ export function OwnerShell({
             <Menu size={20} />
           </button>
           <div className="owner-topbar-info">
-            <span className="owner-topbar-name">{businessName || "Your business"}</span>
+            <span className="owner-topbar-name" suppressHydrationWarning>
+              {businessName || "Your business"}
+            </span>
             <span className="owner-topbar-sub">Scribe Console</span>
           </div>
-          <div className={`owner-topbar-badge ${isLive ? "is-live" : ""}`}>
+          <div className={`owner-topbar-badge ${isLive ? "is-live" : ""}`} suppressHydrationWarning>
             <span className={`owner-rail-dot ${isLive ? "is-live" : ""}`} />
             <span>{isLive ? "Live" : "Draft"}</span>
           </div>

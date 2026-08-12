@@ -24,20 +24,15 @@ import { getWorkspaceCache, setWorkspaceCache, useWorkspace } from "../lib/works
 
 export default function SettingsPage() {
   const ws = useWorkspace();
-  const cached = getWorkspaceCache();
 
-  // `?? ""` rather than a placeholder: these are form fields, and an unloaded
-  // workspace means an empty input, not someone else's business name.
-  const [businessName, setBusinessName] = useState<string>(
-    () => cached.businessName ?? ws.businessName ?? ""
-  );
-  const [category, setCategory] = useState<string>(() => cached.businessCategory || "");
-  const [categories, setCategories] = useState<Array<{ id: string; label: string }>>(() => cached.categoriesData || []);
+  const [businessName, setBusinessName] = useState<string>("");
+  const [category, setCategory] = useState<string>("");
+  const [categories, setCategories] = useState<Array<{ id: string; label: string }>>([]);
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileSaved, setProfileSaved] = useState(false);
   const [profileError, setProfileError] = useState("");
 
-  const [email, setEmail] = useState<string>(() => cached.email ?? ws.email ?? "");
+  const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
@@ -51,12 +46,12 @@ export default function SettingsPage() {
     custom_llm_key?: string | null;
     custom_llm_base_url?: string | null;
     llm_model?: string | null;
-  }>(() => cached.providersData || {});
+  }>({});
   const [groqKey, setGroqKey] = useState("");
   const [sarvamKey, setSarvamKey] = useState("");
-  const [customUrl, setCustomUrl] = useState(() => cached.providersData?.custom_llm_base_url || "");
+  const [customUrl, setCustomUrl] = useState("");
   const [customKey, setCustomKey] = useState("");
-  const [model, setModel] = useState(() => cached.providersData?.llm_model || "");
+  const [model, setModel] = useState("");
   const [savingKeys, setSavingKeys] = useState(false);
   const [keysSaved, setKeysSaved] = useState(false);
   const [keyError, setKeyError] = useState("");
@@ -67,6 +62,17 @@ export default function SettingsPage() {
   const [showCustomKey, setShowCustomKey] = useState(false);
 
   useEffect(() => {
+    const cached = getWorkspaceCache();
+    if (cached.businessName) setBusinessName(cached.businessName);
+    if (cached.businessCategory) setCategory(cached.businessCategory);
+    if (cached.email) setEmail(cached.email);
+    if (cached.categoriesData) setCategories(cached.categoriesData);
+    if (cached.providersData) {
+      setProviders(cached.providersData);
+      if (cached.providersData.custom_llm_base_url) setCustomUrl(cached.providersData.custom_llm_base_url);
+      if (cached.providersData.llm_model) setModel(cached.providersData.llm_model);
+    }
+
     let cancelled = false;
     void (async () => {
       try {

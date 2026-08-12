@@ -344,7 +344,7 @@ export default function Home() {
   const [pendingUploads, setPendingUploads] = useState<
     { id: string; filename: string; startedAt: number; sizeBytes: number }[]
   >([]);
-  const [nowTick, setNowTick] = useState(() => Date.now()); // updated every second so elapsed-time labels stay live
+  const [nowTick, setNowTick] = useState(0); // updated every second so elapsed-time labels stay live
 
   // Images attached to the next chat message (data URLs)
   const [chatImages, setChatImages] = useState<
