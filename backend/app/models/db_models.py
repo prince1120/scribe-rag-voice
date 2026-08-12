@@ -86,6 +86,17 @@ class ContactRecord(Base):
     # attacker-controllable in everything but its token, so nothing may ever
     # look one up by an attribute the caller supplied.
     source: Mapped[str] = mapped_column(String(16), default="owner")
+    # The browser that requested this link, for directory contacts.
+    #
+    # Velocity limiting keyed on IP does not work: a phone's IPv6 address
+    # rotates on tower handover, so the same caller gets a fresh counter, while
+    # an office behind one NAT shares a counter between unrelated people. Both
+    # were observed — one test phone produced two distinct /48s in a day.
+    # A browser-held id survives rotation and is not shared by strangers.
+    #
+    # Clearable, so it is a speed bump rather than proof of identity. That is
+    # the right weight for it: the daily budget is the hard ceiling.
+    client_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     # "voice" opens straight into a call; "chat" is text only; "both" shows the
     # normal app. A voice-only link is the common case for someone who should
     # just talk and never browse the library.

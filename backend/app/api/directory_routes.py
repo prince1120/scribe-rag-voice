@@ -18,7 +18,7 @@ import logging
 from typing import Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from app import contacts, repositories
@@ -88,7 +88,11 @@ async def list_public_agents(request: Request, response: Response):
 
 @router.post("/connect")
 @limiter.limit("5/minute")
-async def connect_to_agent(request: Request, body: ConnectRequest):
+async def connect_to_agent(
+    request: Request,
+    body: ConnectRequest,
+    x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+):
     """Mint a fresh guest link for a visitor arriving from the public directory.
 
     Always a **new** contact, never a reused one. The previous version looked up
@@ -126,7 +130,7 @@ async def connect_to_agent(request: Request, body: ConnectRequest):
     # the only check that sees the pattern.
     if settings.DIRECTORY_VELOCITY_MAX_BUSINESSES > 0:
         reached = await usage.distinct_businesses_contacted(
-            device_id=None,
+            client_id=x_client_id,
             ip_address=client_ip(request),
             minutes=settings.DIRECTORY_VELOCITY_WINDOW_MIN,
         )
@@ -157,6 +161,7 @@ async def connect_to_agent(request: Request, body: ConnectRequest):
         max_sessions_per_day=settings.DIRECTORY_SESSIONS_PER_DAY,
         mode=body.mode,
         source=DIRECTORY_SOURCE,
+        client_id=(x_client_id or "").strip() or None,
     )
     logger.info(
         "Directory connect: new guest contact for tenant %s (mode=%s)",

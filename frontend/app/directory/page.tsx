@@ -35,6 +35,19 @@ interface AgentCard {
   deployed_at: string | null;
 }
 
+/** A stable id for this browser, created on first use. Not proof of identity —
+ *  it can be cleared — but it survives IP rotation, which is what the velocity
+ *  check needs. */
+function browserId(): string {
+  const KEY = "app_client_id";
+  let id = localStorage.getItem(KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(KEY, id);
+  }
+  return id;
+}
+
 export default function DirectoryPage() {
   const router = useRouter();
   const [agents, setAgents] = useState<AgentCard[]>([]);
@@ -119,7 +132,12 @@ export default function DirectoryPage() {
     try {
       const res = await fetch("/api/v1/directory/connect", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+            "Content-Type": "application/json",
+            // Stable per browser. Velocity limiting keys on this rather than
+            // the IP, which rotates on mobile and is shared behind NAT.
+            "X-Client-Id": browserId(),
+          },
         body: JSON.stringify({
           handle: agent.handle,
           name: finalName,

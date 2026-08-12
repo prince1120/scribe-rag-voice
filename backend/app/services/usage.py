@@ -91,36 +91,47 @@ async def usage_today(tenant_id: str) -> Usage:
 
 
 async def distinct_businesses_contacted(
-    device_id: str | None, ip_address: str | None, minutes: int = 10
+    client_id: str | None, ip_address: str | None, minutes: int = 10
 ) -> int:
-    """How many different workspaces one caller has reached recently.
+    """How many different workspaces one visitor has taken a link to recently.
 
-    A person calls one business. Someone working through the directory calls
-    twenty, and that pattern is invisible to any per-workspace limit — each
-    owner sees a single caller behaving normally, while the aggregate is an
-    attack. This is the only check that looks across tenants.
+    A person contacts one business. Someone working through the directory takes
+    a link to twenty, and that pattern is invisible to any per-workspace limit —
+    each owner sees a single ordinary visitor while the aggregate is an attack.
+    This is the only check that looks across tenants.
+
+    Keyed on the browser's client id, not the IP. IP does not work here and the
+    data says so: one test phone recorded two distinct IPv6 /48s in a day, so a
+    rotating mobile address gets a fresh counter, while an office behind one NAT
+    shares a counter between unrelated people — wrong in both directions at
+    once. IP remains the fallback for a browser that sends no id, where a coarse
+    signal beats none.
+
+    Counted over contacts rather than sessions because minting the link is the
+    act being limited, and it is the act that happens at /connect.
     """
-    if not device_id and not ip_address:
+    if not client_id and not ip_address:
         return 0
 
     since = datetime.now(timezone.utc) - timedelta(minutes=minutes)
     async with async_session() as session:
         query = (
             select(func.count(func.distinct(ContactRecord.owner_tenant_id)))
-            .select_from(ContactSessionRecord)
-            .join(
-                ContactRecord,
-                ContactRecord.contact_id == ContactSessionRecord.contact_id,
-            )
-            .where(ContactSessionRecord.started_at >= since)
+            .where(ContactRecord.created_at >= since)
         )
-        # Device first: it survives a changing IP, and an IP can be shared by a
-        # whole office behind one NAT. IP is the fallback for a first visit,
-        # before any device id exists.
-        if device_id:
-            query = query.where(ContactSessionRecord.device_id == device_id)
+        if client_id:
+            query = query.where(ContactRecord.client_id == client_id)
         else:
-            query = query.where(ContactSessionRecord.ip_address == ip_address)
+            # No id from this browser. Fall back to the address, accepting that
+            # it is coarse — better than letting an unidentified caller through
+            # unmeasured entirely.
+            query = query.where(
+                ContactRecord.client_id.is_(None),
+                ContactSessionRecord.ip_address == ip_address,
+            ).join(
+                ContactSessionRecord,
+                ContactSessionRecord.contact_id == ContactRecord.contact_id,
+            )
 
         result = await session.execute(query)
         return int(result.scalar() or 0)

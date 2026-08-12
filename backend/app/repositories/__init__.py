@@ -235,12 +235,14 @@ async def create_contact(
     *, contact_id: str, owner_tenant_id: str, name: str, note: Optional[str],
     token_hash: str, pin: Optional[str], expires_at: Optional[datetime],
     max_sessions_per_day: int, mode: str = "both", source: str = "owner",
+    client_id: Optional[str] = None,
 ) -> ContactRecord:
     async with async_session() as session:
         record = ContactRecord(
             contact_id=contact_id, owner_tenant_id=owner_tenant_id, name=name,
             note=note, token_hash=token_hash, pin=pin, expires_at=expires_at,
             max_sessions_per_day=max_sessions_per_day, mode=mode, source=source,
+            client_id=client_id,
         )
         session.add(record)
         await session.commit()

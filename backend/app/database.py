@@ -76,6 +76,7 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     # directory, so a backfill is neither needed nor correct.
     ("owners", "public_handle", "VARCHAR(32)"),
     ("contact_sessions", "duration_seconds", "INTEGER NOT NULL DEFAULT 0"),
+    ("contacts", "client_id", "VARCHAR(64)"),
 ]
 
 
