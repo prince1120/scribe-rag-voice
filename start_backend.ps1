@@ -57,6 +57,45 @@ try {
     Write-Host "Or use Qdrant Cloud (free tier): https://cloud.qdrant.io" -ForegroundColor Cyan
 }
 
+# Bring Redis up before the API server.
+#
+# Redis holds the working conversation context the LLM is given each turn.
+# Without it the app falls back to an in-process dictionary, which is not
+# durable, not shared between processes, and silently loses a caller's context
+# on every restart — so the assistant forgets what was just said and nothing
+# reports why. The compose service is `restart: unless-stopped` with a named
+# volume, so this is a no-op once it has been started.
+Write-Host "Checking Redis..." -ForegroundColor Yellow
+$redisUp = $false
+try {
+    $tcp = New-Object System.Net.Sockets.TcpClient
+    $tcp.Connect("127.0.0.1", 6379)
+    $redisUp = $tcp.Connected
+    $tcp.Close()
+} catch { $redisUp = $false }
+
+if ($redisUp) {
+    Write-Host "Redis is running!" -ForegroundColor Green
+} else {
+    Write-Host "Redis not detected at localhost:6379 - starting it via docker compose..." -ForegroundColor Yellow
+    try {
+        docker compose up -d redis 2>&1 | Out-Null
+        if ($?) {
+            Start-Sleep -Seconds 3
+            Write-Host "Redis started." -ForegroundColor Green
+        } else {
+            throw "docker compose returned a failure"
+        }
+    } catch {
+        # Not fatal: the app runs without Redis, just degraded. Said plainly
+        # rather than left for someone to discover from /health.
+        Write-Host "Could not start Redis (is Docker Desktop running?)." -ForegroundColor Red
+        Write-Host "The app will still start, but conversation memory will be" -ForegroundColor Yellow
+        Write-Host "in-process only and lost on every restart." -ForegroundColor Yellow
+        Write-Host "  Start it manually with: docker compose up -d redis" -ForegroundColor Cyan
+    }
+}
+
 # Stop any voice worker left over from a previous run.
 #
 # The worker is spawned *detached* on purpose, so it survives uvicorn's

@@ -129,25 +129,12 @@ async def list_contacts(identity: Identity = Depends(get_identity)):
     if not records:
         return []
 
-    from app.database import async_session
-    from app.models.db_models import ContactSessionRecord
-    from sqlalchemy import select, or_, and_
-
+    # Counted in SQL, with the same predicate the sessions list uses. This used
+    # to load every session row for every contact and tally them in Python,
+    # against a slightly different condition — which is how the badge came to
+    # read "3 Completed Talks" above a list of four.
     contact_ids = [r.contact_id for r in records]
-    session_counts: dict[str, int] = {cid: 0 for cid in contact_ids}
-
-    async with async_session() as session:
-        q = select(ContactSessionRecord).where(
-            ContactSessionRecord.contact_id.in_(contact_ids),
-            or_(
-                and_(ContactSessionRecord.channel == "voice", ContactSessionRecord.conversation_id.isnot(None)),
-                ContactSessionRecord.message_count > 0,
-                ContactSessionRecord.conversation_id.isnot(None),
-            )
-        )
-        res = await session.execute(q)
-        for s in res.scalars().all():
-            session_counts[s.contact_id] = session_counts.get(s.contact_id, 0) + 1
+    session_counts = await repositories.count_real_talks(contact_ids)
 
     out = []
     for r in records:

@@ -13,6 +13,7 @@ import {
   createAudioAnalyser,
 } from "livekit-client";
 import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
+import { MIC_CAPTURE, useAgentStall } from "../../components/voice/useCallQuality";
 import {
   ChevronDown,
   ChevronUp,
@@ -246,6 +247,8 @@ export function CallScreen({ name }: { name?: string }) {
   const [muted, setMuted] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [agentSpeaking, setAgentSpeaking] = useState(false);
+  // True from the end of a user turn until the assistant answers.
+  const [waitingForAgent, setWaitingForAgent] = useState(false);
   // The assistant greets first. Until it has, the screen must not say
   // "Listening to you" — that invites the caller to start talking over the
   // greeting, and a call that opens with both sides talking never recovers.
@@ -376,6 +379,16 @@ export function CallScreen({ name }: { name?: string }) {
         const role: "user" | "assistant" = isLocal ? "user" : "assistant";
         const nowTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
+        // Drives the "still thinking" watchdog. A finished user turn starts the
+        // clock; anything from the assistant stops it. Transcripts are used
+        // rather than audio because they arrive first — the caller should be
+        // told the reply is late before the silence has already felt broken.
+        if (isLocal) {
+          if (segments.some((s) => s.final && s.text)) setWaitingForAgent(true);
+        } else if (segments.some((s) => s.text)) {
+          setWaitingForAgent(false);
+        }
+
         for (const seg of segments) {
           if (!seg.text) continue;
           setCurrentSubtitle(seg.text);
@@ -504,18 +517,21 @@ export function CallScreen({ name }: { name?: string }) {
   // Orb size: smaller on mobile
   const orbSize = phase === "live" ? 100 : 120;
 
-  // Only surfaced when it is bad. An "Excellent" badge on every call is noise
-  // that trains people to ignore the one time it says something useful.
+  // Two different failures, deliberately kept apart. The first is the WebRTC
+  // link; the second is the assistant going quiet, which the link cannot see
+  // — a slow LLM or a stalled worker leaves quality at Excellent while the
+  // caller hears nothing.
+  const stallWarning = useAgentStall(phase === "live" && waitingForAgent && !agentSpeaking);
   const networkWarning =
     phase === "live" && quality === ConnectionQuality.Lost
-      ? { text: "Reconnecting…", detail: "Your connection dropped.", bad: true }
+      ? { text: "Reconnecting…", detail: "Your connection dropped." }
       : phase === "live" && quality === ConnectionQuality.Poor
       ? {
           text: "Weak network",
           detail: "Audio may break up. Try moving closer to your router.",
-          bad: true,
         }
-      : null;
+      // A dropped link is the more urgent thing to say, so it wins.
+      : stallWarning;
 
   return (
     <main style={S.main}>

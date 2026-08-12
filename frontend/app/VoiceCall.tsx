@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, Track, createAudioAnalyser } from "livekit-client";
 
 import { VoiceSpectrum } from "./components/voice/VoiceSpectrum";
+import { NetworkBanner } from "./components/voice/NetworkBanner";
+import { MIC_CAPTURE, useCallQuality } from "./components/voice/useCallQuality";
 import { useAudioDeviceSwitching } from "./components/voice/useAudioDeviceSwitching";
 import { personaForVoice } from "./components/voice/voicePersona";
 import type { RemoteTrack, RemoteAudioTrack, Participant, TranscriptionSegment } from "livekit-client";
@@ -535,7 +537,13 @@ export function VoiceCallModal({
         );
       }
 
-      await room.localParticipant.setMicrophoneEnabled(true);
+      // Capture settings, not the browser's raw microphone. Without
+      // echoCancellation the agent's own voice comes back in through the mic
+      // and interrupts it mid-sentence; without noiseSuppression a fan or
+      // traffic does the same. The invite-link screen has always passed these
+      // and this one did not, which is why background noise behaved
+      // differently depending on where the call was placed from.
+      await room.localParticipant.setMicrophoneEnabled(true, { ...MIC_CAPTURE });
 
       // Analyser on the mic → orb reacts to the user's voice too.
       const micTrack = room.localParticipant.getTrackPublication(
@@ -653,6 +661,11 @@ export function VoiceCallModal({
   // keeps its own amber so "working" stays legible across every voice, and
   // idle is the persona colour softened rather than a different hue — the orb
   // should look like the same character whether or not it is talking.
+  // Only the caller's own link quality, and only while a call is actually up.
+  const { warning: networkWarning } = useCallQuality(
+    activeRoom, state === "connected"
+  );
+
   const persona = personaForVoice(selectedVoice);
   const orbCore = agentThinking
     ? "#d4a73b"
@@ -663,6 +676,7 @@ export function VoiceCallModal({
   return (
     <div
       className="voice-overlay-enter fixed inset-0 z-50 flex flex-col"
+      data-network={networkWarning ? "weak" : undefined}
       style={{
         background: agentActive
           ? "radial-gradient(120% 120% at 50% 38%, #E7E9F6 0%, var(--claude-bg) 62%)"
@@ -672,6 +686,10 @@ export function VoiceCallModal({
         transition: "background 0.9s ease",
       }}
     >
+      {/* Above the top bar so a weak connection is the first thing read, and
+          so it never covers the call controls. */}
+      <NetworkBanner warning={networkWarning} />
+
       {/* Top bar */}
       <div className="flex items-center justify-between px-6 h-16 flex-shrink-0 border-b" style={{ borderColor: "var(--claude-border)" }}>
         <div className="flex items-center gap-2.5" style={{ color: "var(--claude-muted)" }}>

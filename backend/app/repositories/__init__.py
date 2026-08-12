@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import uuid4
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import selectinload
 
 from app.database import async_session
@@ -392,15 +392,72 @@ async def start_contact_session(
         await session.commit()
 
 
-async def list_contact_sessions(contact_id: str, limit: int = 50) -> List[ContactSessionRecord]:
+def real_talk_filter():
+    """What counts as a conversation worth showing the owner.
+
+    Opening an invite link records a session before anyone has spoken, and a
+    voice call then records a second one when it actually starts — so a single
+    call leaves two rows, one of which is an empty page load. Measured on real
+    data: seven rows for four conversations.
+
+    The definition lives here, once, because the count and the list had grown
+    their own copies and disagreed: the badge said "3 Completed Talks" above a
+    list of four. Two answers to the same question is worse than either answer
+    being wrong, because neither can be trusted afterwards.
+
+    A conversation exists when there is something to read — a transcript
+    (conversation_id) or at least one turn.
+    """
+    return or_(
+        ContactSessionRecord.conversation_id.isnot(None),
+        ContactSessionRecord.message_count > 0,
+    )
+
+
+async def list_contact_sessions(
+    contact_id: str, limit: int = 50, only_real: bool = True
+) -> List[ContactSessionRecord]:
+    """Sessions for a contact, newest first.
+
+    `only_real` excludes the empty page-load rows by default, so this matches
+    the count shown next to the contact's name.
+    """
     async with async_session() as session:
+        query = select(ContactSessionRecord).where(
+            ContactSessionRecord.contact_id == contact_id
+        )
+        if only_real:
+            query = query.where(real_talk_filter())
         result = await session.execute(
-            select(ContactSessionRecord)
-            .where(ContactSessionRecord.contact_id == contact_id)
-            .order_by(ContactSessionRecord.started_at.desc())
-            .limit(limit)
+            query.order_by(ContactSessionRecord.started_at.desc()).limit(limit)
         )
         return list(result.scalars().all())
+
+
+async def count_real_talks(contact_ids: List[str]) -> dict[str, int]:
+    """How many real conversations each contact has had.
+
+    Counted in SQL rather than by loading every session row and tallying them
+    in Python, which is what the list endpoint did — that grows with a
+    workspace's entire call history to render one number per contact.
+    """
+    if not contact_ids:
+        return {}
+    async with async_session() as session:
+        result = await session.execute(
+            select(
+                ContactSessionRecord.contact_id,
+                func.count().label("talks"),
+            )
+            .where(
+                ContactSessionRecord.contact_id.in_(contact_ids),
+                real_talk_filter(),
+            )
+            .group_by(ContactSessionRecord.contact_id)
+        )
+        counts = {cid: 0 for cid in contact_ids}
+        counts.update({row[0]: int(row[1]) for row in result.all()})
+        return counts
 
 
 async def count_sessions_since(contact_id: str, since: datetime) -> int:

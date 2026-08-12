@@ -13,12 +13,15 @@ import { ownerFetch } from "../lib/ownerFetch";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, Track, createAudioAnalyser } from "livekit-client";
+import { NetworkBanner } from "../components/voice/NetworkBanner";
+import { MIC_CAPTURE, useCallQuality } from "../components/voice/useCallQuality";
 import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
 
 type Phase = "idle" | "connecting" | "live" | "ended" | "error";
 
 export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
   const [phase, setPhase] = useState<Phase>("idle");
+  const [activeRoom, setActiveRoom] = useState<Room | null>(null);
   const [error, setError] = useState("");
   const [muted, setMuted] = useState(false);
   const [seconds, setSeconds] = useState(0);
@@ -46,6 +49,7 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
     audioElsRef.current = [];
     roomRef.current?.disconnect();
     roomRef.current = null;
+    setActiveRoom(null);
   }, []);
 
   useEffect(() => teardown, [teardown]);
@@ -100,7 +104,12 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
       room.on(RoomEvent.Disconnected, () => { setPhase("ended"); teardown(); });
 
       await room.connect(url, token);
-      await room.localParticipant.setMicrophoneEnabled(true);
+      // Same capture settings as a real call. Testing on the browser's raw
+      // microphone meant the owner tuned their agent against different audio
+      // conditions than their callers actually get — including the agent
+      // interrupting itself through the speaker.
+      await room.localParticipant.setMicrophoneEnabled(true, { ...MIC_CAPTURE });
+      setActiveRoom(room);
       setPhase("live");
 
       // Written straight to the DOM node; setState here would re-render React
@@ -135,8 +144,11 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
     : phase === "error" ? "Could not connect"
     : "Call your assistant to hear it";
 
+  const { warning: networkWarning } = useCallQuality(activeRoom, phase === "live");
+
   return (
     <div className="vtest">
+      <NetworkBanner warning={networkWarning} />
       <div className="vtest-main">
         <div
           ref={orbRef}

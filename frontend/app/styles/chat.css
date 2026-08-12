@@ -1045,3 +1045,25 @@
   .agent-test-input { flex-direction: column; }
   .agent-test-input .agent-save { width: 100%; }
 }
+
+/* ── Call network warning ──────────────────────────────────────────────
+   Shown only when the caller's own connection is Poor or Lost (see
+   useCallQuality). Amber rather than red: a weak network is a condition to
+   work around, not a failure — the call is still up. */
+.call-network-banner {
+  display: flex; align-items: center; justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-xs); font-weight: var(--weight-semibold);
+  color: #7c2d12; background: #ffedd5;
+  border-bottom: 1px solid #fed7aa;
+  flex-shrink: 0;
+}
+.call-network-text { white-space: nowrap; }
+.call-network-detail { font-weight: var(--weight-regular); opacity: 0.85; }
+
+@media (max-width: 640px) {
+  /* The detail sentence is advice, not the message. Dropped before the
+     headline wraps onto a second line and pushes the call controls down. */
+  .call-network-detail { display: none; }
+}
