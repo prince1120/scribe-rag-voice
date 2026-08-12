@@ -209,7 +209,12 @@ async def voice_history(conversation_id: str) -> dict:
     store as text chat."""
     from app.api.routes import conversation_service
 
-    msgs = conversation_service.get_conversation_history(conversation_id)
+    # Synchronous Redis client — must not run on the event loop. This endpoint
+    # is called by the voice worker at the start of a call, so a stall here
+    # delays every other request the API is serving.
+    msgs = await run_in_threadpool(
+        conversation_service.get_conversation_history, conversation_id
+    )
     return {
         "messages": [
             {"role": m.get("role", "user"), "content": m.get("content", "")}
@@ -251,10 +256,13 @@ async def create_voice_token(
     # "Connecting…" spinner for most of a minute. The worker health check is an
     # HTTP call rather than a query, and it joins the same batch for the same
     # reason.
-    resolved, agent, workspace, contact, _ = await asyncio.gather(
-        owner_service.resolve_credentials(identity.tenant_id),
-        repositories.get_agent(identity.tenant_id),
-        repositories.get_owner(identity.tenant_id),
+    # Reads go through the config cache (see services/cache.py), so a repeat
+    # call within the TTL skips the database entirely — which matters most
+    # exactly here, where every one of these round trips is a caller watching a
+    # "Connecting…" spinner.
+    agent, workspace, contact, _ = await asyncio.gather(
+        owner_service.cached_agent(identity.tenant_id),
+        owner_service.cached_owner(identity.tenant_id),
         (
             repositories.get_contact(identity.contact_id, identity.tenant_id)
             if identity.contact_id
@@ -265,6 +273,11 @@ async def create_voice_token(
         # dispatch the job to, and the call just times out with no obvious
         # cause.
         ensure_worker_running(),
+    )
+    # Not in the gather above: it needs the owner record, and passing the one
+    # just fetched saves it re-reading the same row.
+    resolved = await owner_service.resolve_credentials(
+        identity.tenant_id, record=workspace
     )
 
     effective_groq = (

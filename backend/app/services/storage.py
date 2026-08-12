@@ -19,6 +19,7 @@ bytes.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import tempfile
@@ -131,28 +132,58 @@ class SupabaseStorage(Storage):
         # The service-role key bypasses row-level security, so it must stay
         # server-side. It is never sent to the browser.
         self.headers = {"Authorization": f"Bearer {service_key}"}
+        self._client: Optional[httpx.AsyncClient] = None
+        self._client_lock = asyncio.Lock()
+
+    async def _http(self) -> httpx.AsyncClient:
+        """One pooled client for the process, built on first use.
+
+        Every method here used to open its own `AsyncClient` in a `with` block,
+        which meant a fresh TCP *and* TLS handshake for every single file
+        operation — on every upload, every download, and once per document on
+        every cleanup sweep. Keeping connections alive removes that from all of
+        them.
+
+        Constructed lazily rather than in `__init__` because this module builds
+        its storage singleton at import time, before there is a running event
+        loop for the connection pool to attach to.
+        """
+        if self._client is None or self._client.is_closed:
+            async with self._client_lock:
+                if self._client is None or self._client.is_closed:
+                    self._client = httpx.AsyncClient(
+                        timeout=httpx.Timeout(60.0, connect=10.0),
+                        limits=httpx.Limits(
+                            max_keepalive_connections=10, max_connections=20
+                        ),
+                        headers=self.headers,
+                    )
+        return self._client
+
+    async def aclose(self) -> None:
+        """Release the pool on shutdown so sockets close deterministically."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+        self._client = None
 
     async def save(self, key: str, data: bytes) -> None:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                f"{self.base}/{self.bucket}/{key}",
-                headers={
-                    **self.headers,
-                    "Content-Type": "application/octet-stream",
-                    # Re-indexing an edited document rewrites the same key.
-                    "x-upsert": "true",
-                },
-                content=data,
-            )
+        client = await self._http()
+        response = await client.post(
+            f"{self.base}/{self.bucket}/{key}",
+            headers={
+                "Content-Type": "application/octet-stream",
+                # Re-indexing an edited document rewrites the same key.
+                "x-upsert": "true",
+            },
+            content=data,
+        )
         if response.status_code >= 400:
             logger.error("Supabase upload failed (%s)", response.status_code)
             raise StorageError("Could not store the uploaded file")
 
     async def read(self, key: str) -> bytes:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.get(
-                f"{self.base}/{self.bucket}/{key}", headers=self.headers
-            )
+        client = await self._http()
+        response = await client.get(f"{self.base}/{self.bucket}/{key}")
         if response.status_code == 404:
             raise StorageError(f"Not found: {key}")
         if response.status_code >= 400:
@@ -160,17 +191,15 @@ class SupabaseStorage(Storage):
         return response.content
 
     async def delete(self, key: str) -> None:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            await client.delete(
-                f"{self.base}/{self.bucket}/{key}", headers=self.headers
-            )
+        client = await self._http()
+        await client.delete(f"{self.base}/{self.bucket}/{key}", timeout=30.0)
 
     async def exists(self, key: str) -> bool:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            # HEAD on the object avoids pulling the whole body just to check.
-            response = await client.head(
-                f"{self.base}/{self.bucket}/{key}", headers=self.headers
-            )
+        client = await self._http()
+        # HEAD on the object avoids pulling the whole body just to check.
+        response = await client.head(
+            f"{self.base}/{self.bucket}/{key}", timeout=30.0
+        )
         return response.status_code < 400
 
     async def local_path(self, key: str) -> Optional[str]:

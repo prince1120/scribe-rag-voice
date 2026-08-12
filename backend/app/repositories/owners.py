@@ -13,6 +13,26 @@ from app.database import async_session
 from app.models.db_models import AgentRecord, OwnerRecord
 
 
+def _invalidate(tenant_id: str) -> None:
+    """Drop this tenant's cached config after a write.
+
+    Done here, in the repository, rather than in each service or route that
+    performs a write. There are a dozen such call sites and they are the kind
+    that get added without remembering a cache exists — the symptom being an
+    owner editing their prompt, saving, and watching the assistant keep using
+    the old one for the next forty-five seconds. Every mutation of these two
+    tables goes through this module, so this is the one place that cannot be
+    bypassed.
+
+    Imported lazily to keep the repository layer free of a load-time dependency
+    on services.
+    """
+    from app.services import cache
+
+    cache.invalidate_tenant(tenant_id)
+
+
+
 async def get_owner(tenant_id: str) -> Optional[OwnerRecord]:
     async with async_session() as session:
         result = await session.execute(
@@ -40,6 +60,7 @@ async def create_owner(
         )
         session.add(record)
         await session.commit()
+        _invalidate(tenant_id)
         await session.refresh(record)
         return record
 
@@ -74,6 +95,7 @@ async def update_owner(
             record.mode_chosen_at = datetime.now(_tz.utc)
 
         await session.commit()
+        _invalidate(tenant_id)
         await session.refresh(record)
         return record
 
@@ -101,6 +123,7 @@ async def set_owner_credentials(
         record.email = email
         record.password_hash = password_hash
         await session.commit()
+        _invalidate(tenant_id)
         await session.refresh(record)
         return record
 
@@ -119,6 +142,7 @@ async def set_owner_secrets(*, tenant_id: str, **fields) -> Optional[OwnerRecord
             if value is not None:
                 setattr(record, key, value)
         await session.commit()
+        _invalidate(tenant_id)
         await session.refresh(record)
         return record
 
@@ -175,6 +199,7 @@ async def upsert_agent(
                 setattr(record, field, value)
 
         await session.commit()
+        _invalidate(tenant_id)
         await session.refresh(record)
         return record
 
@@ -200,6 +225,7 @@ async def set_agent_status(tenant_id: str, status: str) -> AgentRecord:
         record.deployed_at = datetime.now(_tz.utc) if status == "deployed" else None
 
         await session.commit()
+        _invalidate(tenant_id)
         await session.refresh(record)
         return record
 
@@ -214,6 +240,9 @@ async def delete_agent(tenant_id: str) -> None:
         if record is not None:
             await session.delete(record)
             await session.commit()
+        # Unconditional: a delete of an already-absent row still means any
+        # cached copy from a moment ago must go.
+        _invalidate(tenant_id)
 
 
 

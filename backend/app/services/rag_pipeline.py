@@ -5,7 +5,7 @@ import groq
 import openai
 from typing import List, Dict, Any, Optional
 import logging
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_exponential
 import tiktoken
 
 try:
@@ -353,35 +353,83 @@ class RAGPipeline:
             self.vision_model,
         )
     
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-    def generate_response(self, query: str, context_chunks: List[Dict],
-                        conversation_history: Optional[List[Dict]] = None,
-                        attached_images: Optional[List[str]] = None,
-                        temperature: float = 0.1,
-                        max_tokens: int = 800,
-                        groq_api_key: Optional[str] = None,
-                        override_model: Optional[str] = None,
-                        custom_base_url: Optional[str] = None,
-                        custom_api_key: Optional[str] = None) -> str:
-        """Generate response using Groq (or a caller-configured OpenAI-
-        compatible endpoint) with retrieved context.
+    # ---- LLM invocation --------------------------------------------------
 
-        groq_api_key: when set (demo mode), the call is billed against the
-        caller's own key instead of the server's.
-        custom_base_url/custom_api_key: when set, the request goes to that
-        OpenAI-compatible endpoint instead of Groq entirely (e.g. Mistral,
-        OpenRouter, a self-hosted server) — override_model selects which
-        model on that endpoint to call.
+    # Status codes worth trying again. 408/409/429 and the 5xx family are
+    # transient; 400/401/403/404/413/422 are the request itself being wrong and
+    # will fail identically every time.
+    _RETRYABLE_STATUS = frozenset({408, 409, 429, 500, 502, 503, 504})
+
+    @classmethod
+    def _is_retryable(cls, exc: BaseException) -> bool:
+        """Whether re-sending this request could plausibly succeed.
+
+        The previous `@retry` sat on the whole method and caught everything, so
+        a malformed prompt or a bad API key was re-sent three times with an
+        exponential wait — up to ~20s of latency added to a request that was
+        never going to succeed, and three times the tokens billed when the
+        failure came after generation started.
+
+        Matched structurally (status code, then exception class name) rather
+        than by importing every SDK's exception tree: this code talks to Groq,
+        OpenAI, and any OpenAI-compatible endpoint the owner configures, and
+        their exception hierarchies are similar but not identical.
         """
+        status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+        if isinstance(status, int):
+            return status in cls._RETRYABLE_STATUS
 
+        name = type(exc).__name__
+        return name in {
+            "RateLimitError", "APIConnectionError", "APITimeoutError",
+            "InternalServerError", "APIConnectionTimeoutError",
+            "ConnectionError", "Timeout", "TimeoutError",
+        }
+
+    def _call_with_retry(self, client, **kwargs):
+        """Send a chat completion, retrying only transient failures.
+
+        `stream=True` returns as soon as the connection is established, so this
+        covers connection setup for both paths. A failure part-way through an
+        already-started stream cannot be retried here — the caller has begun
+        emitting tokens — and is handled by the route's error frame instead.
+        """
+        for attempt in Retrying(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=1, max=8),
+            retry=retry_if_exception(self._is_retryable),
+            reraise=True,
+        ):
+            with attempt:
+                return client.chat.completions.create(**kwargs)
+
+    def _prepare_request(
+        self,
+        query: str,
+        context_chunks: List[Dict],
+        conversation_history: Optional[List[Dict]],
+        attached_images: Optional[List[str]],
+        override_model: Optional[str],
+        agent_prompt: Optional[str],
+        log_tag: str,
+    ):
+        """Everything both generation paths do before calling the model.
+
+        Extracted because the streaming and non-streaming methods used to carry
+        two copies of this, and they drifted: `agent_prompt` was threaded
+        through one and only half-applied to the other, leaving `/query` raising
+        NameError on every request. One copy means that cannot happen again.
+
+        Returns (messages, model_to_use).
+        """
         # Build context with token budget so we never exceed Groq's TPM
         context, allowed_ids = self._build_context(context_chunks, max_context_tokens=4500)
 
-        # Build conversation history
         history_str = self._build_history(conversation_history, max_tokens=500)
 
-        # Construct prompt
-        has_images = bool(attached_images) or any((c.get("payload", c) or {}).get("is_image") for c in context_chunks)
+        has_images = bool(attached_images) or any(
+            (c.get("payload", c) or {}).get("is_image") for c in context_chunks
+        )
         has_text_context = bool(context.strip())
         system_prompt = self._build_system_prompt(
             has_images, has_text_context, agent_prompt=agent_prompt,
@@ -393,8 +441,7 @@ class RAGPipeline:
         allowed_block = (
             f"VALID CITATION IDS — you may ONLY use these exact markers, no others:\n"
             f"{ids_list}\n"
-            f"If you write any other ID like [1.5] or [2.1] when it is not in the list above, "
-            f"that is a hallucination and is FORBIDDEN.\n\n"
+            f"Inventing any other ID (e.g. [1.5] or [2.1] when not listed) is FORBIDDEN.\n\n"
         )
         user_prompt = f"""{allowed_block}Context:
 {context}
@@ -402,7 +449,7 @@ class RAGPipeline:
 {history_block}Question: {query}
 
 Answer with citations using ONLY the valid IDs listed above:"""
-        
+
         image_paths = self._collect_image_paths(context_chunks)
         messages, model_to_use = self._build_messages(
             system_prompt, user_prompt, image_paths,
@@ -411,15 +458,45 @@ Answer with citations using ONLY the valid IDs listed above:"""
         )
         total_images = len(image_paths) + (len(attached_images) if attached_images else 0)
         logger.info(
-            f"[CHAT LLM] Selected Model: '{model_to_use}' | Vision Active: {bool(total_images)} "
+            f"[{log_tag}] Selected Model: '{model_to_use}' | Vision Active: {bool(total_images)} "
             f"({total_images} image(s))"
+        )
+        return messages, model_to_use
+
+    def generate_response(self, query: str, context_chunks: List[Dict],
+                        conversation_history: Optional[List[Dict]] = None,
+                        attached_images: Optional[List[str]] = None,
+                        temperature: float = 0.1,
+                        max_tokens: int = 800,
+                        groq_api_key: Optional[str] = None,
+                        override_model: Optional[str] = None,
+                        custom_base_url: Optional[str] = None,
+                        custom_api_key: Optional[str] = None,
+                        agent_prompt: Optional[str] = None) -> str:
+        """Generate response using Groq (or a caller-configured OpenAI-
+        compatible endpoint) with retrieved context.
+
+        groq_api_key: when set (demo mode), the call is billed against the
+        caller's own key instead of the server's.
+        custom_base_url/custom_api_key: when set, the request goes to that
+        OpenAI-compatible endpoint instead of Groq entirely (e.g. Mistral,
+        OpenRouter, a self-hosted server) — override_model selects which
+        model on that endpoint to call.
+        agent_prompt: the business owner's own script, which leads the system
+        prompt. Must accept the same arguments as the streaming twin — chat
+        routes call both with an identical keyword set.
+        """
+        messages, model_to_use = self._prepare_request(
+            query, context_chunks, conversation_history, attached_images,
+            override_model, agent_prompt, log_tag="CHAT LLM",
         )
 
         try:
             client = self._client_for(
                 groq_api_key, custom_base_url=custom_base_url, custom_api_key=custom_api_key
             )
-            response = client.chat.completions.create(
+            response = self._call_with_retry(
+                client,
                 model=model_to_use,
                 messages=messages,
                 temperature=temperature,
@@ -451,50 +528,17 @@ Answer with citations using ONLY the valid IDs listed above:"""
         custom_base_url/custom_api_key: when set, the request goes to that
         OpenAI-compatible endpoint instead of Groq entirely.
         """
-
-        # Hierarchical [Source N.M] builder + allowlist of valid IDs
-        context, allowed_ids = self._build_context(context_chunks, max_context_tokens=4500)
-
-        history_str = self._build_history(conversation_history, max_tokens=500)
-
-        has_images = bool(attached_images) or any((c.get("payload", c) or {}).get("is_image") for c in context_chunks)
-        has_text_context = bool(context.strip())
-        system_prompt = self._build_system_prompt(
-            has_images, has_text_context, agent_prompt=agent_prompt,
-        )
-
-        newline = "\n"
-        history_block = f"Conversation History:{newline}{history_str}{newline}" if history_str else ""
-        ids_list = ", ".join(f"[{i}]" for i in allowed_ids) if allowed_ids else "(none)"
-        allowed_block = (
-            f"VALID CITATION IDS — you may ONLY use these exact markers, no others:\n"
-            f"{ids_list}\n"
-            f"Inventing any other ID (e.g. [1.5] or [2.1] when not listed) is FORBIDDEN.\n\n"
-        )
-        user_prompt = f"""{allowed_block}Context:
-{context}
-
-{history_block}Question: {query}
-
-Answer with citations using ONLY the valid IDs listed above:"""
-        
-        image_paths = self._collect_image_paths(context_chunks)
-        messages, model_to_use = self._build_messages(
-            system_prompt, user_prompt, image_paths,
-            inline_image_data_urls=attached_images,
-            override_model=override_model,
-        )
-        total_images = len(image_paths) + (len(attached_images) if attached_images else 0)
-        logger.info(
-            f"[CHAT LLM STREAM] Selected Model: '{model_to_use}' | Vision Active: {bool(total_images)} "
-            f"({total_images} image(s))"
+        messages, model_to_use = self._prepare_request(
+            query, context_chunks, conversation_history, attached_images,
+            override_model, agent_prompt, log_tag="CHAT LLM STREAM",
         )
 
         try:
             client = self._client_for(
                 groq_api_key, custom_base_url=custom_base_url, custom_api_key=custom_api_key
             )
-            stream = client.chat.completions.create(
+            stream = self._call_with_retry(
+                client,
                 model=model_to_use,
                 messages=messages,
                 temperature=temperature,

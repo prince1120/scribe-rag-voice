@@ -134,12 +134,19 @@ async def _chat_overrides(identity: Identity, x_user_groq_key, x_custom_llm_base
     """
     from app.services import owner_service
 
-    agent = await repositories.get_agent(identity.tenant_id)
+    # Fetched together, and from the config cache. This used to be three
+    # sequential awaits — get_agent, then get_owner, then resolve_credentials
+    # (which itself called get_owner a second time) — all on the critical path
+    # of every chat turn, in front of the LLM call. Four round trips to read two
+    # rows that change only when the owner edits them.
+    agent, workspace = await asyncio.gather(
+        owner_service.cached_agent(identity.tenant_id),
+        owner_service.cached_owner(identity.tenant_id),
+    )
     channel = owner_service.channel_settings(agent, "chat")
 
     agent_prompt = None
     if agent is not None and channel.get("script"):
-        workspace = await repositories.get_owner(identity.tenant_id)
         agent_prompt = owner_service.build_agent_prompt(
             script=channel["script"],
             agent_name=agent.name,
@@ -148,7 +155,10 @@ async def _chat_overrides(identity: Identity, x_user_groq_key, x_custom_llm_base
             style_rules=channel.get("style_rules", True),
         )
 
-    stored = await owner_service.resolve_credentials(identity.tenant_id)
+    # Passes the record it already has, so this does not re-read the same row.
+    stored = await owner_service.resolve_credentials(
+        identity.tenant_id, record=workspace
+    )
     return {
         "agent_prompt": agent_prompt,
         "groq_api_key": x_user_groq_key or stored.get("groq_api_key"),
@@ -437,8 +447,12 @@ async def query_documents(
         # Get conversation history if available
         conversation_history = None
         if body.conversation_id:
-            conversation_history = conversation_service.get_conversation_history(
-                body.conversation_id
+            # Threadpooled: ConversationService uses the synchronous Redis
+            # client, so calling it directly from an async handler blocks the
+            # event loop — and therefore every other in-flight request — for the
+            # duration of the round trip.
+            conversation_history = await run_in_threadpool(
+                conversation_service.get_conversation_history, body.conversation_id
             )
 
         # Hybrid retrieval: dense + BM25 sparse, fused by RRF
@@ -576,8 +590,12 @@ async def query_stream(
         _t = time.time()
         conversation_history = None
         if body.conversation_id:
-            conversation_history = conversation_service.get_conversation_history(
-                body.conversation_id
+            # Threadpooled: ConversationService uses the synchronous Redis
+            # client, so calling it directly from an async handler blocks the
+            # event loop — and therefore every other in-flight request — for the
+            # duration of the round trip.
+            conversation_history = await run_in_threadpool(
+                conversation_service.get_conversation_history, body.conversation_id
             )
         logger.info(f"[timing] conversation history fetch: {(time.time()-_t)*1000:.0f}ms")
 

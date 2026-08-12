@@ -35,7 +35,15 @@ class VectorStoreService:
         self.collection_name = collection_name
         self.vector_size = vector_size
         self._ready = False
-        self._search_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="qdrant-search")
+        # A hybrid search submits two tasks (dense + sparse), so a pool of 2 was
+        # saturated by a single concurrent query — the second user's dense and
+        # sparse lookups queued behind the first user's instead of running in
+        # parallel, which is the entire point of the pool. Sized for ~8
+        # concurrent searches; the work is I/O-bound on Qdrant, so threads here
+        # are cheap.
+        self._search_executor = ThreadPoolExecutor(
+            max_workers=16, thread_name_prefix="qdrant-search"
+        )
         self._init_collection()
 
     def _ensure_ready(self):

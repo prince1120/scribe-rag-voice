@@ -22,9 +22,23 @@ class EmbeddingService:
         return embeddings
     
     def encode_query(self, query: str) -> List[float]:
-        """Encode a single query."""
-        embedding = self.model.encode(query)
-        return embedding.tolist()
+        """Encode a single query, memoised.
+
+        A transformer forward pass runs on every chat turn and every spoken
+        voice turn, and for a business assistant the same handful of questions
+        arrive all day ("what are your hours", "do you deliver"). The embedding
+        is a pure function of the text, so a cache hit is correct indefinitely —
+        there is nothing to invalidate and no TTL to get wrong.
+
+        Normalised first so case and stray whitespace do not each get their own
+        entry; nothing that could change meaning is folded.
+        """
+        from app.services import cache
+
+        return cache.dense_query_cache.get_or_call(
+            cache.normalise_query(query),
+            lambda text: self.model.encode(text).tolist(),
+        )
     
     def encode_documents(self, documents: List[str]) -> List[List[float]]:
         """Encode multiple documents."""

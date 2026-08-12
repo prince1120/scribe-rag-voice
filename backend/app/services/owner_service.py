@@ -483,16 +483,45 @@ async def save_provider_settings(
     return await get_provider_settings(tenant_id)
 
 
-async def resolve_credentials(tenant_id: str) -> dict:
+async def cached_agent(tenant_id: str):
+    """The agent record, cached for the config TTL.
+
+    Read on every chat turn and every voice-token request. Uncached, that was a
+    database round trip in front of the LLM call — and against Supabase's
+    connection pooler a single trivial query has been measured at 3.5s.
+    """
+    from app.services import cache
+
+    return await cache.config_cache.get_or_load(
+        ("agent", tenant_id), lambda: repositories.get_agent(tenant_id)
+    )
+
+
+async def cached_owner(tenant_id: str):
+    """The workspace record, cached for the config TTL. Same reasoning."""
+    from app.services import cache
+
+    return await cache.config_cache.get_or_load(
+        ("owner", tenant_id), lambda: repositories.get_owner(tenant_id)
+    )
+
+
+async def resolve_credentials(tenant_id: str, record=None) -> dict:
     """The actual keys, for server-side use only.
 
     Never goes to a browser. Callers reaching an owner's agent spend that
     owner's quota, which is the point — but it means this must be resolved from
     the workspace rather than from anything the caller sent.
+
+    `record` lets a caller that has already loaded the owner pass it in. Without
+    it this issued its own `get_owner` even when the caller had just fetched the
+    same row a line earlier — which is exactly what the chat path did on every
+    turn, paying for two round trips to read one row.
     """
     from app.services import secrets_box
 
-    record = await repositories.get_owner(tenant_id)
+    if record is None:
+        record = await cached_owner(tenant_id)
     if record is None:
         return {}
 

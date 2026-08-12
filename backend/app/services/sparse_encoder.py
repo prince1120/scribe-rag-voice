@@ -32,9 +32,22 @@ class SparseEncoder:
         return self._encode(list(texts))
 
     def encode_query(self, text: str) -> dict:
-        # Use query embedding for retrieval-time sparsification (different from doc-time)
-        emb = next(self.model.query_embed([text]))
-        return {
-            "indices": emb.indices.tolist(),
-            "values": emb.values.tolist(),
-        }
+        """Sparsify a query, memoised.
+
+        Same reasoning as the dense encoder: pure function of the text, run once
+        per conversational turn, and the same questions recur. See
+        `services/cache.py`.
+        """
+        from app.services import cache
+
+        def _encode_one(query: str) -> dict:
+            # Query-time sparsification, which differs from doc-time.
+            emb = next(self.model.query_embed([query]))
+            return {
+                "indices": emb.indices.tolist(),
+                "values": emb.values.tolist(),
+            }
+
+        return cache.sparse_query_cache.get_or_call(
+            cache.normalise_query(text), _encode_one
+        )

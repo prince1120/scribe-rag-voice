@@ -311,16 +311,18 @@ async def contact_transcript(
     if not record:
         raise HTTPException(status_code=404, detail="Contact not found")
 
-    sessions = await repositories.list_contact_sessions(contact_id)
-    match = next((s for s in sessions if s.session_id == session_id), None)
+    # Two targeted lookups. This used to list every session for the contact and
+    # every conversation for the tenant — eagerly loading all their messages —
+    # and pick the one it wanted in Python, so reading one transcript cost the
+    # whole workspace's chat history.
+    match = await repositories.get_contact_session(session_id, contact_id)
     if match is None or not match.conversation_id:
         # A session with no conversation is a call that connected but produced
         # no turns — an empty transcript, not an error.
         return {"messages": []}
 
-    conversations = await repositories.list_conversations(identity.tenant_id)
-    conversation = next(
-        (c for c in conversations if c.conversation_id == match.conversation_id), None
+    conversation = await repositories.get_conversation(
+        match.conversation_id, identity.tenant_id
     )
     if conversation is None:
         return {"messages": []}
@@ -332,7 +334,7 @@ async def contact_transcript(
                 "content": m.content,
                 "at": m.created_at.isoformat() if m.created_at else None,
             }
-            for m in conversation.messages
+            for m in sorted(conversation.messages, key=lambda m: m.created_at)
         ]
     }
 
