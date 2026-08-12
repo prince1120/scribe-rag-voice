@@ -14,10 +14,12 @@ spawned" flag and cause a duplicate worker on the next reload).
 """
 import asyncio
 import logging
+import socket
 import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 
@@ -47,6 +49,39 @@ _last_seen_alive: float = 0.0
 
 _BACKEND_DIR = Path(__file__).resolve().parents[3]  # .../backend
 _LOG_PATH = _BACKEND_DIR / "voice_worker.log"
+
+# The last process we launched. Kept so a spawn that died on startup can be
+# reported, and so we never stack a second spawn on top of one still running.
+_spawned: "subprocess.Popen | None" = None
+
+
+def _health_port() -> int:
+    """The port the worker's health server binds."""
+    parsed = urlparse(settings.VOICE_WORKER_HEALTH_URL)
+    return parsed.port or 8081
+
+
+def _port_is_occupied() -> bool:
+    """Whether anything at all holds the worker's health port.
+
+    This is the signal the supervisor was missing. `_worker_alive` asks "does
+    the health endpoint return 200", so a worker that is running but *not
+    registered with LiveKit* — which answers 503 — is indistinguishable from no
+    worker at all. The supervisor concluded "dead" and spawned a replacement,
+    which could not bind the port the old one still held, so it crashed on
+    startup with WinError 10048 and left nothing behind but a log line.
+
+    Nothing noticed, so every voice request repeated it. The observed result was
+    ten crash-looping processes, one unregistered worker squatting the port, and
+    calls that connected to a room no agent ever joined: no STT, no TTS, no LLM,
+    and no error anywhere the caller could see.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(0.5)
+        # A successful connect means something is listening. Checked against
+        # loopback rather than 0.0.0.0 because that is where the worker's health
+        # server is reached, and where a stale one would still answer.
+        return probe.connect_ex(("127.0.0.1", _health_port())) == 0
 
 
 async def _probe(timeout: float) -> bool:
@@ -115,7 +150,8 @@ def _spawn_worker() -> None:
         # CREATE_NEW_PROCESS_GROUP still keeps it surviving the parent
         # exiting/reloading and not being killed by Ctrl+C in this console.
         creationflags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
-    subprocess.Popen(
+    global _spawned
+    _spawned = subprocess.Popen(
         [sys.executable, "-m", "app.services.voice.worker_reload"],
         cwd=str(_BACKEND_DIR),
         stdout=log_file,
@@ -125,7 +161,7 @@ def _spawn_worker() -> None:
         close_fds=True,
         start_new_session=(sys.platform != "win32"),
     )
-    logger.info("Spawned voice worker (logs: %s)", _LOG_PATH)
+    logger.info("Spawned voice worker pid=%s (logs: %s)", _spawned.pid, _LOG_PATH)
 
 
 async def ensure_worker_running(wait_for_ready_s: float = 8.0) -> None:
@@ -150,6 +186,30 @@ async def ensure_worker_running(wait_for_ready_s: float = 8.0) -> None:
         # so the question is whether the *other* request's spawn has come up.
         if await _worker_alive(trust_cache=False):
             return
+
+        # The worker is not answering 200, but something holds its port. A new
+        # process cannot bind it, so spawning would produce a process that dies
+        # on startup and changes nothing — which is exactly the loop that
+        # accumulated ten of them. Say what is wrong and stop.
+        if await asyncio.to_thread(_port_is_occupied):
+            logger.error(
+                "A process already holds port %d but its health check is not "
+                "passing, so it is not registered with LiveKit — calls will "
+                "connect to a room no agent joins. A new worker cannot start "
+                "while that port is held, so none is being spawned. Stop the "
+                "stale process and it will be restarted automatically "
+                "(Windows: Get-NetTCPConnection -LocalPort %d -State Listen, "
+                "then Stop-Process -Id <pid> -Force). Worker log: %s",
+                _health_port(), _health_port(), _LOG_PATH,
+            )
+            return
+
+        # A previous spawn that is still running gets time to finish coming up
+        # rather than being stacked on top of.
+        if _spawned is not None and _spawned.poll() is None:
+            logger.info("A voice worker spawn is still starting; not spawning another.")
+            return
+
         now = time.monotonic()
         if now - _last_spawn_attempt < _SPAWN_COOLDOWN_S:
             # A spawn is already in flight from a near-simultaneous request —
@@ -176,6 +236,19 @@ async def ensure_worker_running(wait_for_ready_s: float = 8.0) -> None:
             _last_seen_alive = time.monotonic()
             logger.info(
                 "Voice worker is up and registered (%.1fs)", time.monotonic() - started
+            )
+            return
+
+        # A worker that has already exited is never going to answer, so waiting
+        # out the rest of the deadline only delays the caller and buries the
+        # reason. The previous code waited the full 8s and logged "still not
+        # ready", which described the symptom and named nothing.
+        if _spawned is not None and _spawned.poll() is not None:
+            logger.error(
+                "The voice worker exited immediately (code %s). Calls will "
+                "connect to a room with no agent in it — no speech, no reply. "
+                "The reason is at the end of %s.",
+                _spawned.returncode, _LOG_PATH,
             )
             return
         await asyncio.sleep(0.2)
