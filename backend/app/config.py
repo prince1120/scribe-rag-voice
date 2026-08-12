@@ -142,6 +142,18 @@ class Settings(BaseSettings):
     # be an unpleasant surprise. Set True for a purely ephemeral deployment.
     CLEANUP_INCLUDES_OWNER: bool = False
 
+    # One switch for local development.
+    #
+    # Set LIMITS_ENABLED=false and every cost and abuse ceiling below is turned
+    # off, so a device under test can call as often as it likes. A single flag
+    # rather than seven separate zeroes because the failure being designed
+    # against is forgetting to put one of them back — and the one you forget is
+    # the one that mattered.
+    #
+    # Startup warns loudly whenever this is off (see main.py), so an instance
+    # running unlimited cannot be mistaken for a healthy one.
+    LIMITS_ENABLED: bool = True
+
     # ---- Cost ceilings -------------------------------------------------
     # LiveKit room minutes are billed to the platform and recovered from owners
     # afterwards, so an unbounded call is an unbounded cost carried by us until
@@ -181,6 +193,22 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+if not settings.LIMITS_ENABLED:
+    # Applied here rather than checked at each enforcement point: every call
+    # site already treats 0 as "no ceiling", so zeroing the values means there
+    # is exactly one way a limit can be off, and no site that might forget to
+    # consult the flag.
+    settings.DAILY_CALL_BUDGET = 0
+    settings.DAILY_MINUTE_BUDGET = 0
+    settings.DIRECTORY_MAX_CALL_SECONDS = 0
+    settings.DIRECTORY_IDLE_TIMEOUT_SECONDS = 0
+    settings.DIRECTORY_VELOCITY_MAX_BUSINESSES = 0
+    # Not zero: this is copied onto each contact row as its per-day cap, and a
+    # zero there would read as "no sessions allowed" rather than "no limit".
+    settings.DIRECTORY_SESSIONS_PER_DAY = 1000
+    settings.DIRECTORY_LINK_TTL_DAYS = 365
+    settings.RATE_LIMIT_ENABLED = False
 
 # Session cookies carry the tenant inside the signature, so an unsigned (or
 # guessably-signed) cookie is a full workspace takeover. The passcode gate is

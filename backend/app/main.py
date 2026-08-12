@@ -118,6 +118,17 @@ if not settings.APP_ACCESS_PASSCODE:
         "SESSION_SECRET before deploying anywhere public."
     )
 
+if not settings.LIMITS_ENABLED:
+    logger.warning(
+        "LIMITS_ENABLED is false — every spend and abuse ceiling is OFF. "
+        "No daily budget, no call-length or idle limit, no directory velocity "
+        "check, and no request rate limiting (including on login). One caller "
+        "can drain your LiveKit minutes and an owner's provider quota without "
+        "bound. This is for a development machine only — remove the setting "
+        "before deploying."
+    )
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     """Last line of defence for anything a route didn't catch.
