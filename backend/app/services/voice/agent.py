@@ -10,9 +10,10 @@ import asyncio
 import logging
 import random
 import re
+import unicodedata
 from typing import Optional
 
-from livekit.agents import Agent, llm
+from livekit.agents import Agent, StopResponse, llm
 
 from app.services.voice import rag_client
 from app.services.voice.config import VoiceSettings
@@ -55,6 +56,57 @@ _QUESTION_HINTS = (
     "tell me", "explain", "find", "number", "contact", "detail",
     "can you", "do you", "does it", "is it", "will it",
 )
+
+# Sounds, not words. A turn consisting only of these carries no content for the
+# model to answer, and answering anyway is what produces "Sorry, I didn't catch
+# that — which one would you like?" on repeat.
+#
+# Deliberately tiny, and deliberately not a stopword list. A real answer to a
+# question the agent just asked is very often one word — "yes", "no", "medium",
+# "large", "tomorrow" — and suppressing any of those would be far worse than the
+# bug being fixed: the caller would answer and be met with silence.
+_NON_LEXICAL = {
+    "uh", "um", "uhh", "umm", "hmm", "hm", "mm", "mmm", "ah", "aah",
+    "er", "err", "eh", "huh", "mhm", "uh huh", "hmm hmm",
+}
+
+def _lexical_content(text: str) -> str:
+    """The transcript reduced to its actual words, lowercased.
+
+    Punctuation-only output is common when STT is handed a cough or a door
+    closing: Sarvam returns something like "." or "..." rather than an empty
+    string, which then reads as a real user turn to everything downstream.
+
+    Implemented by removing punctuation, symbols and control characters rather
+    than by keeping "alphanumerics". `str.isalnum()` is False for Unicode
+    combining marks, and Devanagari vowel signs are combining marks — so an
+    isalnum filter turns "मीडियम" into "मडयम", silently corrupting every Hindi
+    transcript it touches. This agent runs Sarvam STT with auto-detect across
+    Indian languages, so that is the common case, not an edge case.
+    """
+    kept = [
+        ch
+        for ch in (text or "")
+        if not unicodedata.category(ch).startswith(("P", "S", "C"))
+    ]
+    return " ".join("".join(kept).lower().split())
+
+
+def _is_empty_turn(text: str) -> bool:
+    """Whether this turn is noise rather than speech.
+
+    A voice call cannot rely on the transcript being meaningful. Silero decides
+    that *sound* happened; Sarvam then transcribes whatever it was. A cough, a
+    breath, or the agent's own audio leaking back produces a turn that is empty,
+    punctuation, or a filler syllable — and the framework hands it to the LLM
+    exactly like a real question.
+
+    The model then answers the only way it can, by asking again. If the noise
+    repeats, so does the loop: observed in a live call as six re-phrasings of
+    "which pizza would you like?" concatenated into one 14.8-second turn.
+    """
+    content = _lexical_content(text)
+    return not content or content in _NON_LEXICAL
 
 
 def _truncate_words(text: str, max_words: int) -> str:
@@ -148,17 +200,40 @@ class VoiceAssistant(Agent):
     async def on_user_turn_completed(
         self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
     ) -> None:
-        """RAG hook: called after each user turn, before the LLM runs. When
-        RAG is enabled *and* this turn actually looks like a question,
-        fetch the most relevant document chunks and inject them as a system
-        message ahead of the reply. Backchannel turns ("okay", "leave it")
-        are skipped entirely — no search, no re-injected context — so the
-        model has nothing prompting it to repeat what was already said."""
+        """Called after each user turn, before the LLM runs.
+
+        Two jobs, in order of severity.
+
+        First: refuse to answer a turn that has no speech in it. Silero reports
+        that *sound* occurred and Sarvam transcribes whatever it was, so a
+        cough, a breath, or room noise arrives here as a turn like "" or "..."
+        or "uh" — and without this the LLM is asked to respond to it. It answers
+        the only way it can, by repeating its question, and if the noise repeats
+        so does the loop. That was observed live as six re-phrasings of "which
+        pizza would you like?" run together into a single 14.8s turn.
+
+        StopResponse ends the turn without generating, which is different from
+        returning early: returning would let the reply proceed.
+
+        Second: when RAG is on and the turn actually looks like a question,
+        fetch document chunks and inject them ahead of the reply. Backchannels
+        ("okay", "leave it") skip the search but still get a reply — they are
+        speech, and ignoring someone who said "okay" is its own bug.
+        """
+        query = new_message.text_content
+
+        if _is_empty_turn(query or ""):
+            logger.info(
+                "Ignoring a turn with no speech in it (%r) — answering it is "
+                "what makes the assistant repeat its question.",
+                (query or "")[:40],
+            )
+            raise StopResponse()
+
         if not self._rag_enabled:
             return
 
-        query = new_message.text_content
-        if not query or not _should_search(query):
+        if not _should_search(query):
             return
 
         fetch_task = asyncio.create_task(

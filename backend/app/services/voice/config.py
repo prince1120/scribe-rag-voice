@@ -219,7 +219,15 @@ class VoiceSettings(BaseSettings):
     # number to raise — 0.4 is a good next step. Note the interaction with
     # VOICE_RESUME_FALSE_INTERRUPTION below: a false cut is cheap to recover
     # from only because the agent resumes.
-    VOICE_INTERRUPTION_MIN_DURATION: float = 0.25
+    #
+    # Raised to 0.4 after exactly that happened on a live call: the agent was
+    # cut mid-question repeatedly, and each false cut produced a noise-only user
+    # turn that the model answered by asking again — six re-phrasings of the
+    # same question in one 14.8s turn. The empty-turn guard in agent.py is the
+    # real fix for the repetition; this reduces how often the cut happens at
+    # all. 0.4 is still well inside "stop the moment I start" for real speech,
+    # and above the length of a breath or a single-syllable room noise.
+    VOICE_INTERRUPTION_MIN_DURATION: float = 0.4
     # After an interruption turns out to be false — you were cut off by a noise
     # and then said nothing for ~2s — resume what was being said.
     #
