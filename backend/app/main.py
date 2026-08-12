@@ -29,6 +29,7 @@ from app.api.session_routes import router as session_router  # noqa: E402
 from app.api.voice_routes import router as voice_router  # noqa: E402
 from app.database import init_db  # noqa: E402
 from app.services.cleanup import run_cleanup_loop  # noqa: E402
+from app.services.storage import storage  # noqa: E402
 from app.services.voice.worker_supervisor import ensure_worker_running  # noqa: E402
 
 
@@ -85,6 +86,14 @@ async def lifespan(app: FastAPI):
         with suppress(asyncio.CancelledError):
             await cleanup_task
 
+        # Storage now holds a pooled HTTP client (see services/storage.py).
+        # Closed explicitly so sockets are torn down before the loop stops,
+        # rather than surfacing as "unclosed client" warnings on every restart.
+        closer = getattr(storage, "aclose", None)
+        if closer is not None:
+            with suppress(Exception):
+                await closer()
+
 
 app = FastAPI(
     title="Production RAG API",
@@ -139,11 +148,26 @@ app.add_middleware(SlowAPIMiddleware)
 
 app.add_middleware(RequestIdMiddleware)
 
-# CORS middleware
+# CORS middleware.
+#
+# There is deliberately no `allow_origin_regex` here. It used to be
+# r"https?://.*", which matches every origin on the internet — combined with
+# allow_credentials=True that made CORS_ORIGINS dead code and let any page the
+# owner happened to visit read their workspace, documents, and contacts using
+# their session cookie. A tunnel/preview origin belongs in CORS_ORIGINS, which
+# is what that list is for.
+if settings.CORS_ORIGIN_REGEX:
+    logger.warning(
+        "CORS_ORIGIN_REGEX is set (%s). Every origin it matches can make "
+        "credentialed requests with the owner's session cookie — keep it "
+        "unset outside local development.",
+        settings.CORS_ORIGIN_REGEX,
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    allow_origin_regex=r"https?://.*",
+    **({"allow_origin_regex": settings.CORS_ORIGIN_REGEX} if settings.CORS_ORIGIN_REGEX else {}),
     allow_credentials=True,
     allow_methods=settings.CORS_METHODS,
     allow_headers=settings.CORS_HEADERS,

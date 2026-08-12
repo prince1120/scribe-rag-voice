@@ -9,6 +9,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { clearWorkspaceCache } from "../lib/workspaceCache";
+
 type AuthMode = "signin" | "signup";
 
 export default function SignInPage() {
@@ -54,6 +56,10 @@ export default function SignInPage() {
       }
 
       const data = await response.json();
+      // Whoever was signed in on this browser before is not who just signed in.
+      // Their cached business name, email, and agent config are in localStorage
+      // and would render for the first second of the new session.
+      clearWorkspaceCache();
       // Business owners land in the console (/dashboard or /agent for fresh setup)
       window.location.href = data.is_business ? (mode === "signup" ? "/agent" : "/dashboard") : "/";
     } catch (err) {

@@ -69,6 +69,12 @@ class ContactRecord(Base):
     owner_tenant_id: Mapped[str] = mapped_column(String(128), index=True, default="default")
     name: Mapped[str] = mapped_column(String(200))
     note: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # How this contact came to exist: "owner" (the owner created the link by
+    # hand) or "directory" (a stranger arrived through the public listing).
+    # Recorded because the two carry different trust — a directory row is
+    # attacker-controllable in everything but its token, so nothing may ever
+    # look one up by an attribute the caller supplied.
+    source: Mapped[str] = mapped_column(String(16), default="owner")
     # "voice" opens straight into a call; "chat" is text only; "both" shows the
     # normal app. A voice-only link is the common case for someone who should
     # just talk and never browse the library.

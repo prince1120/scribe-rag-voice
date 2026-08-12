@@ -32,9 +32,32 @@ def client_ip(request: Request) -> str:
 
 def rate_limit_key(request: Request) -> str:
     """One bucket per caller: the owner's session, a demo visitor's key, or
-    (unauthenticated) their IP."""
+    (unauthenticated) their IP.
+
+    The bucket must be per *tenant*, not per "is authenticated". This returned
+    the literal string "owner" for every valid session, which was correct when
+    there was a single passcode holder and became a shared global quota the
+    moment workspaces went multi-owner: one busy customer spent the
+    20-requests/minute allowance and every other customer got 429s.
+
+    The tenant is inside the signed payload (see session.py), so keying on it
+    costs nothing extra — no database round trip, and it cannot be forged
+    without the signing key.
+    """
     try:
-        verify(request.cookies.get(COOKIE_NAME))
+        payload = verify(request.cookies.get(COOKIE_NAME))
+        kind = payload.get("kind", "owner")
+        if isinstance(kind, str):
+            if kind.startswith("owner:"):
+                return f"owner:{kind.split(':', 1)[1]}"
+            if kind.startswith("contact:"):
+                # Per contact, not per owner: a shared invite link that gets
+                # passed around must not be able to spend the owner's whole
+                # allowance, and one noisy contact must not throttle the rest.
+                parts = kind.split(":", 2)
+                if len(parts) > 1 and parts[1]:
+                    return f"contact:{parts[1]}"
+        # The original single-owner passcode session has no tenant to key on.
         return "owner"
     except SessionError:
         pass

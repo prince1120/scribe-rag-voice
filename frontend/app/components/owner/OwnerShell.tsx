@@ -20,7 +20,7 @@ import {
   ExternalLink,
   Sparkles,
 } from "lucide-react";
-import { useWorkspace } from "../../lib/workspaceCache";
+import { clearWorkspaceCache, useWorkspace } from "../../lib/workspaceCache";
 
 interface NavItem {
   href: string;
@@ -172,6 +172,11 @@ export function OwnerShell({
               } catch {
                 // proceed
               }
+              // Before navigating, not after: the cache is persisted in
+              // localStorage, so without this the next person to sign in on
+              // this browser sees the previous account's business name, email,
+              // and agent config until their own first fetch lands.
+              clearWorkspaceCache();
               window.location.href = "/signin";
             }}
           >

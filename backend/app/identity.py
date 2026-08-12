@@ -13,6 +13,7 @@ A caller now gets exactly one of two identities, and never chooses either:
 Anything else is 401. There is deliberately no fallback tenant.
 """
 import logging
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -124,7 +125,15 @@ def resolve_identity(
 
 
 # Cache the resolved owner tenant id so we don't query the DB on every request.
+#
+# TTL'd rather than permanent. This previously never expired, so the *first*
+# request a process ever served decided which workspace the console showed for
+# the rest of that process's life — including the case where it resolved before
+# the owner had registered, pinning the console to OWNER_TENANT_ID and making a
+# freshly created business look like it had no data until a restart.
 _cached_real_owner_tenant: Optional[str] = None
+_cached_real_owner_expires: float = 0.0
+_REAL_OWNER_TTL_S = 300.0
 
 
 async def _resolve_real_owner_tenant() -> str:
@@ -132,11 +141,20 @@ async def _resolve_real_owner_tenant() -> str:
     so dashboard queries match the data created by directory callers.
 
     Picks the first owner with a real (non-test) email. Falls back to
-    OWNER_TENANT_ID if no such owner exists.
+    OWNER_TENANT_ID if no such owner exists — but does not cache that fallback
+    for long, since "no owner registered yet" is a state that changes.
     """
-    global _cached_real_owner_tenant
-    if _cached_real_owner_tenant is not None:
+    global _cached_real_owner_tenant, _cached_real_owner_expires
+
+    now = time.monotonic()
+    if _cached_real_owner_tenant is not None and now < _cached_real_owner_expires:
         return _cached_real_owner_tenant
+
+    def _remember(tenant: str) -> str:
+        global _cached_real_owner_tenant, _cached_real_owner_expires
+        _cached_real_owner_tenant = tenant
+        _cached_real_owner_expires = time.monotonic() + _REAL_OWNER_TTL_S
+        return tenant
 
     try:
         from app.repositories.owners import get_all_owners
@@ -149,22 +167,19 @@ async def _resolve_real_owner_tenant() -> str:
                 and not owner.email.startswith("test_")
                 and owner.tenant_id != OWNER_TENANT_ID
             ):
-                _cached_real_owner_tenant = owner.tenant_id
                 logger.info("Dev mode: using real owner tenant %s (%s)",
                             owner.tenant_id, owner.email)
-                return _cached_real_owner_tenant
+                return _remember(owner.tenant_id)
 
         # Fallback: any owner with a non-default tenant_id
         for owner in owners:
             if owner.tenant_id != OWNER_TENANT_ID and not owner.tenant_id.startswith("test_"):
-                _cached_real_owner_tenant = owner.tenant_id
                 logger.info("Dev mode: using owner tenant %s", owner.tenant_id)
-                return _cached_real_owner_tenant
+                return _remember(owner.tenant_id)
     except Exception:
-        pass
+        logger.warning("Could not resolve a real owner tenant", exc_info=True)
 
-    _cached_real_owner_tenant = OWNER_TENANT_ID
-    return _cached_real_owner_tenant
+    return _remember(OWNER_TENANT_ID)
 
 
 async def get_identity(
@@ -181,9 +196,28 @@ async def get_identity(
         client_id=x_client_id,
     )
 
-    # When tenant_id is "default", resolve to the actual registered business owner's
-    # tenant dynamically so queries always hit the real data.
-    if identity.is_owner and identity.tenant_id == OWNER_TENANT_ID:
+    # Local-development convenience: resolve the placeholder "default" tenant to
+    # whichever real business owner exists, so seeded data shows up in the
+    # console instead of an empty workspace.
+    #
+    # Gated on the passcode being unset, which is the line between "this
+    # instance is open to anyone" and "this instance is gated". Ungated, this is
+    # a privilege escalation and not a convenience: with a passcode configured,
+    # a legacy single-owner session resolves to OWNER_TENANT_ID, and without
+    # this check that session would be silently upgraded into a *different*,
+    # real business's workspace — full rights over their documents, contacts,
+    # and provider keys.
+    #
+    # Deliberately not gated on DEBUG as well. Without a passcode the app
+    # already hands every anonymous caller owner rights (see resolve_identity,
+    # and the startup warning in main.py), so this remap adds no exposure that
+    # configuration does not already have — while requiring DEBUG would change
+    # which workspace a local console shows and read as "all my data vanished".
+    if (
+        not settings.APP_ACCESS_PASSCODE
+        and identity.is_owner
+        and identity.tenant_id == OWNER_TENANT_ID
+    ):
         real_tenant = await _resolve_real_owner_tenant()
         if real_tenant != OWNER_TENANT_ID:
             return Identity(tenant_id=real_tenant, is_owner=True)

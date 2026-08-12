@@ -65,7 +65,55 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     # column, and SQLite has accepted the TRUE keyword since 3.23. The default
     # is what gives existing agents the rules rather than a null.
     ("agents", "style_rules_enabled", "BOOLEAN NOT NULL DEFAULT true"),
+    # Existing rows all predate the public directory, so they were created by
+    # the owner — which is exactly what the default says.
+    ("contacts", "source", "VARCHAR(16) NOT NULL DEFAULT 'owner'"),
 ]
+
+
+# Composite indexes matching the query shapes this app actually issues.
+#
+# The single-column indexes declared on the models cover the equality half of
+# each query, but every list endpoint is "filter by owner, then ORDER BY a
+# timestamp" — which without a composite means the database finds the rows by
+# index and then sorts them, a cost that grows with how much history a tenant
+# has. These are the shapes, one per line, with the query they serve.
+#
+# Written as raw `CREATE INDEX IF NOT EXISTS` rather than `__table_args__`
+# because `create_all` does not add an index to a table it already sees, and
+# every deployed database already has these tables. The statement is valid and
+# idempotent in both SQLite and Postgres, so this runs on every boot as a no-op.
+_ADDED_INDEXES: list[tuple[str, str]] = [
+    # repositories.list_documents
+    ("ix_documents_tenant_created", "documents (tenant_id, created_at DESC)"),
+    # repositories.list_conversations
+    ("ix_conversations_tenant_updated", "conversations (tenant_id, updated_at DESC)"),
+    # ConversationRecord.messages, always read in chronological order
+    ("ix_messages_conversation_created", "messages (conversation_id, created_at)"),
+    # repositories.list_contacts
+    ("ix_contacts_owner_created", "contacts (owner_tenant_id, created_at DESC)"),
+    # list_contact_sessions, count_sessions_since (the per-day cap, on the
+    # unauthenticated /contacts/open path), and the overview aggregation
+    ("ix_sessions_contact_started", "contact_sessions (contact_id, started_at DESC)"),
+]
+
+
+def _apply_added_indexes(connection) -> None:
+    """Create any missing index from `_ADDED_INDEXES`.
+
+    Failures are logged and skipped for the same reason as the column
+    migrations: a missing index makes queries slower, while refusing to boot
+    makes them impossible.
+    """
+    from sqlalchemy import text
+
+    for name, target in _ADDED_INDEXES:
+        try:
+            connection.execute(
+                text(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            )
+        except Exception:
+            logger.warning("Could not create index %s", name, exc_info=True)
 
 
 def _apply_added_columns(connection) -> None:
@@ -103,4 +151,6 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_apply_added_columns)
+        # After the columns: an index may reference a column added above.
+        await conn.run_sync(_apply_added_indexes)
     logger.info("Database ready (%s)", _safe_url())

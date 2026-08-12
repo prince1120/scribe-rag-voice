@@ -11,8 +11,11 @@ export interface WorkspaceCacheData {
   businessName: string | null;
   businessCategory: string | null;
   email: string | null;
-  status: "deployed" | "draft" | string;
+  status: "deployed" | "draft" | string | null;
   isBusiness: boolean;
+  /** False until the first successful load (from localStorage or the network).
+   *  Consumers render a skeleton rather than placeholder values while false. */
+  loaded: boolean;
   agentConfig?: any;
   voices?: any;
   languages?: any;
@@ -26,14 +29,23 @@ export interface WorkspaceCacheData {
 const STORAGE_KEY = "scribe_workspace_cache_v2";
 const CACHE_TTL_MS = 60_000; // 1 minute background freshness window
 
-let memoryCache: WorkspaceCacheData = {
-  businessName: "Shiro art and craft",
-  businessCategory: "clinic",
-  email: "shiro@mail.com",
-  status: "deployed",
-  isBusiness: true,
+// Empty, not placeholder data. This used to be seeded with a real business's
+// name and email ("Shiro art and craft" / "shiro@mail.com", status "deployed"),
+// which meant every user saw a stranger's identity until the first fetch
+// resolved — and permanently if it failed — while a draft agent rendered as
+// live. The zero-flicker first paint comes from localStorage below, which is
+// this browser's own previously-loaded workspace and is safe to trust.
+const EMPTY_CACHE: WorkspaceCacheData = {
+  businessName: null,
+  businessCategory: null,
+  email: null,
+  status: null,
+  isBusiness: false,
+  loaded: false,
   lastUpdated: 0,
 };
+
+let memoryCache: WorkspaceCacheData = { ...EMPTY_CACHE };
 
 // Initialize memory cache from localStorage on browser boot
 if (typeof window !== "undefined") {
@@ -41,11 +53,25 @@ if (typeof window !== "undefined") {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       const parsed = JSON.parse(stored);
-      memoryCache = { ...memoryCache, ...parsed };
+      memoryCache = { ...memoryCache, ...parsed, loaded: true };
     }
   } catch {
     /* ignore */
   }
+}
+
+/** Drop everything cached for the previous account. Must be called on sign-out
+ *  and sign-in — otherwise the next user briefly sees the last one's business. */
+export function clearWorkspaceCache() {
+  memoryCache = { ...EMPTY_CACHE };
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+  notifyListeners();
 }
 
 type CacheListener = (data: WorkspaceCacheData) => void;
@@ -82,7 +108,7 @@ export function setWorkspaceCache(patch: Partial<WorkspaceCacheData>) {
 /** Revalidate core workspace identity and status in background. */
 export async function revalidateWorkspace(force = false): Promise<WorkspaceCacheData> {
   const isStale = Date.now() - memoryCache.lastUpdated > CACHE_TTL_MS;
-  if (!force && !isStale && memoryCache.businessName) {
+  if (!force && !isStale && memoryCache.loaded) {
     return memoryCache;
   }
 
@@ -96,15 +122,19 @@ export async function revalidateWorkspace(force = false): Promise<WorkspaceCache
 
     if (wsRes.ok) {
       const ws = await wsRes.json();
-      if (ws.business_name) patch.businessName = ws.business_name;
-      if (ws.business_category) patch.businessCategory = ws.business_category;
-      if (ws.email) patch.email = ws.email;
-      patch.isBusiness = ws.is_business ?? true;
+      // Assigned unconditionally, not behind `if (value)`. Guarding on
+      // truthiness meant a workspace that had *cleared* its business name kept
+      // showing the old one forever, because the cache was only ever added to.
+      patch.businessName = ws.business_name ?? null;
+      patch.businessCategory = ws.business_category ?? null;
+      patch.email = ws.email ?? null;
+      patch.isBusiness = ws.is_business ?? false;
+      patch.loaded = true;
     }
 
     if (agRes.ok) {
       const ag = await agRes.json();
-      if (ag.status) patch.status = ag.status;
+      patch.status = ag.status ?? null;
       patch.agentConfig = ag;
     }
 
@@ -133,11 +163,16 @@ export function useWorkspace() {
   }, []);
 
   return {
-    businessName: data.businessName || "Shiro art and craft",
+    businessName: data.businessName,
     businessCategory: data.businessCategory,
-    email: data.email || "shiro@mail.com",
-    status: data.status || "deployed",
-    isLive: (data.status || "deployed") === "deployed",
+    email: data.email,
+    status: data.status,
+    // Defaults to NOT live. An agent whose status hasn't loaded yet is unknown,
+    // and showing "live" for an unknown state is the wrong way round — it tells
+    // an owner their draft assistant is answering calls when it is not.
+    isLive: data.status === "deployed",
+    /** False until real data has arrived — render a skeleton, not a fallback. */
+    loaded: data.loaded,
     agentConfig: data.agentConfig,
     overviewData: data.overviewData,
     contactsData: data.contactsData,

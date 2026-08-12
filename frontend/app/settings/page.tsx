@@ -26,14 +26,18 @@ export default function SettingsPage() {
   const ws = useWorkspace();
   const cached = getWorkspaceCache();
 
-  const [businessName, setBusinessName] = useState<string>(() => cached.businessName || ws.businessName);
+  // `?? ""` rather than a placeholder: these are form fields, and an unloaded
+  // workspace means an empty input, not someone else's business name.
+  const [businessName, setBusinessName] = useState<string>(
+    () => cached.businessName ?? ws.businessName ?? ""
+  );
   const [category, setCategory] = useState<string>(() => cached.businessCategory || "");
   const [categories, setCategories] = useState<Array<{ id: string; label: string }>>(() => cached.categoriesData || []);
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileSaved, setProfileSaved] = useState(false);
   const [profileError, setProfileError] = useState("");
 
-  const [email, setEmail] = useState(() => cached.email || ws.email);
+  const [email, setEmail] = useState<string>(() => cached.email ?? ws.email ?? "");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);

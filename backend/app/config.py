@@ -92,7 +92,13 @@ class Settings(BaseSettings):
     # HMAC key for session cookies. Required whenever APP_ACCESS_PASSCODE is
     # set; startup fails otherwise rather than signing with a guessable key.
     # Rotating it invalidates every existing session.
-    SESSION_SECRET: str = "scribe-default-session-secret-key-32bytes-long"
+    #
+    # Empty by default, and it must stay that way: this previously defaulted to
+    # a literal string, so the guard below ("fail if unset") could never fire
+    # and a gated deployment that forgot to set SESSION_SECRET signed its
+    # cookies with a value published in this repository's git history. Anyone
+    # who read it could mint an owner session.
+    SESSION_SECRET: str = ""
     SESSION_TTL_DAYS: int = 30
 
     # Honour X-Forwarded-For when resolving the client IP for rate limiting.
@@ -138,6 +144,10 @@ class Settings(BaseSettings):
 
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    # Optional regex for origins that cannot be enumerated ahead of time — a
+    # tunnel or preview-deploy domain. Empty in production: whatever this
+    # matches gets to make credentialed requests carrying the owner's cookie.
+    CORS_ORIGIN_REGEX: str = ""
     CORS_METHODS: List[str] = ["GET", "POST", "DELETE", "OPTIONS"]
     CORS_HEADERS: List[str] = ["Content-Type", "Authorization", "X-API-Key"]
 
@@ -149,10 +159,16 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-if settings.APP_ACCESS_PASSCODE and not settings.SESSION_SECRET:
+# Session cookies carry the tenant inside the signature, so an unsigned (or
+# guessably-signed) cookie is a full workspace takeover. The passcode gate is
+# not the only thing that needs this: email/password owner sessions issue the
+# same cookie and work with no passcode configured at all, so the requirement is
+# "anything but local debug", not "passcode is set".
+if not settings.SESSION_SECRET and not settings.DEBUG:
     raise RuntimeError(
-        "SESSION_SECRET must be set when APP_ACCESS_PASSCODE is set — session "
-        "cookies would otherwise be signed with an empty key, making them "
-        "trivial to forge. Generate one with: python -c \"import secrets; "
-        "print(secrets.token_urlsafe(48))\""
+        "SESSION_SECRET must be set. Session cookies would otherwise be signed "
+        "with an empty key, making them trivial to forge — anyone could mint an "
+        "owner session for any workspace. Generate one with: python -c "
+        "\"import secrets; print(secrets.token_urlsafe(48))\"  "
+        "(set DEBUG=true for local development only.)"
     )

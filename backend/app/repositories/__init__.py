@@ -135,6 +135,49 @@ async def append_message(
         await session.commit()
 
 
+async def get_conversation(
+    conversation_id: str, tenant_id: str
+) -> Optional[ConversationRecord]:
+    """One conversation with its messages, scoped by tenant.
+
+    Exists because reading a single transcript used to call `list_conversations`
+    and filter the result in Python — pulling every conversation and every
+    message the tenant has ever had into memory to return one of them. That is
+    fine with three rows and fatal with three thousand.
+
+    `tenant_id` is in the WHERE clause, not checked afterwards, so a guessed
+    conversation id cannot reach another workspace's history.
+    """
+    async with async_session() as session:
+        result = await session.execute(
+            select(ConversationRecord)
+            .where(
+                ConversationRecord.conversation_id == conversation_id,
+                ConversationRecord.tenant_id == tenant_id,
+            )
+            .options(selectinload(ConversationRecord.messages))
+        )
+        return result.scalar_one_or_none()
+
+
+async def get_contact_session(
+    session_id: str, contact_id: str
+) -> Optional[ContactSessionRecord]:
+    """One session, scoped by the contact that owns it.
+
+    Same reasoning: this was a `list_contact_sessions` call followed by a linear
+    scan for a matching id.
+    """
+    async with async_session() as session:
+        result = await session.execute(
+            select(ContactSessionRecord).where(
+                ContactSessionRecord.session_id == session_id,
+                ContactSessionRecord.contact_id == contact_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+
 async def list_conversations(tenant_id: str) -> List[ConversationRecord]:
     async with async_session() as session:
         result = await session.execute(
@@ -151,13 +194,13 @@ async def list_conversations(tenant_id: str) -> List[ConversationRecord]:
 async def create_contact(
     *, contact_id: str, owner_tenant_id: str, name: str, note: Optional[str],
     token_hash: str, pin: Optional[str], expires_at: Optional[datetime],
-    max_sessions_per_day: int, mode: str = "both",
+    max_sessions_per_day: int, mode: str = "both", source: str = "owner",
 ) -> ContactRecord:
     async with async_session() as session:
         record = ContactRecord(
             contact_id=contact_id, owner_tenant_id=owner_tenant_id, name=name,
             note=note, token_hash=token_hash, pin=pin, expires_at=expires_at,
-            max_sessions_per_day=max_sessions_per_day, mode=mode,
+            max_sessions_per_day=max_sessions_per_day, mode=mode, source=source,
         )
         session.add(record)
         await session.commit()
@@ -185,22 +228,12 @@ async def get_contact(contact_id: str, owner_tenant_id: str) -> Optional[Contact
         return result.scalar_one_or_none()
 
 
-async def get_active_contact_by_name(owner_tenant_id: str, name: str) -> Optional[ContactRecord]:
-    """Find an existing active contact by name under this owner tenant."""
-    from sqlalchemy import func
-    async with async_session() as session:
-        result = await session.execute(
-            select(ContactRecord)
-            .where(
-                ContactRecord.owner_tenant_id == owner_tenant_id,
-                func.lower(ContactRecord.name) == name.strip().lower(),
-                ContactRecord.revoked_at.is_(None),
-                ContactRecord.blocked_at.is_(None),
-            )
-            .order_by(ContactRecord.created_at.desc())
-            .limit(1)
-        )
-        return result.scalar_one_or_none()
+# NOTE: there is deliberately no `get_active_contact_by_name`. One existed, and
+# the public `/directory/connect` route used it to find a contact by a
+# caller-supplied name and hand back a freshly rotated token for it — an
+# account takeover against any deployed assistant, since names are not secrets.
+# A contact is identified by its token hash and nothing else. If you need to
+# recognise a returning visitor, key on something they can prove.
 
 
 async def list_contacts(owner_tenant_id: str) -> List[ContactRecord]:
