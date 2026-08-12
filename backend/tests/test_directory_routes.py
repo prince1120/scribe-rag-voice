@@ -47,6 +47,11 @@ async def test_directory_workflow():
     )
     await repositories.set_agent_status(tenant_draft, "draft")
 
+    # Handles are minted for workspaces that appear in the directory; resolve
+    # them up front so the assertions below can key on them.
+    live_handle = await repositories.ensure_public_handle(tenant_live)
+    draft_handle = await repositories.ensure_public_handle(tenant_draft)
+
     try:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -56,21 +61,35 @@ async def test_directory_workflow():
             data = res.json()
             assert "agents" in data
 
-            live_agent = next((a for a in data["agents"] if a["owner_tenant_id"] == tenant_live), None)
+            # The listing publishes an opaque handle, never the tenant id —
+            # the tenant id is the key every other table joins on, so
+            # publishing it handed out a permanent targeting parameter an owner
+            # could not change.
+            for entry in data["agents"]:
+                assert "owner_tenant_id" not in entry, (
+                    "the public directory must not publish tenant ids"
+                )
+                assert entry.get("handle"), "every listed agent needs a handle"
+
+            live_agent = next(
+                (a for a in data["agents"] if a.get("handle") == live_handle), None
+            )
             assert live_agent is not None
             assert live_agent["business_name"] == "Dr. Rao Dental Clinic"
             assert live_agent["agent_name"] == "Asha"
             assert live_agent["business_category"] == "Healthcare"
             assert live_agent["has_voice"] is True
 
-            draft_agent = next((a for a in data["agents"] if a["owner_tenant_id"] == tenant_draft), None)
+            draft_agent = next(
+                (a for a in data["agents"] if a.get("handle") == draft_handle), None
+            )
             assert draft_agent is None
 
             # 2. Connect to live agent
             connect_res = await client.post(
                 "/api/v1/directory/connect",
                 json={
-                    "owner_tenant_id": tenant_live,
+                    "handle": live_handle,
                     "name": "Sunil Kumar",
                     "mode": "voice",
                 },
@@ -85,7 +104,7 @@ async def test_directory_workflow():
             fail_res = await client.post(
                 "/api/v1/directory/connect",
                 json={
-                    "owner_tenant_id": tenant_draft,
+                    "handle": draft_handle,
                     "name": "Guest",
                     "mode": "voice",
                 },

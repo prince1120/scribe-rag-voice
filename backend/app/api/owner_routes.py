@@ -424,3 +424,30 @@ async def delete_agent(identity: Identity = Depends(get_identity)):
     _require_workspace_owner(identity)
     return await owner_service.delete_agent(identity.tenant_id)
 
+
+
+@router.get("/directory-handle")
+async def get_directory_handle(identity: Identity = Depends(get_identity)):
+    """This workspace's public directory handle, minted on first request."""
+    _require_workspace_owner(identity)
+    handle = await repositories.ensure_public_handle(identity.tenant_id)
+    if handle is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    return {"handle": handle}
+
+
+@router.post("/directory-handle/rotate")
+async def rotate_directory_handle(identity: Identity = Depends(get_identity)):
+    """Issue a new public handle and invalidate the old one.
+
+    The remedy when a business is being targeted through the directory: every
+    copy of the old handle stops resolving immediately. Nothing else about the
+    workspace changes — documents, contacts, and invite links the owner sent are
+    all keyed on the tenant id, which is not what the directory publishes.
+    """
+    _require_workspace_owner(identity)
+    handle = await repositories.rotate_public_handle(identity.tenant_id)
+    if handle is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    logger.info("Directory handle rotated for %s", identity.tenant_id)
+    return {"handle": handle}

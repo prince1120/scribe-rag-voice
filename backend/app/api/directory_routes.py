@@ -18,7 +18,7 @@ import logging
 from typing import Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from app import contacts, repositories
@@ -35,15 +35,53 @@ DIRECTORY_SOURCE = "directory"
 
 
 class ConnectRequest(BaseModel):
-    owner_tenant_id: str = Field(min_length=1, max_length=120)
+    # The opaque public handle from /agents, not a tenant id. The tenant id is
+    # the key every other table joins on and is no longer published.
+    handle: str = Field(min_length=8, max_length=32)
     name: Optional[str] = Field(default=None, max_length=100)
     mode: str = Field(default="voice", pattern="^(voice|chat|both)$")
 
 
+# Limits for a caller who arrived from the public directory.
+#
+# Deliberately far tighter than an invite link the owner sent to someone they
+# know. A directory visitor is an unauthenticated stranger whose calls are
+# billed to the owner's own provider keys, so the defaults answer "how much is
+# an owner willing to spend on a person who just walked up" rather than "how
+# much would a customer plausibly use".
+#
+# The per-contact cap is not a budget on its own — /connect can mint contacts —
+# so this bounds a single link, not the total. A per-workspace daily budget is
+# the thing that bounds the total, and is tracked separately.
+DIRECTORY_SESSIONS_PER_DAY = 3
+DIRECTORY_LINK_TTL_DAYS = 1
+
+
+# The listing changes only when an owner deploys, undeploys, or edits their
+# agent — minutes-scale at best — while the endpoint is unauthenticated and
+# therefore trivially hammerable. Served from a short cache so a flood costs one
+# query per minute rather than one per request.
+_LISTING_TTL_S = 60.0
+
+
 @router.get("/agents")
-async def list_public_agents():
-    """List all deployed business agents for public discovery."""
-    agents = await repositories.list_deployed_agents()
+@limiter.limit("30/minute")
+async def list_public_agents(request: Request, response: Response):
+    """Deployed business assistants, for public discovery.
+
+    Publishes an opaque `handle` per business, never the tenant id.
+    """
+    from app.services import cache
+
+    agents = await cache.config_cache.get_or_load(
+        ("directory-listing",),
+        repositories.list_deployed_agents,
+        ttl=_LISTING_TTL_S,
+    )
+    # Lets a CDN or the browser absorb repeat views as well. Short, because a
+    # newly deployed assistant appearing a minute late is fine and an undeployed
+    # one still listed for an hour is not.
+    response.headers["Cache-Control"] = "public, max-age=60"
     return {"agents": agents}
 
 
@@ -65,18 +103,20 @@ async def connect_to_agent(request: Request, body: ConnectRequest):
     same person — the device binding on the link they already hold, which
     `/contacts/open` already enforces.
     """
-    agent = await repositories.get_agent(body.owner_tenant_id)
+    # Resolved from the handle. A rotated handle stops resolving here, which is
+    # what makes rotation an actual remedy rather than cosmetic.
+    owner = await repositories.get_owner_by_handle(body.handle)
+    if owner is None:
+        raise HTTPException(
+            status_code=404,
+            detail="This assistant is no longer available.",
+        )
+
+    agent = await repositories.get_agent(owner.tenant_id)
     if agent is None or agent.status != "deployed":
         raise HTTPException(
             status_code=404,
             detail="This assistant is not currently available or deployed.",
-        )
-
-    owner = await repositories.get_owner(body.owner_tenant_id)
-    if owner is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Business not found.",
         )
 
     caller_name = (body.name or "").strip() or "Guest Caller"
@@ -84,19 +124,19 @@ async def connect_to_agent(request: Request, body: ConnectRequest):
 
     await repositories.create_contact(
         contact_id=str(uuid4()),
-        owner_tenant_id=body.owner_tenant_id,
+        owner_tenant_id=owner.tenant_id,
         name=caller_name,
         note=f"Connected via Public Directory ({body.mode})",
         token_hash=contacts.hash_token(token),
         pin=None,
-        expires_at=contacts.default_expiry(7),  # 7 day default for directory guest links
-        max_sessions_per_day=50,
+        expires_at=contacts.default_expiry(DIRECTORY_LINK_TTL_DAYS),
+        max_sessions_per_day=DIRECTORY_SESSIONS_PER_DAY,
         mode=body.mode,
         source=DIRECTORY_SOURCE,
     )
     logger.info(
         "Directory connect: new guest contact for tenant %s (mode=%s)",
-        body.owner_tenant_id, body.mode,
+        owner.tenant_id, body.mode,
     )
 
     return {

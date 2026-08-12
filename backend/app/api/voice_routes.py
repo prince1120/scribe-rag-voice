@@ -46,6 +46,13 @@ from app.services.voice.worker_supervisor import ensure_worker_running
 
 logger = logging.getLogger(__name__)
 
+# Ceilings applied to a call from a public-directory visitor. Five minutes is a
+# real conversation with a business and well past a nuisance call; thirty
+# seconds of total silence is a line someone opened and walked away from.
+DIRECTORY_SOURCE = "directory"
+DIRECTORY_MAX_CALL_SECONDS = 300
+DIRECTORY_IDLE_TIMEOUT_SECONDS = 30
+
 router = APIRouter()
 
 
@@ -467,6 +474,14 @@ async def create_voice_token(
 
     if conversation_id:
         meta["conversation_id"] = conversation_id
+
+    # Cost ceilings for this call. A caller who arrived through the public
+    # directory is an unauthenticated stranger spending the owner's provider
+    # quota, so their calls are bounded in wall-clock time and hung up if the
+    # line goes quiet. Someone the owner sent a link to is not treated that way.
+    if contact is not None and getattr(contact, "source", "owner") == DIRECTORY_SOURCE:
+        meta["max_call_seconds"] = DIRECTORY_MAX_CALL_SECONDS
+        meta["idle_timeout_seconds"] = DIRECTORY_IDLE_TIMEOUT_SECONDS
 
     if identity.contact_id:
         # Concurrent, not sequential: the session row references the

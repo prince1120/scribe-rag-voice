@@ -249,6 +249,63 @@ async def delete_agent(tenant_id: str) -> None:
 from app.models.db_models import AgentRecord, DocumentRecord, OwnerRecord
 
 
+async def get_owner_by_handle(handle: str) -> Optional[OwnerRecord]:
+    """The workspace behind a public directory handle."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(OwnerRecord).where(OwnerRecord.public_handle == handle)
+        )
+        return result.scalar_one_or_none()
+
+
+def _new_handle() -> str:
+    """A short, unguessable, URL-safe public name.
+
+    Random rather than derived from the business name: a derived handle would be
+    guessable for every business in the directory, which is the property being
+    removed. 16 hex characters is far more than enough to make enumeration
+    pointless while staying short enough to appear in a URL.
+    """
+    import secrets
+
+    return secrets.token_hex(8)
+
+
+async def ensure_public_handle(tenant_id: str) -> Optional[str]:
+    """This workspace's handle, minting one the first time it is needed."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(OwnerRecord).where(OwnerRecord.tenant_id == tenant_id)
+        )
+        record = result.scalar_one_or_none()
+        if record is None:
+            return None
+        if not record.public_handle:
+            record.public_handle = _new_handle()
+            await session.commit()
+        return record.public_handle
+
+
+async def rotate_public_handle(tenant_id: str) -> Optional[str]:
+    """Issue a new handle, invalidating every copy of the old one.
+
+    The remedy for a business being targeted through the directory: every
+    harvested handle stops resolving, and nothing else about the workspace —
+    its documents, contacts, or existing invite links — is affected.
+    """
+    async with async_session() as session:
+        result = await session.execute(
+            select(OwnerRecord).where(OwnerRecord.tenant_id == tenant_id)
+        )
+        record = result.scalar_one_or_none()
+        if record is None:
+            return None
+        record.public_handle = _new_handle()
+        await session.commit()
+        _invalidate(tenant_id)
+        return record.public_handle
+
+
 async def list_deployed_agents() -> List[dict]:
     """Return all businesses that have deployed their assistant.
 
@@ -263,7 +320,19 @@ async def list_deployed_agents() -> List[dict]:
         )
         rows = result.all()
 
+        # One grouped query instead of one per listed agent. This endpoint is
+        # public and unauthenticated, so an N+1 here is a database amplifier
+        # anyone can pull: ten listed businesses meant eleven queries per
+        # request, and it grew with the directory.
+        from sqlalchemy import distinct
+
+        doc_rows = await session.execute(
+            select(distinct(DocumentRecord.tenant_id))
+        )
+        tenants_with_documents = set(doc_rows.scalars().all())
+
         agents = []
+        minted = False
         for agent, owner in rows:
             # Exclude test runner or dummy tenants
             if owner.tenant_id.startswith("test_"):
@@ -273,11 +342,7 @@ async def list_deployed_agents() -> List[dict]:
             if owner.mode != "business" or not (owner.business_name or "").strip():
                 continue
 
-            # Query documents for this owner
-            doc_result = await session.execute(
-                select(DocumentRecord.document_id).where(DocumentRecord.tenant_id == owner.tenant_id)
-            )
-            has_documents = len(doc_result.scalars().all()) > 0
+            has_documents = owner.tenant_id in tenants_with_documents
 
             has_voice = bool((agent.voice_script or agent.script or "").strip())
             has_chat = bool((agent.chat_script or agent.script or "").strip()) and has_documents
@@ -286,8 +351,19 @@ async def list_deployed_agents() -> List[dict]:
             if not (has_voice or has_chat):
                 continue
 
+            # Minted here rather than at signup: a handle is only meaningful
+            # for a workspace that actually appears in the directory, and this
+            # is the one place that decides which those are.
+            if not owner.public_handle:
+                owner.public_handle = _new_handle()
+                minted = True
+
             agents.append({
-                "owner_tenant_id": owner.tenant_id,
+                # `owner_tenant_id` is deliberately NOT published. It is the key
+                # every other table joins on, so publishing it handed out a
+                # permanent targeting parameter that an owner could never
+                # change. The handle is opaque and rotatable.
+                "handle": owner.public_handle,
                 "business_name": owner.business_name.strip(),
                 "business_category": owner.business_category or "Services",
                 "agent_name": (agent.name or "Assistant").strip(),
@@ -298,4 +374,6 @@ async def list_deployed_agents() -> List[dict]:
                 "has_chat": has_chat,
                 "deployed_at": agent.deployed_at.isoformat() if agent.deployed_at else None,
             })
+        if minted:
+            await session.commit()
         return agents

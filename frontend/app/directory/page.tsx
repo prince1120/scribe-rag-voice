@@ -19,7 +19,11 @@ import {
 import { ScribeMark } from "../Logo";
 
 interface AgentCard {
-  owner_tenant_id: string;
+  /** Opaque public identifier. Deliberately not the workspace's tenant id:
+   *  that is the key everything else joins on, and publishing it gave anyone a
+   *  permanent targeting parameter the owner could never change. A handle can
+   *  be rotated from the console if a business gets targeted. */
+  handle: string;
   business_name: string;
   business_category: string;
   agent_name: string;
@@ -105,7 +109,7 @@ export default function DirectoryPage() {
   }, []);
 
   const handleConnect = async (agent: AgentCard, mode: "voice" | "chat") => {
-    setConnectingId(agent.owner_tenant_id);
+    setConnectingId(agent.handle);
     setError("");
     const finalName = callerName.trim() || "Guest Caller";
     if (typeof window !== "undefined" && finalName !== "Guest Caller") {
@@ -117,7 +121,7 @@ export default function DirectoryPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          owner_tenant_id: agent.owner_tenant_id,
+          handle: agent.handle,
           name: finalName,
           mode,
         }),
@@ -346,10 +350,10 @@ export default function DirectoryPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredAgents.map((agent) => {
-              const isConnecting = connectingId === agent.owner_tenant_id;
+              const isConnecting = connectingId === agent.handle;
               return (
                 <div
-                  key={agent.owner_tenant_id}
+                  key={agent.handle}
                   className="rounded-2xl border p-5 flex flex-col justify-between transition-all hover:shadow-md hover:border-[var(--claude-border-strong)]"
                   style={{
                     borderColor: "var(--claude-border)",

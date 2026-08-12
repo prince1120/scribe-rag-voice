@@ -72,6 +72,9 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     # in use, so the default has to be true — anything else would silently
     # switch off every deployed assistant's knowledge on upgrade.
     ("documents", "agent_enabled", "BOOLEAN NOT NULL DEFAULT true"),
+    # Nullable: handles are minted on demand for workspaces that appear in the
+    # directory, so a backfill is neither needed nor correct.
+    ("owners", "public_handle", "VARCHAR(32)"),
 ]
 
 

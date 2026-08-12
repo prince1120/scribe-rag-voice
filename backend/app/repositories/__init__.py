@@ -532,6 +532,9 @@ async def record_voice_transcript(
 # `repositories.<fn>` call sites keep working.
 from app.repositories.owners import (  # noqa: E402,F401
     create_owner,
+    ensure_public_handle,
+    get_owner_by_handle,
+    rotate_public_handle,
     delete_agent,
     get_agent,
     get_owner,

@@ -112,6 +112,19 @@ class VoiceSettings(BaseSettings):
     # pick the conversation back up.
     VOICE_HISTORY_MAX_MESSAGES: int = 8
 
+    # ---- Call cost ceilings -------------------------------------------------
+    # A call runs on the owner's provider keys, so an unbounded one is an
+    # unbounded bill. Both are 0-to-disable, and both are overridden per session
+    # from the token endpoint — a caller who arrived from the public directory
+    # gets far tighter values than someone the owner sent a link to.
+    #
+    # Hard ceiling on wall-clock call length.
+    VOICE_MAX_CALL_SECONDS: int = 0
+    # Ends a call after this much silence with nobody speaking. This is the one
+    # that catches a line left open: a caller who connects and walks away costs
+    # exactly as much as one who is talking, and never hangs up.
+    VOICE_IDLE_TIMEOUT_SECONDS: int = 0
+
     # ---- Latency / turn-taking tuning ---------------------------------
     # These make the agent feel like a real voice assistant: it responds
     # quickly after you stop, starts speaking sooner, and handles barge-in

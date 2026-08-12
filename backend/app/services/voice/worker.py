@@ -47,6 +47,10 @@ if voice_settings.VOICE_SEMANTIC_TURN_DETECTION:
 
 _registry = default_registry()
 
+# Strong references to per-call background tasks. asyncio only holds weak ones,
+# so a task that is not kept here can be collected while still running.
+ctx_tasks: set = set()
+
 
 @dataclass
 class SessionParams:
@@ -104,6 +108,12 @@ def _params_for_job(ctx: JobContext) -> SessionParams:
     if data.get("greeting_text"):
         logger.info("Using caller-selected Greeting Text: %s", data["greeting_text"])
         overrides["VOICE_GREETING_TEXT"] = data["greeting_text"]
+    for key, field in (
+        ("max_call_seconds", "VOICE_MAX_CALL_SECONDS"),
+        ("idle_timeout_seconds", "VOICE_IDLE_TIMEOUT_SECONDS"),
+    ):
+        if data.get(key) is not None:
+            overrides[field] = int(data[key])
     if data.get("temperature") is not None:
         logger.info("Using caller-selected temperature: %s", data["temperature"])
         overrides["VOICE_LLM_TEMPERATURE"] = data["temperature"]
@@ -249,6 +259,8 @@ async def entrypoint(ctx: JobContext) -> None:
     # hello). Wait for the user to actually be in the room so they hear it.
     logger.info("[CONNECT %s] session started at %.2fs", ctx.room.name, _elapsed())
 
+    _enforce_call_ceilings(session, params, ctx.room.name)
+
     if params.settings.VOICE_GREET_ON_CONNECT:
         greeting_text = params.settings.VOICE_GREETING_TEXT or "Hello! How can I help you today?"
         if not ctx.room.remote_participants:
@@ -272,6 +284,66 @@ async def entrypoint(ctx: JobContext) -> None:
             )
         except Exception as e:
             logger.warning("Error playing greeting: %s", e)
+
+
+def _enforce_call_ceilings(session, params: SessionParams, room_name: str) -> None:
+    """End a call that has run too long, or gone quiet and stayed quiet.
+
+    A call bills the owner's provider keys for as long as it is open, so an
+    unbounded call is an unbounded cost — and the two ways that happens are a
+    caller who never hangs up and a caller who connects and walks away. Neither
+    is caught by any per-turn limit, because neither involves any turns.
+
+    Both ceilings are off by default and set per session from the token
+    endpoint, which is where the difference between "someone the owner sent a
+    link to" and "a stranger from the public directory" is known.
+    """
+    max_seconds = params.settings.VOICE_MAX_CALL_SECONDS
+    idle_seconds = params.settings.VOICE_IDLE_TIMEOUT_SECONDS
+    if max_seconds <= 0 and idle_seconds <= 0:
+        return
+
+    last_activity = time.monotonic()
+
+    @session.on("conversation_item_added")
+    def _touch(_event) -> None:  # pragma: no cover - needs a live session
+        nonlocal last_activity
+        last_activity = time.monotonic()
+
+    async def _watch() -> None:
+        started = time.monotonic()
+        while True:
+            await asyncio.sleep(2.0)
+            now = time.monotonic()
+            if max_seconds > 0 and now - started >= max_seconds:
+                logger.info(
+                    "[LIMIT %s] ending call: reached the %ds ceiling",
+                    room_name, max_seconds,
+                )
+                break
+            if idle_seconds > 0 and now - last_activity >= idle_seconds:
+                logger.info(
+                    "[LIMIT %s] ending call: %ds with nobody speaking",
+                    room_name, idle_seconds,
+                )
+                break
+        try:
+            # Said before hanging up: a call that simply goes dead reads as a
+            # dropped connection, and the caller redials — which costs more than
+            # the call that was just ended.
+            await session.say(
+                "We'll have to stop here for now. Thanks for calling, goodbye.",
+                allow_interruptions=False,
+            )
+        except Exception:
+            logger.debug("Could not speak the closing line", exc_info=True)
+        await session.aclose()
+
+    task = asyncio.create_task(_watch())
+    # Held so the task is not garbage collected mid-call, and cancelled with the
+    # job rather than outliving it.
+    ctx_tasks.add(task)
+    task.add_done_callback(ctx_tasks.discard)
 
 
 def prewarm(proc) -> None:

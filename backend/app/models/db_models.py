@@ -188,6 +188,16 @@ class OwnerRecord(Base):
     # Set only by business owners, who need to return daily on devices that may
     # not be theirs. Personal users are identified by the keys they already
     # hold; callers by the link they were sent. Neither ever signs in.
+    # The workspace's public name in the directory. Opaque and rotatable.
+    #
+    # The directory used to publish `tenant_id`, which is also the key every
+    # other table joins on — so the public listing handed out a permanent
+    # targeting parameter, and an owner who got hammered had no way to change it
+    # without abandoning their workspace. Rotating this invalidates every
+    # harvested target while leaving the workspace itself untouched.
+    public_handle: Mapped[Optional[str]] = mapped_column(
+        String(32), unique=True, nullable=True, index=True
+    )
     email: Mapped[Optional[str]] = mapped_column(String(320), unique=True, nullable=True, index=True)
     password_hash: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
 
