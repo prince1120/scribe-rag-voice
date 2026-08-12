@@ -139,3 +139,31 @@ export function useCallQuality(room: Room | null, isLive: boolean) {
 
   return { quality, warning, reset };
 }
+
+/**
+ * A compact always-visible signal reading: bars filled, a label, and a colour.
+ *
+ * Separate from `warning`, which stays silent until something is wrong. Both
+ * exist because they answer different questions: the banner interrupts to say
+ * "this is why the audio is breaking up", while this lets someone glance at the
+ * screen mid-call and see that the connection is being watched at all.
+ *
+ * `Unknown` is reported as connecting rather than as a fault — LiveKit reports
+ * it briefly before the first quality sample arrives, and showing a red bar for
+ * the first second of every call would be a lie.
+ */
+export function signalReading(quality: ConnectionQuality, isLive: boolean) {
+  if (!isLive) return { bars: 0, label: "Offline", tone: "idle" as const };
+  switch (quality) {
+    case ConnectionQuality.Excellent:
+      return { bars: 3, label: "Strong", tone: "good" as const };
+    case ConnectionQuality.Good:
+      return { bars: 2, label: "Good", tone: "good" as const };
+    case ConnectionQuality.Poor:
+      return { bars: 1, label: "Weak", tone: "warn" as const };
+    case ConnectionQuality.Lost:
+      return { bars: 0, label: "Lost", tone: "bad" as const };
+    default:
+      return { bars: 0, label: "Connecting", tone: "idle" as const };
+  }
+}

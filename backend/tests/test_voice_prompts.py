@@ -59,7 +59,10 @@ class TestSpokenDelivery:
         """Without one, a chat-trained model answers a phone call in
         paragraphs. Wording has changed several times; what must survive is
         that some explicit sentence budget is present."""
-        assert "one to three short sentences" in rag_prompt
+        # Case-insensitive: the rule reads better capitalised at the start of a
+        # bullet, and this test exists to prove a sentence budget is stated —
+        # not to pin one capitalisation of it.
+        assert "one to three short sentences" in rag_prompt.lower()
 
     def test_the_length_rule_has_an_escape(self, rag_prompt):
         """A bare cap is what made replies feel shallow — the model would stop

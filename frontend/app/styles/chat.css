@@ -1067,3 +1067,36 @@
      headline wraps onto a second line and pushes the call controls down. */
   .call-network-detail { display: none; }
 }
+
+/* ── Call signal strength ──────────────────────────────────────────────
+   Always visible during a call, unlike the warning banner. Three bars so it
+   reads as a signal meter at a glance without needing the label. */
+.call-signal {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 9px;
+  border-radius: 9999px;
+  border: 1px solid var(--claude-border);
+  background: var(--claude-surface);
+  font-size: 11px; font-weight: 600;
+  line-height: 1;
+}
+.call-signal-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 11px; }
+.call-signal-bars i {
+  display: block; width: 3px; border-radius: 1px;
+  background: var(--claude-border-strong);
+}
+.call-signal-bars i:nth-child(1) { height: 4px; }
+.call-signal-bars i:nth-child(2) { height: 7px; }
+.call-signal-bars i:nth-child(3) { height: 11px; }
+
+.call-signal-good  { color: #15803d; }
+.call-signal-good  .call-signal-bars i.is-on { background: #22c55e; }
+.call-signal-warn  { color: #b45309; border-color: #fed7aa; background: #fffbeb; }
+.call-signal-warn  .call-signal-bars i.is-on { background: #f59e0b; }
+.call-signal-bad   { color: #b91c1c; border-color: #fecaca; background: #fef2f2; }
+.call-signal-bad   .call-signal-bars i.is-on { background: #ef4444; }
+.call-signal-idle  { color: var(--claude-muted); }
+
+/* The label is the redundant half — the bars carry the meaning. Dropped first
+   on narrow screens so the header never wraps. */
+@media (max-width: 380px) { .call-signal-label { display: none; } }

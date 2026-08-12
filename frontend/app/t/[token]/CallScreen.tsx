@@ -14,6 +14,7 @@ import {
 } from "livekit-client";
 import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
 import { MIC_CAPTURE, useAgentStall } from "../../components/voice/useCallQuality";
+import { SignalPill } from "../../components/voice/SignalPill";
 import {
   ChevronDown,
   ChevronUp,
@@ -574,17 +575,23 @@ export function CallScreen({ name }: { name?: string }) {
         )}
 
         {phase === "live" && (
-          <span style={S.timer}>
-            <span
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: 9999,
-                background: "#22c55e",
-                animation: "pulse 1.5s ease-in-out infinite",
-              }}
-            />
-            {formatDuration(seconds)}
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            {/* Connection strength sits beside the timer so both read in one
+                glance on a phone, and so the caller can tell "my network" from
+                "the assistant is stuck" without waiting for a warning. */}
+            <SignalPill quality={quality} isLive />
+            <span style={S.timer}>
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: 9999,
+                  background: "#22c55e",
+                  animation: "pulse 1.5s ease-in-out infinite",
+                }}
+              />
+              {formatDuration(seconds)}
+            </span>
           </span>
         )}
       </header>

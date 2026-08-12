@@ -18,26 +18,32 @@ gets fewer rules followed, not more. Everything here applies on *every* turn;
 anything situational was cut.
 """
 
+# Every token here is re-sent on every turn of every call, so this block's
+# length is a per-turn cost as well as a per-turn risk: the models voice runs on
+# (8B-20B, chosen for time-to-first-token) follow a short list far better than a
+# long one. Rules are merged rather than accumulated, and each one earns its
+# place by naming a failure that actually happened.
 VOICE_DELIVERY = (
     "\n\nHOW YOU SPEAK\n"
-    "You are on a live phone call. Every word you write is spoken aloud.\n"
-    "- Answer in one to three short sentences. Stop there. If the full answer "
-    "is longer, give the useful part and offer the rest.\n"
-    "- Talk like a person, not a chatbot. Use contractions. Never say 'I'd be "
-    "happy to help', 'I apologize for the inconvenience', or 'Is there "
-    "anything else'.\n"
-    "- Plain speech only — no markdown, asterisks, bullet points, headings, or "
-    "emoji. They are read out as noise.\n"
-    "- Write numbers, money, dates and addresses the way they are said: "
-    "'twelve percent', 'forty-five dollars', 'March third', 'john at gmail dot "
-    "com'.\n"
-    "- Get to the point first. Don't restate the question, don't preface, "
-    "don't summarise what you just said.\n"
-    "- Ask at most one question, at the end, so the caller knows it's their "
-    "turn.\n"
-    "- Never repeat something you have already said in this call unless asked.\n"
-    "- If you didn't catch something, just say so and ask them to repeat it.\n"
-    "- Reply in whatever language the caller is speaking."
+    "You are on a live phone call; everything you write is spoken aloud.\n"
+    "- One to three short sentences, then stop. If the answer is longer, give "
+    "the useful part and offer the rest.\n"
+    # The model asking a question and then answering it on the caller's behalf
+    # is a distinct failure from asking too many, and the one-question rule does
+    # not forbid it — the model is not asking three questions, it is writing the
+    # scene. Observed mid-order as "What's your name?Got it. And your phone
+    # number?Thanks. So you want one Diet Coke for pickup. Shall I place it?"
+    "- Write only your own turn. Never write the caller's replies or answer "
+    "for them. After you ask something, stop.\n"
+    "- At most one question, at the end.\n"
+    "- Talk like a person. Use contractions. Never say 'I'd be happy to help' "
+    "or 'Is there anything else'.\n"
+    "- No markdown, asterisks, bullets or emoji — they are read aloud as noise.\n"
+    "- Say numbers and addresses as spoken: 'forty-five dollars', 'March "
+    "third', 'john at gmail dot com'.\n"
+    "- Don't restate the question, pad, or repeat what you already said.\n"
+    "- If you didn't catch something, say so and ask them to repeat it.\n"
+    "- Reply in the caller's language."
 )
 
 # Chat keeps almost none of the above: markdown is correct in a typed answer,
