@@ -333,6 +333,26 @@ def current_context_line(timezone_name: str = "Asia/Kolkata") -> str:
 # would be whichever nobody was testing that week.
 
 
+# Phrases an owner uses when they are naming the assistant themselves. Checked
+# only against the opening of the script, where a persona is declared — "you
+# are" appearing halfway down a list of rules ("if you are unsure, say so") is
+# not someone defining a character.
+_IDENTITY_MARKERS = ("you are ", "you're ", "your name is ", "you act as ")
+_IDENTITY_LOOKAHEAD_CHARS = 400
+
+
+def _states_an_identity(script: str) -> bool:
+    """Whether the owner's script already says who the assistant is.
+
+    Deliberately a cheap textual check rather than a model call: this runs on
+    every voice token request, and being wrong is survivable in both directions
+    — a missed identity means the fallback is appended as before, and a false
+    positive means the assistant is whatever the owner's own words made it.
+    """
+    opening = (script or "").strip().lower()[:_IDENTITY_LOOKAHEAD_CHARS]
+    return any(marker in opening for marker in _IDENTITY_MARKERS)
+
+
 def build_agent_prompt(
     *, script: str, agent_name: str, business_name: Optional[str] = None,
     timezone_name: str = "Asia/Kolkata",
@@ -350,13 +370,27 @@ def build_agent_prompt(
     reads as its primary instruction. An owner who wants a deliberately verbose
     or differently-formatted agent turns the toggle off and owns the result.
     """
-    parts = [script.strip() or DEFAULT_SCRIPT]
+    body = script.strip() or DEFAULT_SCRIPT
+    parts = [body]
 
-    identity = f"\n\nWHO YOU ARE\nYou are {agent_name}"
-    if business_name:
-        identity += f", the assistant for {business_name}"
-    identity += ". Answer as that assistant, never as a general-purpose AI."
-    parts.append(identity)
+    # Only when the owner hasn't already said who the assistant is.
+    #
+    # This block used to be unconditional, which meant a script that opened
+    # "You are PizzaScribe, a friendly pizza ordering assistant" was followed by
+    # "WHO YOU ARE: You are Shiro, the assistant for Shiro art and craft. Answer
+    # as that assistant, never as a general-purpose AI." Two identities, ours
+    # last and phrased as a command — so the model introduced itself as Shiro
+    # selling art supplies to a caller who had reached a pizza line.
+    #
+    # The owner's script is the character; this is a fallback for scripts that
+    # never establish one, which is what the docstring above always intended.
+    # Skipping it also costs nothing: the common case gets a shorter prompt.
+    if not _states_an_identity(body):
+        identity = f"\n\nWHO YOU ARE\nYou are {agent_name}"
+        if business_name:
+            identity += f", the assistant for {business_name}"
+        identity += ". Answer as that assistant, never as a general-purpose AI."
+        parts.append(identity)
 
     parts.append(current_context_line(timezone_name))
 
