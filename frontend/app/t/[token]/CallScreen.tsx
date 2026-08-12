@@ -301,18 +301,47 @@ export function CallScreen({ name }: { name?: string }) {
 
     if (msgs.length === 0) return;
 
+    const body = JSON.stringify({
+      duration_seconds: secondsRef.current,
+      messages: msgs,
+    });
+
+    // `keepalive` so the request survives the page going away. A plain fetch is
+    // cancelled when the document is torn down, which meant refreshing or
+    // closing the tab mid-call silently discarded the whole transcript — the
+    // call showed up in the owner's history with nothing in it.
     try {
       await fetch("/api/v1/voice/record_session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({
-          duration_seconds: secondsRef.current,
-          messages: msgs,
-        }),
+        keepalive: true,
+        body,
       });
     } catch {
       /* ignore */
+    }
+  }, []);
+
+  /** Fire-and-forget save for the unload path, where nothing can be awaited.
+   *  sendBeacon is queued by the browser and delivered after the page is gone;
+   *  it carries same-origin cookies, which is what the session needs. */
+  const persistBeacon = useCallback(() => {
+    const msgs = transcriptsRef.current
+      .filter((t) => t.text.trim())
+      .map((t) => ({ role: t.role, content: t.text.trim() }));
+    if (msgs.length === 0) return;
+
+    try {
+      navigator.sendBeacon?.(
+        "/api/v1/voice/record_session",
+        new Blob(
+          [JSON.stringify({ duration_seconds: secondsRef.current, messages: msgs })],
+          { type: "application/json" }
+        )
+      );
+    } catch {
+      /* nothing useful to do while the page is being destroyed */
     }
   }, []);
 
@@ -516,6 +545,39 @@ export function CallScreen({ name }: { name?: string }) {
       : "Ready to Talk";
 
   // Orb size: smaller on mobile
+  // Guard an accidental refresh or tab close during a live call.
+  //
+  // Refreshing genuinely ends the call — the room connection drops and the
+  // worker closes the session on participant disconnect ("closing agent session
+  // due to participant disconnect" in its log) — so this is not a cosmetic
+  // warning. Cancelling the dialog leaves the call running untouched.
+  //
+  // The wording is the browser's, not ours: every major browser has ignored
+  // custom beforeunload text since ~2017, to stop pages writing scare messages
+  // into a native dialog. So this can ask "are you sure" and cannot say "your
+  // call is still going". The transcript is saved on the way out regardless,
+  // because the caller may well confirm.
+  useEffect(() => {
+    if (phase !== "live") return;
+
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      persistBeacon();
+      event.preventDefault();
+      // Still assigned for older browsers that require it to show the dialog.
+      event.returnValue = "";
+      return "";
+    };
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+    // pagehide covers what beforeunload misses on mobile Safari, where a tab
+    // can be discarded without beforeunload ever firing.
+    window.addEventListener("pagehide", persistBeacon);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("pagehide", persistBeacon);
+    };
+  }, [phase, persistBeacon]);
+
   const orbSize = phase === "live" ? 100 : 120;
 
   // Two different failures, deliberately kept apart. The first is the WebRTC

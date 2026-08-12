@@ -163,16 +163,16 @@ export default function DashboardPage() {
 
   return (
     <OwnerShell>
-      <main style={S.page}>
+      <main style={S.page} className="dash-page">
         {/* ── Top Header ─────────────────────────────────────── */}
-        <header style={S.header}>
+        <header style={S.header} className="dash-header">
           <div>
             <h1 style={S.title}>Workspace Overview</h1>
             <p style={S.subtitle}>
               Real-time call volume, active caller metrics, and conversation history.
             </p>
           </div>
-          <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ display: "flex", gap: 10 }} className="dash-header-actions">
             <button
               type="button"
               onClick={() => {
@@ -199,9 +199,9 @@ export default function DashboardPage() {
         )}
 
         {/* ── Analytics Stat Cards Grid ────────────────────────── */}
-        <div style={S.statsGrid}>
+        <div style={S.statsGrid} className="dash-stats-grid">
           {/* Total Conversations */}
-          <div style={{ ...S.statCard, background: "#f5f3ff", borderColor: "#ddd6fe" }}>
+          <div style={{ ...S.statCard, background: "#f5f3ff", borderColor: "#ddd6fe" }} className="dash-stat-card">
             <div style={S.statTop}>
               <div style={{ ...S.statIconWrap, background: "#ede9fe", color: "#6d28d9" }}>
                 <BarChart3 size={18} />
@@ -217,7 +217,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Voice Calls */}
-          <div style={{ ...S.statCard, background: "#fdf2f8", borderColor: "#fbcfe8" }}>
+          <div style={{ ...S.statCard, background: "#fdf2f8", borderColor: "#fbcfe8" }} className="dash-stat-card">
             <div style={S.statTop}>
               <div style={{ ...S.statIconWrap, background: "#fce7f3", color: "#db2777" }}>
                 <Phone size={18} />
@@ -231,7 +231,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Chat Conversations */}
-          <div style={{ ...S.statCard, background: "#eff6ff", borderColor: "#bfdbfe" }}>
+          <div style={{ ...S.statCard, background: "#eff6ff", borderColor: "#bfdbfe" }} className="dash-stat-card">
             <div style={S.statTop}>
               <div style={{ ...S.statIconWrap, background: "#dbeafe", color: "#2563eb" }}>
                 <MessageSquare size={18} />
@@ -245,7 +245,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Unique Callers */}
-          <div style={{ ...S.statCard, background: "#f0fdf4", borderColor: "#bbf7d0" }}>
+          <div style={{ ...S.statCard, background: "#f0fdf4", borderColor: "#bbf7d0" }} className="dash-stat-card">
             <div style={S.statTop}>
               <div style={{ ...S.statIconWrap, background: "#dcfce7", color: "#16a34a" }}>
                 <Users size={18} />
@@ -260,8 +260,8 @@ export default function DashboardPage() {
         </div>
 
         {/* ── Main Section: Recent Completed Conversations & Calls ──────── */}
-        <section style={S.sectionCard}>
-          <div style={S.sectionHeader}>
+        <section style={S.sectionCard} className="dash-section-card">
+          <div style={S.sectionHeader} className="dash-section-header">
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div style={S.sectionIconWrap}>
                 <Clock size={16} style={{ color: "#4f46e5" }} />
@@ -285,8 +285,8 @@ export default function DashboardPage() {
                 <span>Loading latest analytics and conversation history…</span>
               </div>
               {[1, 2, 3].map((i) => (
-                <div key={i} style={{ ...S.sessionRow, opacity: 0.7 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1 }}>
+                <div key={i} style={{ ...S.sessionRow, opacity: 0.7 }} className="dash-session-row">
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
                     <div style={{ ...S.avatar, background: "#e2e8f0" }} />
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       <div style={{ width: 140, height: 16, background: "#e2e8f0", borderRadius: 4 }} />
@@ -306,10 +306,10 @@ export default function DashboardPage() {
             </div>
           ) : (
             <>
-              <div style={S.sessionsList}>
+              <div style={S.sessionsList} className="dash-sessions-list">
                 {paginatedRecent.map((session, idx) => (
-                  <div key={session.session_id || idx} style={S.sessionRow}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 220 }}>
+                  <div key={session.session_id || idx} style={S.sessionRow} className="dash-session-row">
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flex: 1, minWidth: 0 }} className="dash-session-main">
                       {/* Avatar */}
                       <div
                         style={{
@@ -318,13 +318,14 @@ export default function DashboardPage() {
                           color: session.channel === "voice" ? "#db2777" : "#2563eb",
                           border:
                             session.channel === "voice" ? "1px solid #fbcfe8" : "1px solid #bfdbfe",
+                          marginTop: 2,
                         }}
                       >
                         {initials(session.name || "Guest")}
                       </div>
 
                       {/* Info */}
-                      <div style={S.sessionInfo}>
+                      <div style={S.sessionInfo} className="dash-session-info">
                         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                           <span style={S.sessionName}>{session.name || "Guest Caller"}</span>
                           
@@ -376,6 +377,7 @@ export default function DashboardPage() {
                       type="button"
                       onClick={() => openTranscript(session)}
                       style={S.transcriptBtn}
+                      className="dash-transcript-btn"
                     >
                       <MessageCircle size={14} />
                       <span>View Transcript</span>
@@ -386,7 +388,7 @@ export default function DashboardPage() {
 
               {/* ── Pagination Controls ── */}
               {totalPages > 1 && (
-                <div style={S.paginationRow}>
+                <div style={S.paginationRow} className="dash-pagination-row">
                   <span style={S.paginationText}>
                     Showing {(page - 1) * ITEMS_PER_PAGE + 1}–
                     {Math.min(page * ITEMS_PER_PAGE, recentList.length)} of {recentList.length} talks

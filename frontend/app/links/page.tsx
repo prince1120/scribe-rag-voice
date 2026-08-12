@@ -352,9 +352,9 @@ export default function LinksPage() {
 
   return (
     <OwnerShell>
-      <main style={S.page}>
+      <main style={S.page} className="links-page-wrap">
         {/* ── Header ─────────────────────────────────────────── */}
-        <header style={S.header}>
+        <header style={S.header} className="links-header">
           <div>
             <h1 style={S.title}>People & Call Management</h1>
             <p style={S.subtitle}>
@@ -366,6 +366,7 @@ export default function LinksPage() {
             type="button"
             onClick={() => setShowCreateModal(true)}
             style={S.createBtn}
+            className="links-create-btn"
           >
             <Plus size={16} />
             <span>Create Access Link</span>
@@ -376,7 +377,7 @@ export default function LinksPage() {
 
         {/* Fresh Link Success Card */}
         {freshLink && (
-          <div style={S.freshCard}>
+          <div style={S.freshCard} className="links-fresh-card">
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <Check size={18} style={{ color: "#16a34a" }} />
               <div>
@@ -389,7 +390,7 @@ export default function LinksPage() {
               </div>
             </div>
 
-            <div style={S.freshRow}>
+            <div style={S.freshRow} className="links-fresh-row">
               <input readOnly value={freshLink.url} style={S.freshInput} />
               <button
                 type="button"
@@ -411,9 +412,9 @@ export default function LinksPage() {
         )}
 
         {/* ── Tabs & Filter Bar ──────────────────────────────── */}
-        <div style={S.toolbar}>
+        <div style={S.toolbar} className="links-toolbar">
           {/* Search Box */}
-          <div style={S.searchBox}>
+          <div style={S.searchBox} className="links-search-box">
             <Search size={16} style={{ color: "#94a3b8" }} />
             <input
               value={search}
@@ -427,7 +428,7 @@ export default function LinksPage() {
           </div>
 
           {/* Filter Pills */}
-          <div style={S.filterPills}>
+          <div style={S.filterPills} className="links-filter-pills">
             {(["all", "active", "blocked", "revoked"] as const).map((f) => (
               <button
                 key={f}
@@ -463,7 +464,7 @@ export default function LinksPage() {
                   opacity: 0.75,
                 }}
               >
-                <div style={S.contactTop}>
+                <div style={S.contactTop} className="links-contact-top">
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                     <div style={{ ...S.avatar, background: "#e2e8f0" }} />
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -491,7 +492,7 @@ export default function LinksPage() {
           </div>
         ) : (
           <>
-            <div style={S.contactsList}>
+            <div style={S.contactsList} className="links-contacts-list">
               {paginatedContacts.map((contact) => {
                 const isSessionsOpen = openSessionsMap[contact.contact_id] !== undefined;
                 const contactSessions = openSessionsMap[contact.contact_id] || [];
@@ -499,12 +500,12 @@ export default function LinksPage() {
                 const talksCount = typeof contact.session_count === "number" ? contact.session_count : 0;
 
                 return (
-                  <div key={contact.contact_id} style={S.contactCard}>
-                    <div style={S.contactTop}>
+                  <div key={contact.contact_id} style={S.contactCard} className="links-contact-card">
+                    <div style={S.contactTop} className="links-contact-top">
                       {/* Caller Avatar & Name */}
-                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
                         <div style={S.avatar}>{initials(contact.name)}</div>
-                        <div>
+                        <div style={{ minWidth: 0, flex: 1 }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                             <span style={S.contactName}>{contact.name}</span>
 
@@ -555,7 +556,7 @@ export default function LinksPage() {
                       </div>
 
                       {/* Action Buttons */}
-                      <div style={S.actionsRow}>
+                      <div style={S.actionsRow} className="links-actions-row">
                         <button
                           type="button"
                           onClick={() => toggleSessions(contact.contact_id)}
@@ -608,7 +609,7 @@ export default function LinksPage() {
 
                     {/* Expanded Sessions Drawer for this Contact */}
                     {isSessionsOpen && (
-                      <div style={S.sessionsDrawer}>
+                      <div style={S.sessionsDrawer} className="links-sessions-drawer">
                         <div style={S.drawerHeader}>
                           <span style={S.drawerTitle}>
                             Recorded Conversations for {contact.name}
@@ -628,7 +629,7 @@ export default function LinksPage() {
                             No completed call or chat conversations recorded yet for this person.
                           </p>
                         ) : (
-                          <div style={S.sessionListGrid}>
+                          <div style={S.sessionListGrid} className="links-session-grid">
                             {contactSessions.map((session) => (
                               <div key={session.session_id} style={S.sessionCardItem}>
                                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -651,7 +652,7 @@ export default function LinksPage() {
                                   </span>
                                 </div>
 
-                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8 }}>
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8, gap: 8, flexWrap: "wrap" }}>
                                   <span style={{ fontSize: 11, color: "#64748b" }}>
                                     {session.message_count ? `${session.message_count} dialogue turns` : "Live Talk"}
                                   </span>
@@ -677,7 +678,7 @@ export default function LinksPage() {
 
             {/* Pagination Controls */}
             {totalPages > 1 && (
-              <div style={S.paginationRow}>
+              <div style={S.paginationRow} className="links-pagination-row">
                 <span style={S.paginationText}>
                   Showing {(page - 1) * ITEMS_PER_PAGE + 1}–
                   {Math.min(page * ITEMS_PER_PAGE, filteredContacts.length)} of {filteredContacts.length} callers
