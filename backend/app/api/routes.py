@@ -13,6 +13,7 @@ from app.models.schemas import (
     QueryRequest, QueryResponse, DocumentUploadResponse,
     Conversation, ConversationMessage, HealthResponse, SourceCitation,
     PasteTextRequest, DocumentContentResponse, DocumentContentUpdate,
+    DocumentEnabledUpdate,
 )
 from app.config import settings
 from app.logging_config import request_id_ctx
@@ -181,6 +182,60 @@ async def _chat_overrides(identity: Identity, x_user_groq_key, x_custom_llm_base
     }
 
 
+class NoDocumentsSelected(Exception):
+    """The assistant has no documents to answer from — not an error."""
+
+
+def _invalidate_document_selection(tenant_id: str) -> None:
+    """Drop the cached selection after anything that changes which documents
+    exist or are switched on.
+
+    Called from upload, delete, and the toggle. A stale entry here is not a
+    cosmetic problem: it means a document the owner just switched off keeps
+    being quoted, or one they just uploaded appears not to work — for as long as
+    the TTL lasts.
+    """
+    from app.services import cache
+
+    cache.config_cache.invalidate(("docs", tenant_id))
+
+
+async def selected_document_ids(
+    tenant_id: str, requested: Optional[List[str]] = None
+) -> List[str]:
+    """Which documents this turn may retrieve from.
+
+    The owner's selection is the ceiling and it is applied server-side. A
+    caller's `document_ids` can only ever *narrow* it, never widen it: that
+    field is client-supplied, so without this a shared chat link could name any
+    document id in the workspace — including ones the owner had deliberately
+    switched off — or omit the field entirely and get everything.
+
+    Raises NoDocumentsSelected when the result is empty, because an empty
+    document filter and "no filter at all" are opposite instructions to the
+    vector store: passing `document_ids=[]` builds no condition and searches the
+    whole tenant, which is precisely the leak this function exists to prevent.
+    """
+    from app.services import cache
+
+    enabled = await cache.config_cache.get_or_load(
+        ("docs", tenant_id),
+        lambda: repositories.list_enabled_document_ids(tenant_id),
+    )
+    enabled = enabled or []
+    if not enabled:
+        raise NoDocumentsSelected()
+
+    if requested:
+        allowed = set(enabled)
+        narrowed = [d for d in requested if d in allowed]
+        if not narrowed:
+            raise NoDocumentsSelected()
+        return narrowed
+
+    return list(enabled)
+
+
 async def _resolve_image_paths(results: List[dict]) -> None:
     """Give retrieved image chunks a readable local path, in place.
 
@@ -332,6 +387,10 @@ async def _ingest_file(
             file_size=file_size,
             chunk_count=len(chunks),
         )
+        # The new document is enabled by default, so the cached selection is now
+        # wrong — without this the assistant would not see it until the TTL
+        # lapsed, which reads as "uploading did nothing".
+        _invalidate_document_selection(tenant_id)
 
         return DocumentUploadResponse(
             document_id=document_id,
@@ -466,6 +525,24 @@ async def query_documents(
         # Demo sessions (pasted Groq key) get a fixed, smaller top_k regardless
         # of what the client requests.
         final_top_k = settings.DEMO_TOP_K if x_user_groq_key else (body.top_k or settings.RETRIEVAL_TOP_K)
+
+        try:
+            allowed_documents = await selected_document_ids(
+                tenant_id, body.document_ids
+            )
+        except NoDocumentsSelected:
+            return QueryResponse(
+                answer=(
+                    "I don't have any documents to answer from yet. Add one in "
+                    "your assistant's settings, or select one you've already "
+                    "uploaded."
+                ),
+                citations=[],
+                conversation_id=body.conversation_id or "",
+                processing_time_ms=int((time.time() - start_time) * 1000),
+                retrieval_ms=int((time.time() - start_time) * 1000),
+            )
+
         # Over-fetch from hybrid retrieval, then narrow via cross-encoder rerank
         hybrid_results = await run_in_threadpool(
             vector_store.search,
@@ -474,7 +551,7 @@ async def query_documents(
             limit=max(final_top_k * 3, 20),
             tenant_id=tenant_id,
             filters=body.filters,
-            document_ids=body.document_ids,
+            document_ids=allowed_documents,
         )
 
         # Cross-encoder rerank for final ordering
@@ -612,6 +689,24 @@ async def query_stream(
         # Demo sessions (pasted Groq key) get a fixed, smaller top_k regardless
         # of what the client requests.
         final_top_k = settings.DEMO_TOP_K if x_user_groq_key else (body.top_k or settings.RETRIEVAL_TOP_K)
+
+        try:
+            allowed_documents = await selected_document_ids(
+                tenant_id, body.document_ids
+            )
+        except NoDocumentsSelected:
+            msg = json.dumps({
+                "text": (
+                    "I don't have any documents to answer from yet. Add one in "
+                    "your assistant's settings, or select one you've already "
+                    "uploaded."
+                )
+            })
+            return StreamingResponse(
+                iter([f"data: {msg}\n\n", "data: [DONE]\n\n"]),
+                media_type="text/event-stream",
+            )
+
         _t = time.time()
         hybrid_results = await run_in_threadpool(
             vector_store.search,
@@ -620,7 +715,7 @@ async def query_stream(
             limit=max(final_top_k * 3, 20),
             tenant_id=tenant_id,
             filters=body.filters,
-            document_ids=body.document_ids,
+            document_ids=allowed_documents,
         )
         logger.info(f"[timing] vector_store.search total: {(time.time()-_t)*1000:.0f}ms")
 
@@ -776,9 +871,38 @@ async def get_documents(
             status=r.status,
             message="",
             chunk_count=r.chunk_count,
+            agent_enabled=bool(getattr(r, "agent_enabled", True)),
         )
         for r in records
     ]
+
+
+@router.patch(
+    "/documents/{document_id}/enabled",
+    dependencies=[Depends(verify_api_key)],
+)
+async def set_document_enabled(
+    document_id: str,
+    body: DocumentEnabledUpdate,
+    identity: Identity = Depends(get_identity),
+):
+    """Include or exclude one document from the owner's assistant.
+
+    Owner-only, via the same check that guards upload and delete: a contact
+    reaches this route with a valid session scoped to the owner's tenant, so
+    without it an invite link could switch off the documents it is supposed to
+    be answering from.
+    """
+    await _require_document_manager(identity)
+    tenant_id = identity.tenant_id
+
+    if not await repositories.set_document_enabled(
+        document_id, tenant_id, body.enabled
+    ):
+        raise HTTPException(status_code=404, detail="Document not found or access denied")
+
+    _invalidate_document_selection(tenant_id)
+    return {"document_id": document_id, "agent_enabled": body.enabled}
 
 
 @router.get("/conversations", response_model=List[Conversation], dependencies=[Depends(verify_api_key)])
@@ -834,6 +958,7 @@ async def delete_document(
         await run_in_threadpool(vector_store.delete_by_document, document_id, tenant_id)
         await storage.delete(build_key(document_id, record.filename))
         await repositories.delete_document_record(document_id, tenant_id)
+        _invalidate_document_selection(tenant_id)
         return {"status": "deleted", "document_id": document_id}
     except Exception as e:
         logger.error(f"Error deleting document: {e}")

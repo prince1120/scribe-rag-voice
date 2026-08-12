@@ -23,6 +23,17 @@ class DocumentRecord(Base):
     file_size: Mapped[int] = mapped_column(Integer, default=0)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(32), default="processed")
+    # Whether the owner's assistant may answer from this document.
+    #
+    # A boolean rather than a join table because there is exactly one agent per
+    # owner (see AgentRecord.tenant_id, which is unique) — a contacts-style
+    # many-to-many would model a relationship this product does not have yet,
+    # and the migration to one is easy if that changes.
+    #
+    # Defaults to True so uploading a document is enough to use it: an owner who
+    # adds a price list and finds the assistant does not know about it has been
+    # given a puzzle, not a setting. Turning it off is the deliberate act.
+    agent_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 

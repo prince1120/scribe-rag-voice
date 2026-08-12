@@ -16,6 +16,9 @@ interface Doc {
   filename: string;
   status: string;
   chunk_count: number;
+  /** Whether the assistant may answer from this document. Enforced on the
+   *  server — this checkbox reflects that state, it does not decide it. */
+  agent_enabled: boolean;
 }
 
 export function AgentDocuments({
@@ -86,6 +89,36 @@ export function AgentDocuments({
     [docs.length, max, load]
   );
 
+  async function toggle(documentId: string, enabled: boolean) {
+    // Optimistic: the checkbox responds immediately and is reverted if the
+    // request fails. A round trip before the tick moves reads as a broken
+    // control, and this is a setting people flip while comparing answers.
+    setDocs((prev) =>
+      prev.map((d) =>
+        d.document_id === documentId ? { ...d, agent_enabled: enabled } : d
+      )
+    );
+    setError("");
+    try {
+      const response = await ownerFetch(
+        `/api/v1/documents/${encodeURIComponent(documentId)}/enabled`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled }),
+        }
+      );
+      if (!response.ok) throw new Error();
+    } catch {
+      setDocs((prev) =>
+        prev.map((d) =>
+          d.document_id === documentId ? { ...d, agent_enabled: !enabled } : d
+        )
+      );
+      setError("Could not change that document. Try again.");
+    }
+  }
+
   async function remove(documentId: string, filename: string) {
     if (!window.confirm(`Remove ${filename} from your assistant?`)) return;
     try {
@@ -108,7 +141,7 @@ export function AgentDocuments({
       <p className="agent-hint">
         What your assistant knows — an FAQ, price list, or policy sheet. Keep
         them short and specific; a few focused pages answer better than a
-        manual.
+        manual. Untick one to keep it uploaded but leave it out of answers.
       </p>
 
       {!full && (
@@ -152,26 +185,45 @@ export function AgentDocuments({
           No documents yet. Your assistant will answer from its prompt alone.
         </p>
       ) : (
-        <ul className="agent-docs">
-          {docs.map((doc) => (
-            <li key={doc.document_id} className="agent-doc">
-              <span className="agent-doc-name">{doc.filename}</span>
-              <span className="agent-doc-meta">
-                {doc.status === "processed"
-                  ? `${doc.chunk_count} section${doc.chunk_count === 1 ? "" : "s"}`
-                  : doc.status}
-              </span>
-              <button
-                type="button"
-                className="agent-doc-remove ds-pressable ds-tap"
-                onClick={() => remove(doc.document_id, doc.filename)}
-                aria-label={`Remove ${doc.filename}`}
+        <>
+          <ul className="agent-docs">
+            {docs.map((doc) => (
+              <li
+                key={doc.document_id}
+                className={`agent-doc ${doc.agent_enabled ? "" : "is-off"}`}
               >
-                Remove
-              </button>
-            </li>
-          ))}
-        </ul>
+                <label className="agent-doc-toggle">
+                  <input
+                    type="checkbox"
+                    checked={doc.agent_enabled}
+                    onChange={(e) => void toggle(doc.document_id, e.target.checked)}
+                    aria-label={`Use ${doc.filename} in answers`}
+                  />
+                  <span className="agent-doc-name">{doc.filename}</span>
+                </label>
+                <span className="agent-doc-meta">
+                  {doc.status === "processed"
+                    ? `${doc.chunk_count} section${doc.chunk_count === 1 ? "" : "s"}`
+                    : doc.status}
+                </span>
+                <button
+                  type="button"
+                  className="agent-doc-remove ds-pressable ds-tap"
+                  onClick={() => remove(doc.document_id, doc.filename)}
+                  aria-label={`Remove ${doc.filename}`}
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+          {docs.every((d) => !d.agent_enabled) && (
+            <p className="agent-hint">
+              Every document is switched off, so your assistant will answer from
+              its prompt alone.
+            </p>
+          )}
+        </>
       )}
     </section>
   );

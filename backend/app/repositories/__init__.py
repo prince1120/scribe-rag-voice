@@ -56,6 +56,46 @@ async def get_document_record(document_id: str, tenant_id: str) -> Optional[Docu
         return result.scalar_one_or_none()
 
 
+async def list_enabled_document_ids(tenant_id: str) -> List[str]:
+    """The documents this tenant's assistant is allowed to answer from.
+
+    Read on every chat and voice turn, and it is the enforcement point for
+    document selection — so it returns ids rather than rows, and the caller
+    turns them into a vector-store filter. Selecting nothing means the assistant
+    answers from its prompt alone, which is a legitimate configuration and must
+    not be confused with "no filter".
+    """
+    async with async_session() as session:
+        result = await session.execute(
+            select(DocumentRecord.document_id).where(
+                DocumentRecord.tenant_id == tenant_id,
+                DocumentRecord.agent_enabled.is_(True),
+            )
+        )
+        return list(result.scalars().all())
+
+
+async def set_document_enabled(
+    document_id: str, tenant_id: str, enabled: bool
+) -> bool:
+    """Include or exclude one document from the assistant. False if not found.
+
+    `tenant_id` is in the WHERE clause, so an owner cannot toggle a document
+    belonging to someone else by guessing an id.
+    """
+    async with async_session() as session:
+        result = await session.execute(
+            update(DocumentRecord)
+            .where(
+                DocumentRecord.document_id == document_id,
+                DocumentRecord.tenant_id == tenant_id,
+            )
+            .values(agent_enabled=enabled)
+        )
+        await session.commit()
+        return result.rowcount > 0
+
+
 async def update_document(document_id: str, tenant_id: str, chunk_count: int, file_size: int) -> None:
     async with async_session() as session:
         result = await session.execute(

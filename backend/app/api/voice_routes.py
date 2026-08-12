@@ -173,11 +173,26 @@ async def voice_retrieve(body: VoiceRetrieveRequest) -> dict:
     # Imported lazily to reuse the singletons the API server already built at
     # startup (avoids a second copy of the embedding/reranker models).
     from app.api.routes import (
+        NoDocumentsSelected,
         embedding_service,
         reranker,
+        selected_document_ids,
         sparse_encoder,
         vector_store,
     )
+
+    # Voice previously applied no document filter at all, so a call answered
+    # from every document in the workspace regardless of what the owner had
+    # selected — the same assistant behaved differently by channel, which is the
+    # thing the per-channel work was meant to stop.
+    try:
+        allowed_documents = await selected_document_ids(body.tenant_id)
+    except NoDocumentsSelected:
+        # No chunks rather than an error: the agent falls back to answering from
+        # its prompt, which is a supported configuration for voice (rag_enabled
+        # is a per-agent toggle). Failing the call would be worse than a
+        # slightly less informed answer.
+        return {"chunks": []}
 
     top_k = body.top_k or voice_settings.VOICE_RAG_TOP_K
     query_embedding, sparse_query = await asyncio.gather(
@@ -194,6 +209,7 @@ async def voice_retrieve(body: VoiceRetrieveRequest) -> dict:
         sparse_vector=sparse_query,
         limit=max(top_k * 3, 10),
         tenant_id=body.tenant_id,
+        document_ids=allowed_documents,
     )
     results = await run_in_threadpool(reranker.rerank, query, hybrid, top_k=top_k)
     chunks = [

@@ -68,6 +68,10 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     # Existing rows all predate the public directory, so they were created by
     # the owner — which is exactly what the default says.
     ("contacts", "source", "VARCHAR(16) NOT NULL DEFAULT 'owner'"),
+    # Existing documents were all uploaded before selection existed and were all
+    # in use, so the default has to be true — anything else would silently
+    # switch off every deployed assistant's knowledge on upgrade.
+    ("documents", "agent_enabled", "BOOLEAN NOT NULL DEFAULT true"),
 ]
 
 

@@ -980,10 +980,24 @@
   border: 1px solid var(--claude-border); border-radius: var(--radius-md);
   background: var(--claude-surface);
 }
+/* The checkbox and the filename are one hit target: the name is the label, so
+   clicking either toggles. `flex: 1` moves here from .agent-doc-name because
+   the label is now the growing child. */
+.agent-doc-toggle {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: var(--space-3);
+  cursor: pointer;
+}
+.agent-doc-toggle input { flex: none; cursor: pointer; accent-color: var(--claude-accent); }
 .agent-doc-name {
-  flex: 1; min-width: 0; font-size: var(--text-sm);
+  min-width: 0; font-size: var(--text-sm);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* A document that is uploaded but excluded. Dimmed rather than hidden — the
+   owner needs to see that it is still stored, otherwise "off" is
+   indistinguishable from "deleted". */
+.agent-doc.is-off { background: transparent; border-style: dashed; }
+.agent-doc.is-off .agent-doc-name { color: var(--claude-muted); }
 .agent-doc-meta { font-size: var(--text-xs); color: var(--claude-muted); white-space: nowrap; }
 .agent-doc-remove {
   padding: var(--space-1) var(--space-3); border-radius: var(--radius-sm);
@@ -995,7 +1009,7 @@
 
 @media (max-width: 640px) {
   .agent-doc { flex-wrap: wrap; }
-  .agent-doc-name { flex: 1 1 100%; }
+  .agent-doc-toggle { flex: 1 1 100%; }
 }
 
 /* ---- Inline agent test ---------------------------------------------------- */

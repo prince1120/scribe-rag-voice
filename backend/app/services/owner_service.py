@@ -614,8 +614,12 @@ async def available_channels(tenant_id: str) -> dict:
     from app import repositories
 
     agent = await repositories.get_agent(tenant_id)
-    documents = await repositories.list_documents(tenant_id)
-    has_documents = len(documents) > 0
+    # Enabled documents, not all of them. Chat answers from the selection, so an
+    # owner who switched everything off has a chat channel that would reply "I
+    # don't have that" to every question — which is the exact situation this
+    # function exists to refuse to offer.
+    enabled_ids = await repositories.list_enabled_document_ids(tenant_id)
+    has_documents = len(enabled_ids) > 0
 
     def has_prompt(channel: str) -> bool:
         return bool((channel_settings(agent, channel) or {}).get("script"))
@@ -627,13 +631,16 @@ async def available_channels(tenant_id: str) -> dict:
         if not has_prompt("chat"):
             return "Write a chat prompt to enable it."
         if not has_documents:
-            return "Chat answers from your documents. Add one to enable it."
+            return (
+                "Chat answers from your documents. Add one — or switch one back "
+                "on — to enable it."
+            )
         return None
 
     return {
         "voice": voice_ready,
         "chat": chat_ready,
-        "document_count": len(documents),
+        "document_count": len(enabled_ids),
         "voice_blocked_reason": (
             None if voice_ready else "Write a voice prompt to enable it."
         ),

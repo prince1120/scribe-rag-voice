@@ -94,6 +94,13 @@ class DocumentUploadResponse(BaseModel):
     status: str
     message: str
     chunk_count: Optional[int] = None
+    # Whether the owner's assistant may answer from this document. Defaults to
+    # True to match the column default — a freshly uploaded document is in use.
+    agent_enabled: bool = True
+
+
+class DocumentEnabledUpdate(BaseModel):
+    enabled: bool
 
 
 class ConversationMessage(BaseModel):
