@@ -35,6 +35,14 @@ export default function ContactLinkPage() {
       }
 
       setSubmitting(true);
+      // Bounded, because this page has exactly one job and no way to recover if
+      // it never finishes. A phone freezes a backgrounded tab, and a fetch
+      // caught by that can stay pending indefinitely after the tab is restored
+      // — leaving "Opening your link…" on screen forever, which is what a
+      // caller who pressed Home and came back actually saw. The spinner only
+      // ends when this promise settles, so it has to be made to settle.
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
       try {
         const response = await fetch("/api/v1/contacts/open", {
           method: "POST",
@@ -43,6 +51,7 @@ export default function ContactLinkPage() {
           // travel or the session is minted and immediately thrown away.
           credentials: "include",
           body: JSON.stringify({ token, pin: withPin || undefined }),
+          signal: controller.signal,
         });
 
         if (response.status === 401) {
@@ -73,6 +82,7 @@ export default function ContactLinkPage() {
         setState("error");
         setMessage("Could not reach the server. Check your connection and try again.");
       } finally {
+        clearTimeout(timeout);
         setSubmitting(false);
       }
     },
@@ -85,6 +95,35 @@ export default function ContactLinkPage() {
     // record a duplicate session every time this component re-rendered.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Recover when the tab comes back.
+  //
+  // Returning to a backgrounded tab either restores it from the back-forward
+  // cache — in which case the mount effect above does NOT run again, so a page
+  // frozen mid-open stays frozen — or reloads it into a request that may never
+  // settle. Either way the caller is left looking at a spinner with nothing to
+  // do but guess that a refresh would fix it.
+  //
+  // Retried only from a stuck state. "ready" is a live call and must never be
+  // reopened, and reopening a redeemed link records a duplicate session, which
+  // is why this is not simply run on every visibility change.
+  useEffect(() => {
+    const recover = () => {
+      if (document.visibilityState !== "visible") return;
+      setState((current) => {
+        if (current === "opening" || current === "error") void open();
+        return current;
+      });
+    };
+
+    document.addEventListener("visibilitychange", recover);
+    // Fires on bfcache restore, where visibilitychange alone may not.
+    window.addEventListener("pageshow", recover);
+    return () => {
+      document.removeEventListener("visibilitychange", recover);
+      window.removeEventListener("pageshow", recover);
+    };
+  }, [open]);
 
   // Voice links render the call screen in place rather than bouncing through
   // the full app, which would show a document sidebar they cannot use.
@@ -147,8 +186,25 @@ export default function ContactLinkPage() {
                 already in use on another device — so it is shown as-is rather
                 than flattened into a generic failure. */}
             <p className="link-sub">{message}</p>
+            {/* A reachability failure is usually temporary — a phone that woke
+                up before its network did. Offering the retry here is what stops
+                "refresh the page" being knowledge the caller has to already
+                have; the permanent failures below still tell them to ask for a
+                new link. */}
+            <button
+              type="button"
+              className="link-button ds-pressable ds-tap"
+              onClick={() => {
+                setState("opening");
+                setMessage("");
+                void open(pin.trim() || undefined);
+              }}
+              disabled={submitting}
+            >
+              {submitting ? "Trying…" : "Try again"}
+            </button>
             <p className="link-hint">
-              Ask whoever shared it with you to send a new one.
+              If it still doesn't open, ask whoever shared it to send a new one.
             </p>
           </>
         )}
