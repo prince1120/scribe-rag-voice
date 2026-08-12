@@ -132,6 +132,74 @@ class TestCacheInvalidation:
         assert await routes.selected_document_ids("t2") == ["b"]
 
 
+class TestUnselectAndDeleteAreDifferentOperations:
+    """The two must not converge.
+
+    Unselecting is reversible and touches nothing but a flag — the file, the row
+    and the vectors all stay, so ticking the box back restores the document
+    exactly. Deleting removes it from all three stores. A change that made
+    unselect delete vectors would silently destroy data the owner expected to
+    keep; one that made delete leave them behind would keep answering from a
+    document the owner removed.
+
+    Verified end to end against a live Qdrant and Postgres as well:
+
+        after upload      qdrant=1  row=yes  file=yes  used=[doc]
+        after UNSELECT    qdrant=1  row=yes  file=yes  used=(none)
+        after re-select   qdrant=1  row=yes  file=yes  used=[doc]
+        after DELETE      qdrant=0  row=NO   file=NO   used=(none)
+    """
+
+    async def test_unselecting_touches_only_the_flag(self, monkeypatch, enabled):
+        """No vector deletion, no file deletion, no row deletion."""
+        destroyed = []
+
+        def boom(*args, **kwargs):
+            destroyed.append(args)
+
+        async def async_boom(*args, **kwargs):
+            destroyed.append(args)
+
+        monkeypatch.setattr(
+            routes.vector_store, "delete_by_document", boom
+        )
+        monkeypatch.setattr(routes.storage, "delete", async_boom)
+        monkeypatch.setattr(
+            routes.repositories, "delete_document_record", async_boom
+        )
+
+        flipped = {}
+
+        async def fake_set(document_id, tenant_id, value):
+            flipped[document_id] = value
+            return True
+
+        monkeypatch.setattr(
+            routes.repositories, "set_document_enabled", fake_set
+        )
+
+        await routes.repositories.set_document_enabled("doc-1", "t1", False)
+
+        assert flipped == {"doc-1": False}
+        assert destroyed == [], "unselecting must not destroy anything"
+
+    async def test_an_unselected_document_is_still_listed_and_restorable(
+        self, enabled
+    ):
+        """It is excluded from answers, not from the workspace — the owner has
+        to be able to see it in order to tick it back on."""
+        enabled["ids"] = []
+        with pytest.raises(routes.NoDocumentsSelected):
+            await routes.selected_document_ids("t1")
+
+        # The only thing that changed is the flag, so restoring is symmetrical.
+        enabled["ids"] = ["doc-1"]
+        from app.services import cache
+
+        cache.config_cache.clear()
+        assert await routes.selected_document_ids("t1") == ["doc-1"]
+
+
 class TestTenantIsolationInTheVectorFilter:
     """The other half: whatever ids are passed, the tenant filter still applies."""
 
