@@ -295,6 +295,54 @@ class VectorStoreService:
             logger.error(f"Error deleting document: {e}")
             raise
 
+    def list_indexed_documents(self, page_size: int = 512) -> List[Dict]:
+        """Every (tenant_id, document_id) the collection actually holds.
+
+        The database is the record of which documents exist, and nothing could
+        previously check Qdrant against it — so chunks whose document row had
+        been deleted stayed searchable indefinitely, and the only symptom was
+        the assistant quoting a file the owner had removed.
+
+        Paged rather than a single scroll: a collection is not guaranteed to fit
+        in one response, and a limit that silently truncates would make the
+        reconciliation report a clean bill of health for a collection it had
+        only partly read.
+
+        `upload_timestamp` is carried through so the caller can leave recent
+        chunks alone — ingestion upserts vectors before it writes the row, so a
+        document being indexed right now legitimately has no row yet.
+        """
+        self._ensure_ready()
+        found: Dict[Any, Dict] = {}
+        offset = None
+        while True:
+            points, offset = self.client.scroll(
+                collection_name=self.collection_name,
+                limit=page_size,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for point in points:
+                payload = point.payload or {}
+                key = (payload.get("tenant_id"), payload.get("document_id"))
+                if key[1] is None:
+                    continue
+                entry = found.get(key)
+                if entry is None:
+                    found[key] = {
+                        "tenant_id": key[0],
+                        "document_id": key[1],
+                        "filename": payload.get("filename"),
+                        "chunks": 1,
+                        "upload_timestamp": payload.get("upload_timestamp"),
+                    }
+                else:
+                    entry["chunks"] += 1
+            if offset is None:
+                break
+        return list(found.values())
+
     def get_collection_info(self):
         return self.client.get_collection(self.collection_name)
 

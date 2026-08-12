@@ -28,13 +28,23 @@ from app.services.storage import build_key, storage
 logger = logging.getLogger(__name__)
 
 
-async def _purge(document_id: str, tenant_id: str, filename: str) -> None:
-    """Remove one document from all three stores.
+async def _purge(document_id: str, tenant_id: str, filename: str) -> bool:
+    """Remove one document from all three stores. True if it is fully gone.
 
-    Each step is independently guarded: a Qdrant outage must not leave the row
-    and file behind forever, and a storage failure must not stop the row being
-    reclaimed. Anything that fails here is retried on the next sweep, because
-    every step is idempotent.
+    Deletion order is vectors, then file, then row, and the row is only removed
+    once the vectors are actually gone. That last part is the whole point: the
+    row is the only record that a document exists, so deleting it while its
+    vectors survive strands them permanently — nothing walks Qdrant looking for
+    chunks whose document no longer exists, because until now nothing could.
+
+    This previously logged a warning on a failed vector delete and deleted the
+    row anyway. One Qdrant timeout was therefore enough to leave a document
+    invisible in the UI and still answerable in chat, forever. Keeping the row
+    instead means the next sweep retries it — every step here is idempotent, so
+    retrying costs nothing.
+
+    A failed *file* delete does not block the row: a stray file is inert, it
+    cannot be retrieved or quoted, and it is reclaimed by the orphan sweep.
     """
     try:
         # Imported lazily to reuse the singleton the API server already built,
@@ -46,7 +56,13 @@ async def _purge(document_id: str, tenant_id: str, filename: str) -> None:
         # event loop while serving requests.
         await asyncio.to_thread(vector_store.delete_by_document, document_id, tenant_id)
     except Exception:
-        logger.warning("Could not delete vectors for %s", document_id, exc_info=True)
+        logger.warning(
+            "Could not delete vectors for %s — keeping its row so the next "
+            "sweep retries. Deleting the row now would strand the vectors and "
+            "leave the document answerable in chat.",
+            document_id, exc_info=True,
+        )
+        return False
 
     try:
         await storage.delete(build_key(document_id, filename))
@@ -54,6 +70,7 @@ async def _purge(document_id: str, tenant_id: str, filename: str) -> None:
         logger.warning("Could not delete file for %s", document_id, exc_info=True)
 
     await repositories.delete_document_record(document_id, tenant_id)
+    return True
 
 
 async def purge_expired_documents() -> int:
@@ -107,6 +124,99 @@ async def purge_orphaned_documents() -> int:
     return removed
 
 
+async def find_orphaned_vectors(grace_hours: float = 1.0) -> list[dict]:
+    """Documents that exist in Qdrant but have no row in the database.
+
+    These are searchable and quotable while being invisible everywhere else —
+    the document list does not show them, deleting them is impossible because
+    there is nothing to delete, and chat answers from them as if nothing were
+    wrong. That is strictly worse than a document that disappeared.
+
+    `grace_hours` protects an ingestion that is still in progress: vectors are
+    upserted before the row is written (see `_ingest_file`), so a document
+    indexed seconds ago has no row yet and is not an orphan. Anything without a
+    readable timestamp is treated as recent and left alone — the conservative
+    direction, since the cost of skipping a real orphan is one more sweep and
+    the cost of deleting a live document is the document.
+    """
+    from app.api.routes import vector_store
+
+    indexed = await asyncio.to_thread(vector_store.list_indexed_documents)
+    if not indexed:
+        return []
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=grace_hours)
+    orphans: list[dict] = []
+
+    for entry in indexed:
+        record = await repositories.get_document_record(
+            entry["document_id"], entry["tenant_id"]
+        )
+        if record is not None:
+            continue
+
+        raw = entry.get("upload_timestamp")
+        try:
+            stamp = datetime.fromisoformat(raw) if raw else None
+        except (TypeError, ValueError):
+            stamp = None
+        if stamp is not None and stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        if stamp is None or stamp > cutoff:
+            # No usable timestamp, or too recent to be sure. Skip it.
+            continue
+
+        orphans.append(entry)
+
+    return orphans
+
+
+async def purge_orphaned_vectors(
+    *, dry_run: bool = True, grace_hours: float = 1.0
+) -> list[dict]:
+    """Delete vectors whose document row is gone. Returns what it acted on.
+
+    Defaults to `dry_run=True`. This is the one sweep that destroys data the
+    database cannot describe, so the default has to be the one that cannot lose
+    anything — the caller says otherwise explicitly.
+    """
+    orphans = await find_orphaned_vectors(grace_hours=grace_hours)
+    if not orphans:
+        return []
+
+    if dry_run:
+        for entry in orphans:
+            logger.info(
+                "Orphaned vectors (dry run): %s '%s' tenant=%s chunks=%d",
+                entry["document_id"], entry.get("filename"),
+                entry["tenant_id"], entry["chunks"],
+            )
+        return orphans
+
+    from app.api.routes import vector_store
+
+    removed = []
+    for entry in orphans:
+        try:
+            await asyncio.to_thread(
+                vector_store.delete_by_document,
+                entry["document_id"], entry["tenant_id"],
+            )
+        except Exception:
+            logger.warning(
+                "Could not delete orphaned vectors for %s",
+                entry["document_id"], exc_info=True,
+            )
+            continue
+        logger.info(
+            "Removed orphaned vectors: %s '%s' tenant=%s chunks=%d",
+            entry["document_id"], entry.get("filename"),
+            entry["tenant_id"], entry["chunks"],
+        )
+        removed.append(entry)
+    return removed
+
+
 async def run_cleanup_loop() -> None:
     """Sweep on startup, then on an interval, for the process lifetime.
 
@@ -121,6 +231,21 @@ async def run_cleanup_loop() -> None:
         try:
             await purge_orphaned_documents()
             await purge_expired_documents()
+            # Reports only. Everything above deletes documents the database
+            # knows about; this one deletes data the database cannot describe,
+            # so it is not something a background loop should do unattended —
+            # a transient database failure that made every lookup miss would
+            # otherwise wipe the entire index. Logging the drift is what makes
+            # it visible at all, which is the part that was missing: the first
+            # time this condition occurred, nothing anywhere reported it.
+            orphans = await purge_orphaned_vectors(dry_run=True)
+            if orphans:
+                logger.warning(
+                    "%d document(s) have vectors but no database row (%d chunks). "
+                    "They are invisible in the UI and still answerable in chat. "
+                    "Run purge_orphaned_vectors(dry_run=False) to reclaim them.",
+                    len(orphans), sum(o["chunks"] for o in orphans),
+                )
         except asyncio.CancelledError:
             raise
         except Exception:
