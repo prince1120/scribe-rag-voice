@@ -56,6 +56,18 @@ class VoiceSettings(BaseSettings):
     # temperature/max tokens sliders can still override this per-session via
     # the token request, but worker.py clamps it to VOICE_LLM_MAX_TOKENS_CAP
     # so a chat-sized value never gets sent straight to a voice reply.
+    # Kept low, deliberately. Raising this is the obvious way to stop an agent
+    # sounding repetitive and it is the wrong one: sampling temperature is also
+    # what governs how tightly the model holds to its instructions, and the
+    # failures on this stack have been instruction failures — scripting both
+    # sides of the call, answering on the caller's behalf, ignoring the
+    # one-question rule. Trading script adherence for variety would buy a
+    # livelier agent that takes orders wrongly.
+    #
+    # Variation belongs where it cannot cost correctness: in the delivery
+    # (VOICE_TTS_TEMPERATURE, which varies the voice and not the words) and in
+    # the filler phrases, which are chosen in code from a fixed list the model
+    # never sees.
     VOICE_LLM_TEMPERATURE: float = 0.3
     # ~320 tokens is roughly 25 seconds of speech. That is the ceiling for a
     # reply that ran long, not the target — the delivery rules ask for one to
@@ -119,6 +131,19 @@ class VoiceSettings(BaseSettings):
     # gets far tighter values than someone the owner sent a link to.
     #
     # Hard ceiling on wall-clock call length.
+    # ---- Sounding human ----------------------------------------------------
+    # SECONDS the model may think before the agent makes a noise. Below the
+    # point where silence reads as a dropped call, above the point where a fast
+    # reply would be preceded by a pointless "okay". 0 disables it.
+    VOICE_THINKING_FILLER_DELAY: float = 0.7
+
+    # Sarvam speech shaping. pace 1.0 is the model's default rate; a touch under
+    # reads as considered rather than hurried, and gives a listener room to
+    # follow an unfamiliar accent. temperature varies the delivery between
+    # utterances, so the same sentence twice does not sound like a recording.
+    VOICE_TTS_PACE: float = 0.95
+    VOICE_TTS_TEMPERATURE: float = 0.6
+
     VOICE_MAX_CALL_SECONDS: int = 0
     # Ends a call after this much silence with nobody speaking. This is the one
     # that catches a line left open: a caller who connects and walks away costs

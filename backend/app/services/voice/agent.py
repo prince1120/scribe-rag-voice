@@ -36,6 +36,23 @@ _RAG_FILLER_PHRASES = [
 ]
 _RAG_FILLER_DELAY_S = 1.0
 
+# Said while the model is still thinking, on any turn — not just ones that
+# trigger a document lookup.
+#
+# Dead air is the single most artificial thing about a voice agent. Measured
+# turns on this stack take 2.3-3.6s end to end, and until now a caller heard
+# nothing at all for that whole time unless RAG happened to be enabled and slow.
+# A person does not go silent for three seconds; they make a noise that means "I
+# heard you, I'm working on it".
+#
+# Shorter and vaguer than the RAG phrases on purpose. These have to make sense
+# in front of *any* reply, so they cannot promise to look something up, and they
+# have to be brief enough that the real answer is not left waiting behind them.
+_THINKING_FILLERS = [
+    "Mm-hmm,", "Right,", "Okay,", "Sure,", "Got it,",
+    "Let's see,", "Okay so,", "Alright,",
+]
+
 # Whole-utterance backchannel/closer phrases — a turn that's *just* one of
 # these (plus trivial punctuation) is the user acknowledging or disengaging,
 # never a new question, so it should never trigger a document search or a
@@ -184,6 +201,7 @@ class VoiceAssistant(Agent):
         self._settings = settings
         self._rag_enabled = rag_enabled
         self._tenant_id = tenant_id
+        self._filler_task: Optional[asyncio.Task] = None
 
     async def tts_node(self, text, model_settings):
         """Last stop before synthesis — everything spoken passes through here,
@@ -196,6 +214,34 @@ class VoiceAssistant(Agent):
 
         async for frame in Agent.default.tts_node(self, cleaned(), model_settings):
             yield frame
+
+    def _start_thinking_filler(self) -> None:
+        """Make a noise if the reply is slow, and stay quiet if it is not."""
+        if self._settings.VOICE_THINKING_FILLER_DELAY <= 0:
+            return
+
+        async def _speak_if_still_thinking() -> None:
+            await asyncio.sleep(self._settings.VOICE_THINKING_FILLER_DELAY)
+            # The reply beat us to it. Saying anything now would talk over the
+            # answer, which is worse than the silence this exists to fill.
+            if self.session.current_speech is not None:
+                return
+            filler = random.choice(_THINKING_FILLERS)
+            # add_to_chat_ctx=False matters: a filler is a mouth noise, not a
+            # turn. Recorded as one, the model reads it back as something it
+            # already said and answers around it — and the transcript the owner
+            # reads fills up with "Mm-hmm," lines that were never really turns.
+            self.session.say(
+                filler, allow_interruptions=True, add_to_chat_ctx=False
+            )
+
+        task = asyncio.create_task(_speak_if_still_thinking())
+        # Replaces any filler still pending from the previous turn, and holds a
+        # strong reference — asyncio keeps only a weak one.
+        previous = self._filler_task
+        if previous is not None and not previous.done():
+            previous.cancel()
+        self._filler_task = task
 
     async def on_user_turn_completed(
         self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
@@ -229,6 +275,11 @@ class VoiceAssistant(Agent):
                 (query or "")[:40],
             )
             raise StopResponse()
+
+        # Fires for every agent, RAG or not. Started here and left to run: this
+        # hook returns before the LLM is invoked, so the task is still pending
+        # while generation happens, which is exactly the window being covered.
+        self._start_thinking_filler()
 
         if not self._rag_enabled:
             return
