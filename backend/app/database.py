@@ -61,22 +61,62 @@ async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncS
 # place indefinitely. Types are spelled to be valid in both SQLite and
 # Postgres, which is the only dialect pair this app runs on.
 _ADDED_COLUMNS: list[tuple[str, str, str]] = [
-    # DEFAULT true, not 1 — Postgres rejects an integer default on a boolean
-    # column, and SQLite has accepted the TRUE keyword since 3.23. The default
-    # is what gives existing agents the rules rather than a null.
+    # Agents
     ("agents", "style_rules_enabled", "BOOLEAN NOT NULL DEFAULT true"),
-    # Existing rows all predate the public directory, so they were created by
-    # the owner — which is exactly what the default says.
-    ("contacts", "source", "VARCHAR(16) NOT NULL DEFAULT 'owner'"),
-    # Existing documents were all uploaded before selection existed and were all
-    # in use, so the default has to be true — anything else would silently
-    # switch off every deployed assistant's knowledge on upgrade.
-    ("documents", "agent_enabled", "BOOLEAN NOT NULL DEFAULT true"),
-    # Nullable: handles are minted on demand for workspaces that appear in the
-    # directory, so a backfill is neither needed nor correct.
+    ("agents", "voice_script", "TEXT"),
+    ("agents", "chat_script", "TEXT"),
+    ("agents", "voice_model", "VARCHAR(120)"),
+    ("agents", "chat_model", "VARCHAR(120)"),
+    ("agents", "voice_base_url", "VARCHAR(500)"),
+    ("agents", "voice_api_key_enc", "TEXT"),
+    ("agents", "chat_base_url", "VARCHAR(500)"),
+    ("agents", "chat_api_key_enc", "TEXT"),
+    ("agents", "voice_temperature", "FLOAT"),
+    ("agents", "voice_max_tokens", "INTEGER"),
+    ("agents", "chat_temperature", "FLOAT"),
+    ("agents", "chat_max_tokens", "INTEGER"),
+    ("agents", "deployed_at", "TIMESTAMP WITH TIME ZONE"),
+
+    # Owners
     ("owners", "public_handle", "VARCHAR(32)"),
-    ("contact_sessions", "duration_seconds", "INTEGER NOT NULL DEFAULT 0"),
+    ("owners", "email", "VARCHAR(320)"),
+    ("owners", "password_hash", "VARCHAR(200)"),
+    ("owners", "business_name", "VARCHAR(200)"),
+    ("owners", "business_category", "VARCHAR(64)"),
+    ("owners", "mode_chosen_at", "TIMESTAMP WITH TIME ZONE"),
+    ("owners", "groq_key_enc", "TEXT"),
+    ("owners", "sarvam_key_enc", "TEXT"),
+    ("owners", "mistral_key_enc", "TEXT"),
+    ("owners", "custom_llm_key_enc", "TEXT"),
+    ("owners", "custom_llm_base_url", "VARCHAR(500)"),
+    ("owners", "llm_model", "VARCHAR(120)"),
+
+    # Contacts
+    ("contacts", "source", "VARCHAR(16) NOT NULL DEFAULT 'owner'"),
     ("contacts", "client_id", "VARCHAR(64)"),
+    ("contacts", "bound_device", "VARCHAR(64)"),
+    ("contacts", "pin", "VARCHAR(12)"),
+    ("contacts", "revoked_at", "TIMESTAMP WITH TIME ZONE"),
+    ("contacts", "blocked_at", "TIMESTAMP WITH TIME ZONE"),
+    ("contacts", "expires_at", "TIMESTAMP WITH TIME ZONE"),
+    ("contacts", "max_sessions_per_day", "INTEGER DEFAULT 20"),
+    ("contacts", "last_seen_at", "TIMESTAMP WITH TIME ZONE"),
+
+    # Contact Sessions
+    ("contact_sessions", "duration_seconds", "INTEGER NOT NULL DEFAULT 0"),
+    ("contact_sessions", "conversation_id", "VARCHAR(36)"),
+    ("contact_sessions", "ip_address", "VARCHAR(64)"),
+    ("contact_sessions", "user_agent", "VARCHAR(300)"),
+    ("contact_sessions", "device_id", "VARCHAR(64)"),
+    ("contact_sessions", "channel", "VARCHAR(16) DEFAULT 'chat'"),
+    ("contact_sessions", "last_activity_at", "TIMESTAMP WITH TIME ZONE"),
+    ("contact_sessions", "message_count", "INTEGER DEFAULT 0"),
+
+    # Documents
+    ("documents", "agent_enabled", "BOOLEAN NOT NULL DEFAULT true"),
+    ("documents", "file_size", "INTEGER DEFAULT 0"),
+    ("documents", "chunk_count", "INTEGER DEFAULT 0"),
+    ("documents", "status", "VARCHAR(32) DEFAULT 'processed'"),
 ]
 
 

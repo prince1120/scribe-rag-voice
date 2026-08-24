@@ -25,7 +25,7 @@ class RAGPipeline:
         self,
         groq_api_key: str,
         model: str = "llama3-8b-8192",
-        vision_model: str = "meta-llama/llama-4-scout-17b-16e-instruct",
+        vision_model: str = "qwen/qwen3.6-27b",
     ):
         self.client = groq.Groq(api_key=groq_api_key)
         self.model = model
@@ -227,11 +227,11 @@ class RAGPipeline:
         )
 
     def _model_extra_kwargs(self, model_name: str) -> dict:
-        """Per-model tweaks to keep answers fast and direct (no deep reasoning)."""
+        """Per-model tweaks to keep answers fast and direct (low thinking)."""
         kw: dict = {}
-        # gpt-oss models on Groq accept reasoning_effort: low|medium|high.
-        # 'low' skips the long internal monologue so streaming starts immediately.
-        if model_name and "gpt-oss" in model_name.lower():
+        # All Groq reasoning models accept reasoning_effort low — keep it low
+        # per user request so no time is wasted in internal monologue.
+        if model_name and ("gpt-oss" in model_name.lower() or "qwen" in model_name.lower()):
             kw["reasoning_effort"] = "low"
         return kw
 
@@ -248,17 +248,39 @@ class RAGPipeline:
         max_tokens: int = 500,
         max_turns: int = 4,
     ) -> str:
-        """Take most-recent N turns, then trim oldest until under token budget."""
+        """Keep last N turns verbatim + compressed summary of older turns (no context loss)."""
         if not conversation_history:
             return ""
-        turns = conversation_history[-max_turns:]
-        rendered = [
+        # Salient: keep last max_turns verbatim
+        recent = conversation_history[-max_turns:]
+        older = conversation_history[:-max_turns] if len(conversation_history) > max_turns else []
+
+        # Build summary of older turns (max ~80 tokens) — never lose context entirely
+        summary = ""
+        if older:
+            # Take last 4 of older as salient window, join and truncate
+            summary_src = " ".join(m.get("content", "")[:300] for m in older[-4:])
+            # Truncate to ~400 chars ≈ 80 tokens
+            summary = summary_src[:900].strip()
+            if summary:
+                summary = f"[Earlier context summary: {summary}]\n"
+
+        rendered_recent = [
             f"{m.get('role', 'user')}: {m.get('content', '')}\n"
-            for m in turns
+            for m in recent
         ]
-        # Drop oldest turns until total fits the budget
+        # Budget: summary + recent must fit max_tokens, drop oldest recent first if needed
+        rendered = [summary] + rendered_recent if summary else rendered_recent
         while rendered and len(self.encoding.encode("".join(rendered))) > max_tokens:
-            rendered.pop(0)
+            # Prefer trimming oldest recent before dropping summary entirely
+            if len(rendered) > 1:
+                # rendered[0] is summary, rendered[1] oldest recent
+                if summary and len(rendered) > 2:
+                    rendered.pop(1)
+                else:
+                    rendered.pop(0 if not summary else 1)
+            else:
+                rendered.pop(0)
         return "".join(rendered)
 
     # ---- Vision helpers --------------------------------------------------

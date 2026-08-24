@@ -226,7 +226,7 @@ export default function SettingsPage() {
         {/* ── Card 1: Business Identity ────────────────────────── */}
         <form style={S.card} onSubmit={saveProfile}>
           <div style={S.cardHeader}>
-            <div style={{ ...S.iconWrap, background: "#ede9fe", color: "#6d28d9" }}>
+            <div style={{ ...S.iconWrap, background: "#ede9fe", color: "var(--claude-accent)" }}>
               <Building2 size={18} />
             </div>
             <div>
@@ -296,7 +296,7 @@ export default function SettingsPage() {
 
         <form style={S.card} onSubmit={saveKeys}>
           <div style={S.cardHeader}>
-            <div style={{ ...S.iconWrap, background: "#e0e7ff", color: "#4f46e5" }}>
+            <div style={{ ...S.iconWrap, background: "#e0e7ff", color: "var(--claude-accent)" }}>
               <KeyRound size={18} />
             </div>
             <div>
@@ -379,14 +379,14 @@ export default function SettingsPage() {
                 style={S.input}
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                placeholder="e.g. llama-3.1-8b-instant (or leave blank)"
+                placeholder="e.g. openai/gpt-oss-20b (or leave blank)"
               />
             </div>
 
             {/* Custom LLM Base URL */}
             <div>
               <label style={S.label}>
-                Custom LLM Base URL <span style={{ color: "#94a3b8", fontWeight: 400 }}>(Optional)</span>
+                Custom LLM Base URL <span style={{ color: "var(--claude-muted)", fontWeight: 400 }}>(Optional)</span>
               </label>
               <input
                 style={S.input}
@@ -401,7 +401,7 @@ export default function SettingsPage() {
           <div>
             <div style={S.labelRow}>
               <label style={S.label}>
-                Custom Endpoint API Key <span style={{ color: "#94a3b8", fontWeight: 400 }}>(Optional)</span>
+                Custom Endpoint API Key <span style={{ color: "var(--claude-muted)", fontWeight: 400 }}>(Optional)</span>
               </label>
               {providers.custom_llm_key && (
                 <span style={S.badgeSaved}>Active: {providers.custom_llm_key}</span>
@@ -445,7 +445,7 @@ export default function SettingsPage() {
         {/* ── Card 3: Security & Passwords ─────────────────────── */}
         <form style={S.card} onSubmit={save}>
           <div style={S.cardHeader}>
-            <div style={{ ...S.iconWrap, background: "#fdf2f8", color: "#db2777" }}>
+            <div style={{ ...S.iconWrap, background: "#fdf2f8", color: "var(--color-danger)" }}>
               <Lock size={18} />
             </div>
             <div>
@@ -475,7 +475,7 @@ export default function SettingsPage() {
           <div style={S.twoColGrid}>
             <div>
               <label style={S.label}>
-                Change Password <span style={{ color: "#94a3b8", fontWeight: 400 }}>(Leave blank to keep current)</span>
+                Change Password <span style={{ color: "var(--claude-muted)", fontWeight: 400 }}>(Leave blank to keep current)</span>
               </label>
               <input
                 style={S.input}
@@ -553,11 +553,11 @@ const S: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     letterSpacing: "-0.02em",
     margin: 0,
-    color: "#0f172a",
+    color: "var(--claude-text)",
   },
   subtitle: {
     fontSize: 13,
-    color: "#64748b",
+    color: "var(--claude-text-2)",
     marginTop: 4,
     margin: 0,
   },
@@ -567,15 +567,15 @@ const S: Record<string, React.CSSProperties> = {
     gap: 16,
     padding: "20px 22px",
     borderRadius: 16,
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
+    background: "var(--claude-surface)",
+    border: "1px solid var(--claude-border)",
     boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
   },
   cardHeader: {
     display: "flex",
     alignItems: "center",
     gap: 12,
-    borderBottom: "1px solid #f1f5f9",
+    borderBottom: "1px solid var(--claude-surface-2)",
     paddingBottom: 12,
   },
   iconWrap: {
@@ -590,12 +590,12 @@ const S: Record<string, React.CSSProperties> = {
   cardTitle: {
     fontSize: 16,
     fontWeight: 700,
-    color: "#0f172a",
+    color: "var(--claude-text)",
     margin: 0,
   },
   cardSub: {
     fontSize: 12,
-    color: "#64748b",
+    color: "var(--claude-muted)",
     margin: "2px 0 0",
   },
   twoColGrid: {
@@ -622,17 +622,17 @@ const S: Record<string, React.CSSProperties> = {
     display: "block",
     fontSize: 12,
     fontWeight: 600,
-    color: "#334155",
+    color: "var(--claude-text)",
     margin: 0,
   },
   input: {
     width: "100%",
     padding: "9px 12px",
     borderRadius: 8,
-    border: "1px solid #cbd5e1",
-    background: "#ffffff",
+    border: "1px solid var(--claude-border-strong)",
+    background: "var(--claude-surface)",
     fontSize: 13,
-    color: "#0f172a",
+    color: "var(--claude-text)",
     boxSizing: "border-box",
     outline: "none",
   },
@@ -640,8 +640,8 @@ const S: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     borderRadius: 8,
-    border: "1px solid #cbd5e1",
-    background: "#ffffff",
+    border: "1px solid var(--claude-border-strong)",
+    background: "var(--claude-surface)",
     overflow: "hidden",
   },
   passwordInput: {
@@ -650,7 +650,7 @@ const S: Record<string, React.CSSProperties> = {
     border: "none",
     background: "transparent",
     fontSize: 13,
-    color: "#0f172a",
+    color: "var(--claude-text)",
     outline: "none",
   },
   eyeBtn: {
@@ -660,7 +660,7 @@ const S: Record<string, React.CSSProperties> = {
     padding: "0 12px",
     background: "transparent",
     border: "none",
-    color: "#64748b",
+    color: "var(--claude-muted)",
     cursor: "pointer",
   },
   badgeSaved: {
@@ -669,8 +669,8 @@ const S: Record<string, React.CSSProperties> = {
     padding: "2px 6px",
     borderRadius: 6,
     background: "#f0fdf4",
-    color: "#16a34a",
-    border: "1px solid #bbf7d0",
+    color: "var(--color-success)",
+    border: "1px solid var(--claude-border-strong)",
     whiteSpace: "nowrap",
   },
   badgeMissing: {
@@ -679,8 +679,8 @@ const S: Record<string, React.CSSProperties> = {
     padding: "2px 6px",
     borderRadius: 6,
     background: "#fef2f2",
-    color: "#dc2626",
-    border: "1px solid #fecaca",
+    color: "var(--color-danger)",
+    border: "1px solid var(--color-danger-soft)",
     whiteSpace: "nowrap",
   },
   badgeOptional: {
@@ -688,8 +688,8 @@ const S: Record<string, React.CSSProperties> = {
     fontWeight: 500,
     padding: "2px 6px",
     borderRadius: 6,
-    background: "#f1f5f9",
-    color: "#64748b",
+    background: "var(--claude-surface-2)",
+    color: "var(--claude-text-2)",
     whiteSpace: "nowrap",
   },
   cardFooter: {
@@ -697,7 +697,7 @@ const S: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "flex-end",
     paddingTop: 10,
-    borderTop: "1px solid #f1f5f9",
+    borderTop: "1px solid var(--claude-border)",
   },
   primaryBtn: {
     display: "inline-flex",
@@ -706,8 +706,8 @@ const S: Record<string, React.CSSProperties> = {
     padding: "9px 18px",
     borderRadius: 8,
     border: "none",
-    background: "#4f46e5",
-    color: "#ffffff",
+    background: "var(--claude-accent)",
+    color: "var(--claude-surface)",
     fontSize: 13,
     fontWeight: 600,
     cursor: "pointer",
@@ -715,7 +715,7 @@ const S: Record<string, React.CSSProperties> = {
   },
   errorText: {
     fontSize: 12,
-    color: "#dc2626",
+    color: "var(--color-danger)",
     margin: 0,
     fontWeight: 500,
   },
@@ -726,8 +726,8 @@ const S: Record<string, React.CSSProperties> = {
     padding: "8px 12px",
     borderRadius: 8,
     background: "#f0fdf4",
-    border: "1px solid #bbf7d0",
-    color: "#166534",
+    border: "1px solid var(--claude-border-strong)",
+    color: "var(--color-success)",
     fontSize: 12,
     fontWeight: 500,
   },

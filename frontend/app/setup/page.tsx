@@ -7,8 +7,11 @@
 // deep. Someone who never answers keeps the personal app, which is what every
 // existing user already has.
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { ScribeMark } from "../Logo";
+import { defaultTemplate, templateForCategory } from "../agent/templates";
 
 interface Category {
   id: string;
@@ -65,6 +68,45 @@ export default function SetupPage() {
           throw new Error(body?.detail || "Could not save that.");
         }
 
+        // For business, seed the agent with a category template so the editor
+        // is not blank — the owner edits a working example, not from zero.
+        if (chosen === "business") {
+          const tmpl = templateForCategory(category) ?? defaultTemplate(businessName.trim());
+          try {
+            await fetch("/api/v1/workspace/agent", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({
+                name: businessName.trim() || "Assistant",
+                greeting: tmpl.greeting,
+                voice_script: tmpl.voice_script,
+                chat_script: tmpl.chat_script,
+                voice_id: tmpl.voice_id || "anushka",
+                language: tmpl.language || "unknown",
+                rag_enabled: true,
+                style_rules_enabled: true,
+              }),
+            });
+          } catch {
+            /* template seed is best-effort — agent page will show empty and the owner can still type */
+          }
+          // Seed one sample FAQ so RAG has something to ground on immediately.
+          // Enabled by default (agent_enabled true) and capped at 3 docs total anyway.
+          if (tmpl.sampleDoc) {
+            try {
+              await fetch("/api/v1/documents/paste", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: JSON.stringify({ title: tmpl.sampleDoc.filename, content: tmpl.sampleDoc.content }),
+              });
+            } catch {
+              /* doc seed is optional — owner can upload manually on agent page */
+            }
+          }
+        }
+
         // Business goes to the agent editor, because a business with no agent
         // has nothing to share yet. Personal goes straight to the app.
         router.replace(chosen === "business" ? "/agent" : "/");
@@ -78,8 +120,25 @@ export default function SetupPage() {
   );
 
   return (
-    <main className="setup-page">
-      <div className="setup-inner">
+    <div className="min-h-screen flex flex-col" style={{ background: "var(--claude-bg)" }}>
+      <header className="signin-header">
+        <Link href="/" className="signin-header-brand">
+          <span className="signin-header-mark" aria-hidden="true">
+            <ScribeMark className="w-5 h-5" />
+          </span>
+          <span className="signin-header-text">Scribe</span>
+        </Link>
+        <nav className="signin-header-nav" aria-label="Secondary">
+          <Link href="/directory" className="signin-header-link">
+            Directory ↗
+          </Link>
+          <Link href="/signin" className="signin-header-link">
+            Sign in
+          </Link>
+        </nav>
+      </header>
+      <main className="setup-page" style={{ flex: 1, minHeight: "auto" }}>
+        <div className="setup-inner">
         <header className="setup-header">
           <h1 className="setup-title">How will you use Scribe?</h1>
           <p className="setup-sub">
@@ -149,20 +208,21 @@ export default function SetupPage() {
 
         {error && <p className="setup-error" role="alert">{error}</p>}
 
-        {mode && (
-          <button
-            type="button"
-            className="setup-continue ds-pressable ds-tap"
-            onClick={() => submit(mode)}
-            disabled={
-              saving ||
-              (mode === "business" && (!businessName.trim() || !category))
-            }
-          >
-            {saving ? "Saving…" : mode === "business" ? "Continue to my agent" : "Start using Scribe"}
-          </button>
-        )}
-      </div>
-    </main>
+          {mode && (
+            <button
+              type="button"
+              className="setup-continue ds-pressable ds-tap"
+              onClick={() => submit(mode)}
+              disabled={
+                saving ||
+                (mode === "business" && (!businessName.trim() || !category))
+              }
+            >
+              {saving ? "Saving…" : mode === "business" ? "Continue to my agent" : "Start using Scribe"}
+            </button>
+          )}
+        </div>
+      </main>
+    </div>
   );
 }

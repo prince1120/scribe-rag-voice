@@ -49,7 +49,8 @@ class VoiceSettings(BaseSettings):
     # than 70b-versatile. Override VOICE_LLM_MODEL in .env if you'd rather
     # trade latency for the larger model's reasoning.
     GROQ_API_KEY: str = ""
-    VOICE_LLM_MODEL: str = "llama-3.1-8b-instant"
+    MISTRAL_API_KEY: str = ""
+    VOICE_LLM_MODEL: str = "openai/gpt-oss-20b"
     # Deliberately lower than text chat's rag_pipeline.py default (800): a
     # spoken answer needs to stay short to be listenable (800 tokens is
     # roughly a minute of TTS) and short is also cheap. The Settings panel's

@@ -105,6 +105,7 @@ function initials(name: string): string {
 }
 
 const ITEMS_PER_PAGE = 8;
+const SESSIONS_PER_PAGE = 6;
 
 export default function LinksPage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -131,6 +132,7 @@ export default function LinksPage() {
   // Open sessions mapped per contact_id so multiple drawers can be open at once
   const [openSessionsMap, setOpenSessionsMap] = useState<Record<string, Session[]>>({});
   const [loadingSessionsMap, setLoadingSessionsMap] = useState<Record<string, boolean>>({});
+  const [sessionPageMap, setSessionPageMap] = useState<Record<string, number>>({});
 
   // Full transcript modal
   const [transcriptModal, setTranscriptModal] = useState<{
@@ -189,15 +191,17 @@ export default function LinksPage() {
       return;
     }
 
-    // If cached in memory, open immediately with all 10 talk cards at 0ms!
+    // If cached in memory, open immediately with all talk cards at 0ms!
     if (sessionsCache.current[contactId]) {
       setOpenSessionsMap((prev) => ({ ...prev, [contactId]: sessionsCache.current[contactId] }));
+      setSessionPageMap((prev) => ({ ...prev, [contactId]: 1 }));
       return;
     }
 
     // Instant 0ms open: Open drawer immediately showing the live database sync spinner
     setOpenSessionsMap((prev) => ({ ...prev, [contactId]: [] }));
     setLoadingSessionsMap((prev) => ({ ...prev, [contactId]: true }));
+    setSessionPageMap((prev) => ({ ...prev, [contactId]: 1 }));
     try {
       const res = await ownerFetch(`/api/v1/contacts/${contactId}/sessions`);
       if (res.ok) {
@@ -379,12 +383,12 @@ export default function LinksPage() {
         {freshLink && (
           <div style={S.freshCard} className="links-fresh-card">
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Check size={18} style={{ color: "#16a34a" }} />
+              <Check size={18} style={{ color: "var(--color-success)" }} />
               <div>
                 <span style={{ fontWeight: 700, fontSize: 13, color: "#14532d" }}>
                   Access Link for {freshLink.name} Ready
                 </span>
-                <p style={{ margin: "2px 0 0", fontSize: 12, color: "#166534" }}>
+                <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--claude-muted)" }}>
                   Copy this link now. It can be shared directly with {freshLink.name} to talk with your AI assistant.
                 </p>
               </div>
@@ -415,7 +419,7 @@ export default function LinksPage() {
         <div style={S.toolbar} className="links-toolbar">
           {/* Search Box */}
           <div style={S.searchBox} className="links-search-box">
-            <Search size={16} style={{ color: "#94a3b8" }} />
+            <Search size={16} style={{ color: "var(--claude-muted)" }} />
             <input
               value={search}
               onChange={(e) => {
@@ -439,8 +443,8 @@ export default function LinksPage() {
                 }}
                 style={{
                   ...S.filterPill,
-                  background: filter === f ? "#0f172a" : "#f1f5f9",
-                  color: filter === f ? "#ffffff" : "#475569",
+                  background: filter === f ? "var(--claude-text)" : "var(--claude-surface-2)",
+                  color: filter === f ? "var(--claude-surface)" : "var(--claude-text-2)",
                 }}
               >
                 {f.charAt(0).toUpperCase() + f.slice(1)}
@@ -452,8 +456,8 @@ export default function LinksPage() {
         {/* ── Callers List ───────────────────────────────────── */}
         {loading && contacts.length === 0 ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", color: "#64748b", fontSize: 13 }}>
-              <RefreshCw size={14} className="animate-spin" style={{ color: "#3b82f6" }} />
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", color: "var(--claude-text-2)", fontSize: 13 }}>
+              <RefreshCw size={14} className="animate-spin" style={{ color: "var(--claude-accent)" }} />
               <span>Fetching callers and access links from database…</span>
             </div>
             {[1, 2, 3].map((i) => (
@@ -466,15 +470,15 @@ export default function LinksPage() {
               >
                 <div style={S.contactTop} className="links-contact-top">
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <div style={{ ...S.avatar, background: "#e2e8f0" }} />
+                    <div style={{ ...S.avatar, background: "var(--claude-border)" }} />
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      <div style={{ width: 140, height: 16, background: "#e2e8f0", borderRadius: 4 }} />
-                      <div style={{ width: 80, height: 12, background: "#f1f5f9", borderRadius: 4 }} />
+                      <div style={{ width: 140, height: 16, background: "var(--claude-border)", borderRadius: 4 }} />
+                      <div style={{ width: 80, height: 12, background: "var(--claude-surface-2)", borderRadius: 4 }} />
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
-                    <div style={{ width: 90, height: 28, background: "#f1f5f9", borderRadius: 8 }} />
-                    <div style={{ width: 70, height: 28, background: "#f1f5f9", borderRadius: 8 }} />
+                    <div style={{ width: 90, height: 28, background: "var(--claude-surface-2)", borderRadius: 8 }} />
+                    <div style={{ width: 70, height: 28, background: "var(--claude-surface-2)", borderRadius: 8 }} />
                   </div>
                 </div>
               </div>
@@ -482,9 +486,9 @@ export default function LinksPage() {
           </div>
         ) : filteredContacts.length === 0 ? (
           <div style={S.emptyState}>
-            <Users size={32} style={{ color: "#cbd5e1", marginBottom: 8 }} />
+            <Users size={32} style={{ color: "var(--claude-border-strong)", marginBottom: 8 }} />
             <p style={{ margin: 0, fontWeight: 600 }}>No callers found</p>
-            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#94a3b8" }}>
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--claude-muted)" }}>
               {search
                 ? "No one matches your search query."
                 : "Create your first invite link above or share your assistant from directory."}
@@ -513,9 +517,9 @@ export default function LinksPage() {
                             <span
                               style={{
                                 ...S.sessionCountBadge,
-                                background: talksCount > 0 ? "#ede9fe" : "#f1f5f9",
-                                color: talksCount > 0 ? "#6d28d9" : "#64748b",
-                                border: talksCount > 0 ? "1px solid #ddd6fe" : "1px solid #e2e8f0",
+                                background: talksCount > 0 ? "#ede9fe" : "var(--claude-surface-2)",
+                                color: talksCount > 0 ? "#6d28d9" : "var(--claude-muted)",
+                                border: talksCount > 0 ? "1px solid #ddd6fe" : "1px solid var(--claude-border)",
                               }}
                             >
                               <History size={11} />
@@ -523,22 +527,22 @@ export default function LinksPage() {
                             </span>
 
                             {contact.device_bound && (
-                              <span style={{ ...S.tag, background: "#f0fdf4", color: "#15803d" }}>
+                              <span style={{ ...S.tag, background: "var(--claude-surface)", color: "var(--color-success)" }}>
                                 Device Bound
                               </span>
                             )}
                             {contact.has_pin && (
-                              <span style={{ ...S.tag, background: "#fef3c7", color: "#b45309" }}>
+                              <span style={{ ...S.tag, background: "var(--claude-surface)", color: "var(--color-warning)" }}>
                                 PIN Protected
                               </span>
                             )}
                             {contact.blocked && (
-                              <span style={{ ...S.tag, background: "#fee2e2", color: "#b91c1c" }}>
+                              <span style={{ ...S.tag, background: "var(--claude-surface)", color: "var(--color-danger)" }}>
                                 Blocked
                               </span>
                             )}
                             {contact.revoked && (
-                              <span style={{ ...S.tag, background: "#f1f5f9", color: "#64748b" }}>
+                              <span style={{ ...S.tag, background: "var(--claude-surface-2)", color: "var(--claude-muted)" }}>
                                 Revoked
                               </span>
                             )}
@@ -562,9 +566,9 @@ export default function LinksPage() {
                           onClick={() => toggleSessions(contact.contact_id)}
                           style={{
                             ...S.actionBtn,
-                            background: isSessionsOpen ? "#4f46e5" : "#f8fafc",
-                            color: isSessionsOpen ? "#ffffff" : "#334155",
-                            borderColor: isSessionsOpen ? "#4f46e5" : "#e2e8f0",
+                            background: isSessionsOpen ? "var(--claude-accent)" : "var(--claude-bg)",
+                            color: isSessionsOpen ? "var(--claude-surface)" : "var(--claude-text-2)",
+                            borderColor: isSessionsOpen ? "var(--claude-accent)" : "var(--claude-border)",
                           }}
                         >
                           <History size={14} />
@@ -614,60 +618,85 @@ export default function LinksPage() {
                           <span style={S.drawerTitle}>
                             Recorded Conversations for {contact.name}
                           </span>
-                          <span style={{ fontSize: 12, color: "#64748b" }}>
+                          <span style={{ fontSize: 12, color: "var(--claude-muted)" }}>
                             {contactSessions.length} talk{contactSessions.length === 1 ? "" : "s"}
                           </span>
                         </div>
 
                         {isLoadingSessions ? (
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "24px 0", color: "#64748b", fontSize: 13 }}>
-                            <RefreshCw size={15} className="animate-spin" style={{ color: "#4f46e5" }} />
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "24px 0", color: "var(--claude-muted)", fontSize: 13 }}>
+                            <RefreshCw size={15} className="animate-spin" style={{ color: "var(--claude-accent)" }} />
                             <span>Fetching conversation history from database…</span>
                           </div>
                         ) : contactSessions.length === 0 ? (
-                          <p style={{ fontSize: 13, color: "#94a3b8", textAlign: "center", padding: "16px 0" }}>
+                          <p style={{ fontSize: 13, color: "var(--claude-muted)", textAlign: "center", padding: "16px 0" }}>
                             No completed call or chat conversations recorded yet for this person.
                           </p>
                         ) : (
-                          <div style={S.sessionListGrid} className="links-session-grid">
-                            {contactSessions.map((session) => (
-                              <div key={session.session_id} style={S.sessionCardItem}>
-                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                  <span
-                                    style={{
-                                      ...S.channelBadge,
-                                      background: session.channel === "voice" ? "#fce7f3" : "#dbeafe",
-                                      color: session.channel === "voice" ? "#db2777" : "#2563eb",
-                                    }}
+                          <>
+                            <div style={S.sessionListGrid} className="links-session-grid">
+                              {(() => {
+                                const sp = sessionPageMap[contact.contact_id] || 1;
+                                const paginated = contactSessions.slice((sp - 1) * SESSIONS_PER_PAGE, sp * SESSIONS_PER_PAGE);
+                                return paginated.map((session) => (
+                                  <div key={session.session_id} style={S.sessionCardItem}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                      <span
+                                        style={{
+                                          ...S.channelBadge,
+                                          background: session.channel === "voice" ? "var(--claude-surface)" : "var(--claude-border)",
+                                          color: session.channel === "voice" ? "var(--color-danger)" : "var(--claude-accent)",
+                                        }}
+                                      >
+                                        {session.channel === "voice" ? <Mic size={12} /> : <MessageSquare size={12} />}
+                                        <span>{session.channel === "voice" ? "Voice Call" : "Chat"}</span>
+                                      </span>
+                                      <span style={{ fontSize: 12, fontWeight: 600, color: "var(--claude-text)" }}>
+                                        {formatWhen(session.started_at)}
+                                      </span>
+                                    </div>
+                                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8, gap: 8, flexWrap: "wrap" }}>
+                                      <span style={{ fontSize: 11, color: "var(--claude-muted)" }}>
+                                        {session.message_count ? `${session.message_count} dialogue turns` : "Live Talk"}
+                                      </span>
+                                      <button type="button" onClick={() => viewTranscript(contact, session)} style={S.viewTranscriptBtn}>
+                                        <MessageCircle size={13} />
+                                        <span>View Transcript</span>
+                                      </button>
+                                    </div>
+                                  </div>
+                                ));
+                              })()}
+                            </div>
+                            {contactSessions.length > SESSIONS_PER_PAGE && (
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--claude-border)", flexWrap: "wrap", gap: 8 }}>
+                                <span style={{ fontSize: 11, color: "var(--claude-muted)" }}>
+                                  Showing {(sessionPageMap[contact.contact_id] || 1) * SESSIONS_PER_PAGE - SESSIONS_PER_PAGE + 1}–{Math.min((sessionPageMap[contact.contact_id] || 1) * SESSIONS_PER_PAGE, contactSessions.length)} of {contactSessions.length}
+                                </span>
+                                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                  <button
+                                    type="button"
+                                    disabled={(sessionPageMap[contact.contact_id] || 1) <= 1}
+                                    onClick={() => setSessionPageMap((m) => ({ ...m, [contact.contact_id]: Math.max(1, (m[contact.contact_id] || 1) - 1) }))}
+                                    style={{ ...S.pageBtn, opacity: (sessionPageMap[contact.contact_id] || 1) <= 1 ? 0.4 : 1, padding: "6px 10px", fontSize: 11 }}
                                   >
-                                    {session.channel === "voice" ? (
-                                      <Mic size={12} />
-                                    ) : (
-                                      <MessageSquare size={12} />
-                                    )}
-                                    <span>{session.channel === "voice" ? "Voice Call" : "Chat"}</span>
-                                  </span>
-                                  <span style={{ fontSize: 12, fontWeight: 600, color: "#0f172a" }}>
-                                    {formatWhen(session.started_at)}
-                                  </span>
-                                </div>
-
-                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8, gap: 8, flexWrap: "wrap" }}>
-                                  <span style={{ fontSize: 11, color: "#64748b" }}>
-                                    {session.message_count ? `${session.message_count} dialogue turns` : "Live Talk"}
+                                    <ChevronLeft size={14} /> Prev
+                                  </button>
+                                  <span style={{ fontSize: 11, fontWeight: 600, color: "var(--claude-text)" }}>
+                                    {(sessionPageMap[contact.contact_id] || 1)} / {Math.ceil(contactSessions.length / SESSIONS_PER_PAGE)}
                                   </span>
                                   <button
                                     type="button"
-                                    onClick={() => viewTranscript(contact, session)}
-                                    style={S.viewTranscriptBtn}
+                                    disabled={(sessionPageMap[contact.contact_id] || 1) >= Math.ceil(contactSessions.length / SESSIONS_PER_PAGE)}
+                                    onClick={() => setSessionPageMap((m) => ({ ...m, [contact.contact_id]: Math.min(Math.ceil(contactSessions.length / SESSIONS_PER_PAGE), (m[contact.contact_id] || 1) + 1) }))}
+                                    style={{ ...S.pageBtn, opacity: (sessionPageMap[contact.contact_id] || 1) >= Math.ceil(contactSessions.length / SESSIONS_PER_PAGE) ? 0.4 : 1, padding: "6px 10px", fontSize: 11 }}
                                   >
-                                    <MessageCircle size={13} />
-                                    <span>View Transcript</span>
+                                    Next <ChevronRight size={14} />
                                   </button>
                                 </div>
                               </div>
-                            ))}
-                          </div>
+                            )}
+                          </>
                         )}
                       </div>
                     )}
@@ -727,7 +756,7 @@ export default function LinksPage() {
           <div style={S.modalBackdrop} onClick={() => setShowCreateModal(false)}>
             <div style={S.modalCard} onClick={(e) => e.stopPropagation()}>
               <div style={S.modalCardHeader}>
-                <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: "#0f172a" }}>
+                <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: "var(--claude-text)" }}>
                   Create Customer Access Link
                 </h2>
                 <button
@@ -767,7 +796,7 @@ export default function LinksPage() {
 
                 <div>
                   <label style={S.label}>
-                    Security PIN <span style={{ color: "#94a3b8", fontWeight: 400 }}>(Optional)</span>
+                    Security PIN <span style={{ color: "var(--claude-muted)", fontWeight: 400 }}>(Optional)</span>
                   </label>
                   <input
                     value={pin}
@@ -845,8 +874,8 @@ export default function LinksPage() {
                     <span
                       style={{
                         ...S.channelBadge,
-                        background: transcriptModal.channel === "voice" ? "#fce7f3" : "#dbeafe",
-                        color: transcriptModal.channel === "voice" ? "#db2777" : "#2563eb",
+background: transcriptModal.channel === "voice" ? "var(--claude-surface)" : "var(--claude-border)",
+                                      color: transcriptModal.channel === "voice" ? "var(--color-danger)" : "var(--claude-accent)",
                       }}
                     >
                       {transcriptModal.channel === "voice" ? "Voice Call" : "Chat"}
@@ -867,8 +896,8 @@ export default function LinksPage() {
               <div style={S.modalBody}>
                 {loadingTranscript ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: "12px 4px" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "8px 14px", background: "#f8fafc", borderRadius: 20, border: "1px solid #e2e8f0", width: "fit-content", margin: "0 auto 8px", fontSize: 12, color: "#64748b", fontWeight: 500 }}>
-                      <RefreshCw size={13} className="animate-spin" style={{ color: "#4f46e5" }} />
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "8px 14px", background: "var(--claude-bg)", borderRadius: 20, border: "1px solid var(--claude-border)", width: "fit-content", margin: "0 auto 8px", fontSize: 12, color: "var(--claude-muted)", fontWeight: 500 }}>
+                      <RefreshCw size={13} className="animate-spin" style={{ color: "var(--claude-accent)" }} />
                       <span>Loading dialogue transcript from database…</span>
                     </div>
 
@@ -876,9 +905,9 @@ export default function LinksPage() {
                     <div style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: "80%" }}>
                       <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#ede9fe", flexShrink: 0 }} />
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
-                        <div style={{ padding: "12px 16px", borderRadius: "4px 16px 16px 16px", background: "#f8fafc", border: "1px solid #f1f5f9", display: "flex", flexDirection: "column", gap: 8, width: 240 }}>
-                          <div style={{ width: "90%", height: 12, background: "#e2e8f0", borderRadius: 4 }} />
-                          <div style={{ width: "65%", height: 12, background: "#e2e8f0", borderRadius: 4 }} />
+                        <div style={{ padding: "12px 16px", borderRadius: "4px 16px 16px 16px", background: "var(--claude-bg)", border: "1px solid var(--claude-surface-2)", display: "flex", flexDirection: "column", gap: 8, width: 240 }}>
+                          <div style={{ width: "90%", height: 12, background: "var(--claude-border)", borderRadius: 4 }} />
+                          <div style={{ width: "65%", height: 12, background: "var(--claude-border)", borderRadius: 4 }} />
                         </div>
                       </div>
                     </div>
@@ -897,15 +926,15 @@ export default function LinksPage() {
                     <div style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: "80%" }}>
                       <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#ede9fe", flexShrink: 0 }} />
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
-                        <div style={{ padding: "12px 16px", borderRadius: "4px 16px 16px 16px", background: "#f8fafc", border: "1px solid #f1f5f9", display: "flex", flexDirection: "column", gap: 8, width: 260 }}>
-                          <div style={{ width: "95%", height: 12, background: "#e2e8f0", borderRadius: 4 }} />
-                          <div style={{ width: "70%", height: 12, background: "#e2e8f0", borderRadius: 4 }} />
+                        <div style={{ padding: "12px 16px", borderRadius: "4px 16px 16px 16px", background: "var(--claude-bg)", border: "1px solid var(--claude-surface-2)", display: "flex", flexDirection: "column", gap: 8, width: 260 }}>
+                          <div style={{ width: "95%", height: 12, background: "var(--claude-border)", borderRadius: 4 }} />
+                          <div style={{ width: "70%", height: 12, background: "var(--claude-border)", borderRadius: 4 }} />
                         </div>
                       </div>
                     </div>
                   </div>
                 ) : transcriptModal.turns.length === 0 ? (
-                  <div style={{ textAlign: "center", padding: "40px 16px", color: "#64748b" }}>
+                  <div style={{ textAlign: "center", padding: "40px 16px", color: "var(--claude-muted)" }}>
                     <p style={{ margin: 0, fontWeight: 600 }}>No dialogue turns recorded in this session</p>
                   </div>
                 ) : (
@@ -923,9 +952,9 @@ export default function LinksPage() {
                           <div
                             style={{
                               ...S.turnBubble,
-                              background: isUser ? "#4f46e5" : "#ffffff",
-                              color: isUser ? "#ffffff" : "#0f172a",
-                              border: isUser ? "none" : "1px solid #e2e8f0",
+                              background: isUser ? "var(--claude-accent)" : "var(--claude-surface)",
+                              color: isUser ? "var(--claude-surface)" : "var(--claude-text)",
+                              border: isUser ? "none" : "1px solid var(--claude-border)",
                               boxShadow: isUser
                                 ? "0 2px 8px rgba(79, 70, 229, 0.25)"
                                 : "0 1px 3px rgba(0, 0, 0, 0.05)",
@@ -934,7 +963,7 @@ export default function LinksPage() {
                             <span
                               style={{
                                 ...S.turnWho,
-                                color: isUser ? "rgba(255,255,255,0.75)" : "#6366f1",
+                                color: isUser ? "rgba(255,255,255,0.75)" : "var(--claude-accent)",
                               }}
                             >
                               {isUser ? transcriptModal.callerName || "Caller" : "AI Assistant"}
@@ -977,11 +1006,11 @@ const S: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     letterSpacing: "-0.02em",
     margin: 0,
-    color: "#0f172a",
+    color: "var(--claude-text)",
   },
   subtitle: {
     fontSize: 13,
-    color: "#64748b",
+    color: "var(--claude-muted)",
     marginTop: 4,
     margin: 0,
   },
@@ -992,8 +1021,8 @@ const S: Record<string, React.CSSProperties> = {
     padding: "9px 16px",
     borderRadius: 9999,
     border: "none",
-    background: "#4f46e5",
-    color: "#ffffff",
+    background: "var(--claude-accent)",
+    color: "var(--claude-surface)",
     fontSize: 13,
     fontWeight: 600,
     cursor: "pointer",
@@ -1029,9 +1058,9 @@ const S: Record<string, React.CSSProperties> = {
     padding: "8px 12px",
     borderRadius: 8,
     border: "1px solid #86efac",
-    background: "#ffffff",
+    background: "var(--claude-surface)",
     fontSize: 13,
-    color: "#0f172a",
+    color: "var(--claude-text)",
     fontFamily: "monospace",
   },
   copyBtn: {
@@ -1042,7 +1071,7 @@ const S: Record<string, React.CSSProperties> = {
     borderRadius: 8,
     border: "none",
     background: "#16a34a",
-    color: "#ffffff",
+    color: "var(--claude-surface)",
     fontSize: 13,
     fontWeight: 600,
     cursor: "pointer",
@@ -1070,8 +1099,8 @@ const S: Record<string, React.CSSProperties> = {
     gap: 8,
     padding: "7px 12px",
     borderRadius: 8,
-    border: "1px solid #e2e8f0",
-    background: "#ffffff",
+    border: "1px solid var(--claude-border)",
+    background: "var(--claude-surface)",
     flex: 1,
     minWidth: 220,
     maxWidth: 360,
@@ -1081,13 +1110,13 @@ const S: Record<string, React.CSSProperties> = {
     outline: "none",
     background: "transparent",
     fontSize: 13,
-    color: "#0f172a",
+    color: "var(--claude-text)",
     width: "100%",
   },
   filterPills: {
     display: "flex",
     gap: 4,
-    background: "#f1f5f9",
+    background: "var(--claude-surface-2)",
     padding: 3,
     borderRadius: 8,
   },
@@ -1103,7 +1132,7 @@ const S: Record<string, React.CSSProperties> = {
   loadingState: {
     textAlign: "center",
     padding: "48px 0",
-    color: "#64748b",
+    color: "var(--claude-muted)",
     fontSize: 13,
   },
   emptyState: {
@@ -1113,10 +1142,10 @@ const S: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     padding: "48px 16px",
     textAlign: "center",
-    color: "#475569",
-    background: "#ffffff",
+    color: "var(--claude-text-2)",
+    background: "var(--claude-surface)",
     borderRadius: 16,
-    border: "1px dashed #cbd5e1",
+    border: "1px dashed var(--claude-border-strong)",
   },
   contactsList: {
     display: "flex",
@@ -1127,8 +1156,8 @@ const S: Record<string, React.CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     borderRadius: 14,
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
+    background: "var(--claude-surface)",
+    border: "1px solid var(--claude-border)",
     boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
     overflow: "hidden",
   },
@@ -1148,7 +1177,7 @@ const S: Record<string, React.CSSProperties> = {
     height: 40,
     borderRadius: 9999,
     background: "#eef2ff",
-    color: "#4f46e5",
+    color: "var(--claude-accent)",
     fontSize: 13,
     fontWeight: 700,
     flexShrink: 0,
@@ -1156,11 +1185,11 @@ const S: Record<string, React.CSSProperties> = {
   contactName: {
     fontSize: 15,
     fontWeight: 700,
-    color: "#0f172a",
+    color: "var(--claude-text)",
   },
   contactMeta: {
     fontSize: 12,
-    color: "#64748b",
+    color: "var(--claude-muted)",
     margin: "3px 0 0",
   },
   tag: {
@@ -1192,9 +1221,9 @@ const S: Record<string, React.CSSProperties> = {
     gap: 5,
     padding: "7px 12px",
     borderRadius: 8,
-    border: "1px solid #e2e8f0",
-    background: "#ffffff",
-    color: "#334155",
+    border: "1px solid var(--claude-border)",
+    background: "var(--claude-surface)",
+    color: "var(--claude-text-2)",
     fontSize: 12,
     fontWeight: 600,
     cursor: "pointer",
@@ -1202,8 +1231,8 @@ const S: Record<string, React.CSSProperties> = {
   },
   sessionsDrawer: {
     padding: "14px 18px 18px",
-    background: "#f8fafc",
-    borderTop: "1px solid #e2e8f0",
+    background: "var(--claude-bg)",
+    borderTop: "1px solid var(--claude-border)",
     display: "flex",
     flexDirection: "column",
     gap: 10,
@@ -1226,8 +1255,8 @@ const S: Record<string, React.CSSProperties> = {
   sessionCardItem: {
     padding: "12px 14px",
     borderRadius: 10,
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
+    background: "var(--claude-surface)",
+    border: "1px solid var(--claude-border)",
     display: "flex",
     flexDirection: "column",
   },
@@ -1246,9 +1275,9 @@ const S: Record<string, React.CSSProperties> = {
     gap: 4,
     padding: "4px 8px",
     borderRadius: 6,
-    border: "1px solid #cbd5e1",
-    background: "#f8fafc",
-    color: "#4f46e5",
+    border: "1px solid var(--claude-border-strong)",
+    background: "var(--claude-bg)",
+    color: "var(--claude-accent)",
     fontSize: 11,
     fontWeight: 600,
     cursor: "pointer",
@@ -1263,7 +1292,7 @@ const S: Record<string, React.CSSProperties> = {
   },
   paginationText: {
     fontSize: 12,
-    color: "#64748b",
+    color: "var(--claude-muted)",
   },
   paginationBtns: {
     display: "flex",
@@ -1276,16 +1305,16 @@ const S: Record<string, React.CSSProperties> = {
     gap: 4,
     padding: "6px 12px",
     borderRadius: 6,
-    border: "1px solid #e2e8f0",
-    background: "#ffffff",
-    color: "#334155",
+    border: "1px solid var(--claude-border)",
+    background: "var(--claude-surface)",
+    color: "var(--claude-text-2)",
     fontSize: 12,
     fontWeight: 500,
   },
   pageIndicator: {
     fontSize: 12,
     fontWeight: 600,
-    color: "#0f172a",
+    color: "var(--claude-text)",
   },
   /* Modal */
   modalBackdrop: {
@@ -1302,7 +1331,7 @@ const S: Record<string, React.CSSProperties> = {
   modalCard: {
     width: "100%",
     maxWidth: "28rem",
-    background: "#ffffff",
+    background: "var(--claude-surface)",
     borderRadius: 16,
     boxShadow: "0 20px 40px rgba(0,0,0,0.2)",
     overflow: "hidden",
@@ -1312,31 +1341,31 @@ const S: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     padding: "16px 20px",
-    borderBottom: "1px solid #e2e8f0",
-    background: "#f8fafc",
+    borderBottom: "1px solid var(--claude-border)",
+    background: "var(--claude-bg)",
   },
   label: {
     display: "block",
     fontSize: 12,
     fontWeight: 600,
-    color: "#334155",
+    color: "var(--claude-text-2)",
     marginBottom: 5,
   },
   modalInput: {
     width: "100%",
     padding: "8px 12px",
     borderRadius: 8,
-    border: "1px solid #cbd5e1",
+    border: "1px solid var(--claude-border-strong)",
     fontSize: 13,
-    color: "#0f172a",
+    color: "var(--claude-text)",
     boxSizing: "border-box",
   },
   cancelBtn: {
     padding: "8px 14px",
     borderRadius: 8,
-    border: "1px solid #cbd5e1",
-    background: "#ffffff",
-    color: "#475569",
+    border: "1px solid var(--claude-border-strong)",
+    background: "var(--claude-surface)",
+    color: "var(--claude-text-2)",
     fontSize: 13,
     fontWeight: 600,
     cursor: "pointer",
@@ -1345,8 +1374,8 @@ const S: Record<string, React.CSSProperties> = {
     padding: "8px 16px",
     borderRadius: 8,
     border: "none",
-    background: "#4f46e5",
-    color: "#ffffff",
+    background: "var(--claude-accent)",
+    color: "var(--claude-surface)",
     fontSize: 13,
     fontWeight: 600,
     cursor: "pointer",
@@ -1357,7 +1386,7 @@ const S: Record<string, React.CSSProperties> = {
     maxWidth: "24rem",
     padding: 24,
     borderRadius: 18,
-    background: "#ffffff",
+    background: "var(--claude-surface)",
     boxShadow: "0 20px 40px rgba(0,0,0,0.2)",
     display: "flex",
     flexDirection: "column",
@@ -1378,12 +1407,12 @@ const S: Record<string, React.CSSProperties> = {
   confirmTitle: {
     fontSize: 17,
     fontWeight: 700,
-    color: "#0f172a",
+    color: "var(--claude-text)",
     margin: 0,
   },
   confirmDesc: {
     fontSize: 13,
-    color: "#64748b",
+    color: "var(--claude-muted)",
     lineHeight: 1.5,
     margin: 0,
   },
@@ -1400,7 +1429,7 @@ const S: Record<string, React.CSSProperties> = {
     borderRadius: 8,
     border: "none",
     background: "#dc2626",
-    color: "#ffffff",
+    color: "var(--claude-surface)",
     fontSize: 13,
     fontWeight: 600,
     cursor: "pointer",
@@ -1413,7 +1442,7 @@ const S: Record<string, React.CSSProperties> = {
     maxHeight: "85vh",
     display: "flex",
     flexDirection: "column",
-    background: "#ffffff",
+    background: "var(--claude-surface)",
     borderRadius: 18,
     boxShadow: "0 20px 40px rgba(0,0,0,0.2)",
     overflow: "hidden",
@@ -1423,17 +1452,17 @@ const S: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     padding: "16px 20px",
-    borderBottom: "1px solid #e2e8f0",
-    background: "#f8fafc",
+    borderBottom: "1px solid var(--claude-border)",
+    background: "var(--claude-bg)",
   },
   modalTitle: {
     fontSize: 16,
     fontWeight: 700,
-    color: "#0f172a",
+    color: "var(--claude-text)",
   },
   modalSub: {
     fontSize: 12,
-    color: "#64748b",
+    color: "var(--claude-muted)",
     margin: "2px 0 0",
   },
   modalClose: {
@@ -1444,15 +1473,15 @@ const S: Record<string, React.CSSProperties> = {
     height: 32,
     borderRadius: 8,
     border: "none",
-    background: "#e2e8f0",
-    color: "#475569",
+    background: "var(--claude-border)",
+    color: "var(--claude-text-2)",
     cursor: "pointer",
   },
   modalBody: {
     padding: 16,
     overflowY: "auto",
     flex: 1,
-    background: "#f8fafc",
+    background: "var(--claude-bg)",
   },
   dialogueContainer: {
     display: "flex",

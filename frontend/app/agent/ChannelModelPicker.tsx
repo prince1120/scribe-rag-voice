@@ -148,7 +148,7 @@ export function ChannelModelPicker({
             <button
               type="button"
               className="agent-custom-back-btn ds-pressable ds-tap"
-              onClick={() => onDisableCustom(isVoice ? "llama-3.1-8b-instant" : "llama-3.3-70b-versatile")}
+              onClick={() => onDisableCustom(isVoice ? "openai/gpt-oss-20b" : "openai/gpt-oss-120b")}
             >
               ← Use Groq models
             </button>

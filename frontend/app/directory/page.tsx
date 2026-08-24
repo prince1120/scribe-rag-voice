@@ -315,9 +315,9 @@ export default function DirectoryPage() {
           <div
             className="p-4 rounded-xl border mb-6 text-center text-xs font-medium"
             style={{
-              borderColor: "#F5C2C2",
-              background: "#FDF2F2",
-              color: "#C53030",
+              borderColor: "var(--color-danger-soft)",
+              background: "var(--color-danger-soft)",
+              color: "var(--color-danger)",
             }}
           >
             {error}

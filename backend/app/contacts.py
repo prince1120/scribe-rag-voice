@@ -117,6 +117,32 @@ def check_device(
     return False
 
 
+def hash_pin(pin: str, *, salt: str = "") -> str:
+    """Hash a contact PIN. Salted when a per-contact salt is available.
+
+    A PIN is low-entropy (4-6 digits), so unsalted SHA-256 would fall to a
+    rainbow table. Salting with the contact's token hash — 256 bits of
+    randomness unique per contact — makes each hash instance-specific.
+    """
+    material = f"{salt}|{pin}".encode("utf-8") if salt else pin.encode("utf-8")
+    return hashlib.sha256(material).hexdigest()
+
+
+def verify_pin(candidate: str, stored_hash: str, *, salt: str = "") -> bool:
+    """Constant-time PIN verification."""
+    if not stored_hash:
+        return not candidate
+    # Backwards compat: rows written before hashing stored the PIN in plaintext.
+    # A SHA-256 hex digest is exactly 64 hex chars; anything else is legacy.
+    is_hex_hash = len(stored_hash) == 64 and all(c in "0123456789abcdef" for c in stored_hash.lower())
+    if not is_hex_hash:
+        # Legacy plaintext — still compare in constant time, then caller should
+        # re-hash on next write. Not ideal, but avoids locking existing contacts
+        # out after a deploy.
+        return hmac.compare_digest(candidate, stored_hash)
+    return hmac.compare_digest(hash_pin(candidate, salt=salt), stored_hash)
+
+
 def default_expiry(days: Optional[int]) -> Optional[datetime]:
     if not days or days <= 0:
         return None

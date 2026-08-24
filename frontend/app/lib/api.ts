@@ -221,6 +221,7 @@ export interface StreamOptions {
   model?: string | null;
   temperature?: number | null;
   topK?: number | null;
+  maxTokens?: number | null;
   attachedImages?: string[] | null;
   creds?: DemoCredentials;
   signal?: AbortSignal;
@@ -250,6 +251,7 @@ export async function streamQuery(
       model: options.model ?? undefined,
       temperature: options.temperature ?? undefined,
       top_k: options.topK ?? undefined,
+      max_tokens: options.maxTokens ?? undefined,
       attached_images: options.attachedImages ?? undefined,
     }),
   });

@@ -470,17 +470,20 @@ async def get_provider_settings(tenant_id: str) -> dict:
     return {
         "groq_key": hint(record.groq_key_enc),
         "sarvam_key": hint(record.sarvam_key_enc),
+        "mistral_key": hint(getattr(record, "mistral_key_enc", None)),
         "custom_llm_key": hint(record.custom_llm_key_enc),
         "custom_llm_base_url": record.custom_llm_base_url,
         "llm_model": record.llm_model,
         "has_groq": bool(record.groq_key_enc),
         "has_sarvam": bool(record.sarvam_key_enc),
+        "has_mistral": bool(getattr(record, "mistral_key_enc", None)),
     }
 
 
 async def save_provider_settings(
     tenant_id: str, *, groq_key: Optional[str] = None,
-    sarvam_key: Optional[str] = None, custom_llm_key: Optional[str] = None,
+    sarvam_key: Optional[str] = None, mistral_key: Optional[str] = None,
+    custom_llm_key: Optional[str] = None,
     custom_llm_base_url: Optional[str] = None, llm_model: Optional[str] = None,
 ) -> dict:
     """Store provider credentials, encrypting anything secret.

@@ -12,38 +12,24 @@ registry.
 
 GROQ_MODELS: list[dict[str, str]] = [
     {
-        "id": "llama-3.1-8b-instant",
-        "name": "Llama 3.1 8B",
-        "description": "Fastest to first word. The default for calls.",
+        "id": "openai/gpt-oss-20b",
+        "name": "GPT OSS 20B",
+        "description": "Fastest (1k tok/s). Replaces llama-3.1-8b-instant (retired 08/16/26).",
         "tag": "Instant",
         "good_for": "voice",
     },
     {
-        "id": "openai/gpt-oss-20b",
-        "name": "GPT OSS 20B",
-        "description": "Quick and capable for everyday answers.",
-        "tag": "Fast",
-        "good_for": "both",
-    },
-    {
-        "id": "llama-3.3-70b-versatile",
-        "name": "Llama 3.3 70B",
-        "description": "Stronger reasoning for detailed questions.",
-        "tag": "Versatile",
-        "good_for": "chat",
-    },
-    {
         "id": "openai/gpt-oss-120b",
         "name": "GPT OSS 120B",
-        "description": "The most capable, and the slowest.",
+        "description": "Most capable reasoning. Replaces llama-3.3-70b-versatile (retired 08/16/26).",
         "tag": "Premium",
         "good_for": "chat",
     },
     {
         "id": "qwen/qwen3.6-27b",
         "name": "Qwen 3.6 27B",
-        "description": "Strong multilingual and coding ability.",
-        "tag": "Reasoning",
+        "description": "Strong multilingual & coding. Active replacement for qwen/qwen3-32b (retired 07/17/26).",
+        "tag": "Balanced",
         "good_for": "both",
     },
 ]

@@ -6,19 +6,19 @@
  */
 
 .owner-shell {
-  --owner-bg: #F7F7F5;
-  --owner-surface: #FFFFFF;
-  --owner-rail: #131418;
-  --owner-rail-text: #8E9099;
-  --owner-rail-hover: #DCDDE3;
-  --owner-rail-active: #FFFFFF;
-  --owner-border: #E4E4E1;
-  --owner-border-subtle: #F0F2F5;
-  --owner-text: #16171A;
-  --owner-muted: #6E7078;
-  --owner-accent: #4F46E5;
-  --owner-accent-light: #EEF2FF;
-  --owner-accent-hover: #4338CA;
+  --owner-bg: var(--claude-bg);
+  --owner-surface: var(--claude-surface);
+  --owner-rail: var(--claude-text);
+  --owner-rail-text: var(--claude-muted);
+  --owner-rail-hover: var(--claude-border);
+  --owner-rail-active: var(--claude-surface);
+  --owner-border: var(--claude-border);
+  --owner-border-subtle: var(--claude-surface-2);
+  --owner-text: var(--claude-text);
+  --owner-muted: var(--claude-muted);
+  --owner-accent: var(--claude-accent);
+  --owner-accent-light: var(--claude-accent-soft);
+  --owner-accent-hover: var(--claude-accent-hover);
   --owner-success: #10B981;
   --owner-warning: #F59E0B;
   --owner-danger: #EF4444;
@@ -79,7 +79,7 @@
 .owner-brand-name {
   font-size: 0.92rem;
   font-weight: 700;
-  color: #FFFFFF;
+  color: var(--claude-surface);
   letter-spacing: -0.01em;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -166,14 +166,14 @@
 
 .owner-nav-item.is-active {
   background: linear-gradient(90deg, rgba(99, 102, 241, 0.2) 0%, rgba(99, 102, 241, 0.05) 100%);
-  color: #FFFFFF;
+  color: var(--claude-surface);
   font-weight: 600;
   border-left: 3px solid #6366F1;
 }
 
 .owner-nav-item.is-navigating {
   background: linear-gradient(90deg, rgba(79, 70, 229, 0.25) 0%, rgba(59, 130, 246, 0.08) 100%) !important;
-  color: #FFFFFF !important;
+  color: var(--claude-surface) !important;
   border-left: 3px solid #6366F1 !important;
 }
 
@@ -189,7 +189,7 @@
   left: 0;
   right: 0;
   height: 3px;
-  background: linear-gradient(90deg, #4F46E5 0%, #3B82F6 50%, #60A5FA 100%);
+  background: linear-gradient(90deg, var(--claude-accent) 0%, #3B82F6 50%, #60A5FA 100%);
   z-index: 99999;
   box-shadow: 0 0 10px rgba(79, 70, 229, 0.6);
   animation: owner-progress-bar 1.2s ease-in-out infinite;
@@ -372,7 +372,7 @@
     justify-content: space-between;
     padding: 0.75rem 1rem;
     border-bottom: 1px solid var(--owner-border);
-    background: #FFFFFF;
+    background: var(--claude-surface);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
     z-index: 10;
     position: sticky;
@@ -654,15 +654,85 @@
   }
 }
 
-/* ---- Sign in --------------------------------------------------------------- */
+/* ---- Sign in (matches Landing / Design System) ---------------------------- */
 
 .signin-page {
   display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  background: var(--claude-bg);
+}
+
+.signin-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--claude-border);
+  background: rgba(250, 249, 245, 0.88);
+  backdrop-filter: blur(8px);
+}
+
+.signin-header-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  text-decoration: none;
+  min-width: 0;
+}
+
+.signin-header-mark {
+  display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 100dvh;
-  padding: 1.5rem 1rem;
-  background: #F7F7F5;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--claude-border);
+  background: var(--claude-surface);
+  color: var(--claude-accent);
+  flex-shrink: 0;
+}
+
+.signin-header-text {
+  font-family: "Iowan Old Style", "Apple Garamond", Baskerville, serif;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--claude-text);
+}
+
+.signin-header-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.signin-header-link {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--claude-muted);
+  text-decoration: none;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  transition: color 0.15s, background 0.15s;
+}
+.signin-header-link:hover {
+  color: var(--claude-text);
+  background: var(--claude-surface-2);
+}
+
+.signin-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem 1rem max(1.5rem, env(safe-area-inset-bottom));
 }
 
 .signin-card {
@@ -670,12 +740,12 @@
   flex-direction: column;
   gap: 1rem;
   width: 100%;
-  max-width: 25rem;
-  padding: 2rem 1.75rem;
-  border: 1px solid #E4E4E1;
-  border-radius: 16px;
-  background: #FFFFFF;
-  box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.03);
+  max-width: 26rem;
+  padding: 1.75rem;
+  border: 1px solid var(--claude-border);
+  border-radius: 20px;
+  background: var(--claude-surface);
+  box-shadow: var(--shadow-md);
 }
 
 .signin-brand {
@@ -690,95 +760,152 @@
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  background: #1D1E22;
-  color: #fff;
+  border: 1px solid var(--claude-border);
+  background: var(--claude-surface);
+  color: var(--claude-accent);
 }
 .signin-brand-text {
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   font-weight: 600;
-  color: #6E7078;
+  color: var(--claude-muted);
   letter-spacing: -0.01em;
 }
 
 .signin-title {
-  font-size: 1.35rem;
+  font-family: "Iowan Old Style", "Apple Garamond", Baskerville, serif;
+  font-size: 1.4rem;
   font-weight: 700;
   letter-spacing: -0.02em;
-  color: #16171A;
+  color: var(--claude-text);
   margin: 0;
 }
 .signin-sub {
-  margin-top: 0.25rem;
+  margin-top: 0.3rem;
   font-size: 0.85rem;
-  color: #6E7078;
-  line-height: 1.45;
+  color: var(--claude-muted);
+  line-height: 1.5;
 }
 
 .signin-label {
-  margin-top: 0.25rem;
-  font-size: 0.82rem;
+  margin-top: 0.15rem;
+  font-size: 0.78rem;
   font-weight: 600;
-  color: #374151;
+  color: var(--claude-text-2);
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 .signin-input {
   width: 100%;
-  padding: 0.7rem 0.85rem;
-  font-size: 0.92rem;
-  border: 1px solid #D8D8D4;
-  border-radius: 8px;
-  background: #FFFFFF;
-  color: #16171A;
+  padding: 0.75rem 0.85rem;
+  font-size: 16px;
+  border: 1px solid var(--claude-border);
+  border-radius: 12px;
+  background: var(--claude-bg);
+  color: var(--claude-text);
   transition: border-color 0.15s, box-shadow 0.15s;
   box-sizing: border-box;
 }
+@media (min-width: 640px) {
+  .signin-input {
+    font-size: 0.92rem;
+  }
+}
+.signin-input::placeholder {
+  color: var(--claude-muted);
+}
+.signin-input:focus {
+  outline: none;
+  border-color: var(--claude-accent);
+  box-shadow: 0 0 0 3px var(--claude-accent-soft);
+}
 .signin-input:focus-visible {
   outline: none;
-  border-color: var(--owner-accent);
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
+  border-color: var(--claude-accent);
+  box-shadow: 0 0 0 3px var(--claude-accent-soft);
 }
 
 .signin-error {
   padding: 0.75rem;
-  border-radius: 8px;
-  background: #FEE2E2;
+  border-radius: 12px;
+  background: #FEF2F2;
   border: 1px solid #FECACA;
   color: #B91C1C;
   font-size: 0.82rem;
   font-weight: 500;
+  line-height: 1.4;
 }
 
 .signin-button {
-  margin-top: 0.5rem;
-  padding: 0.75rem 1rem;
+  margin-top: 0.35rem;
+  padding: 0.85rem 1rem;
   border: none;
-  border-radius: 8px;
-  background: #1D1E22;
-  color: #FFFFFF;
+  border-radius: 12px;
+  background: var(--claude-accent);
+  color: var(--claude-surface);
   font-size: 0.92rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s, transform 0.1s;
+  transition: background 0.15s, transform 0.1s, opacity 0.15s;
+  min-height: 44px;
 }
 .signin-button:hover:not(:disabled) {
-  background: #303239;
+  background: var(--claude-accent-hover);
   transform: translateY(-1px);
 }
 .signin-button:active:not(:disabled) {
   transform: translateY(0);
 }
 .signin-button:disabled {
-  opacity: 0.6;
+  opacity: 0.55;
   cursor: not-allowed;
 }
 
 .signin-foot {
   font-size: 0.78rem;
-  line-height: 1.45;
-  color: #6E7078;
+  line-height: 1.5;
+  color: var(--claude-muted);
   text-align: center;
+}
+.signin-foot a {
+  color: var(--claude-text-2);
+  font-weight: 600;
+}
+.signin-foot a:hover {
+  color: var(--claude-accent);
+}
+
+/* Sign-in tabs — override to match Claude/Landing surface, not Owner dark rail */
+.signin-card .chan-tabs {
+  border-color: var(--claude-border);
+  background: var(--claude-bg);
+  border-radius: 12px;
+  padding: 4px;
+}
+.signin-card .chan-tab {
+  color: var(--claude-muted);
+  border-radius: 8px;
+}
+.signin-card .chan-tab:hover {
+  color: var(--claude-text-2);
+}
+.signin-card .chan-tab.is-active {
+  background: var(--claude-surface);
+  color: var(--claude-text);
+  box-shadow: var(--shadow-sm);
+}
+
+@media (max-width: 480px) {
+  .signin-header {
+    padding: 0.6rem 0.85rem;
+  }
+  .signin-card {
+    padding: 1.25rem;
+    border-radius: 16px;
+  }
+  .signin-title {
+    font-size: 1.25rem;
+  }
 }
 
 /* ---- Channels Tabs (used across signin, agent, test) ----------------------- */
@@ -811,7 +938,7 @@
   color: var(--owner-text);
 }
 .chan-tab.is-active {
-  background: #FFFFFF;
+  background: var(--claude-surface);
   color: var(--owner-text);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }

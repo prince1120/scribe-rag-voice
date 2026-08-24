@@ -620,6 +620,10 @@ export function VoiceCallModal({
     },
   });
 
+  const { warning: networkWarning } = useCallQuality(
+    activeRoom, state === "connected"
+  );
+
   if (!isOpen) return null;
 
   const agentActive = agentState === "speaking" || activeSpeaker === "agent";
@@ -662,9 +666,6 @@ export function VoiceCallModal({
   // idle is the persona colour softened rather than a different hue — the orb
   // should look like the same character whether or not it is talking.
   // Only the caller's own link quality, and only while a call is actually up.
-  const { warning: networkWarning } = useCallQuality(
-    activeRoom, state === "connected"
-  );
 
   const persona = personaForVoice(selectedVoice);
   const orbCore = agentThinking
@@ -806,7 +807,7 @@ export function VoiceCallModal({
                 <div
                   className="absolute inset-0 rounded-full"
                   style={{
-                    background: `radial-gradient(circle at 34% 30%, #ffffff 0%, ${orbCore}cc 46%, ${orbCore} 100%)`,
+                    background: `radial-gradient(circle at 34% 30%, var(--claude-surface) 0%, ${orbCore}cc 46%, ${orbCore} 100%)`,
                     transition: "background 0.9s ease",
                   }}
                 />

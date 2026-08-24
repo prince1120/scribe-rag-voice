@@ -88,6 +88,17 @@ def _params_for_job(ctx: JobContext) -> SessionParams:
     if data.get("llm_model"):
         logger.info("Using caller-selected LLM model: %s", data["llm_model"])
         overrides["VOICE_LLM_MODEL"] = data["llm_model"]
+        # Route Mistral models to the Mistral provider (free 1B tokens/month)
+        # so Groq isn't billed and tight voice caps still apply.
+        if isinstance(data["llm_model"], str) and data["llm_model"].startswith("mistral"):
+            overrides["VOICE_LLM_PROVIDER"] = "mistral"
+        elif isinstance(data["llm_model"], str) and data["llm_model"].startswith("llama"):
+            # llama/mistral confusion guard — Groq hosts llama, Mistral hosts mistral
+            if overrides.get("VOICE_LLM_PROVIDER") == "mistral":
+                # keep mistral if explicitly requested, otherwise groq
+                pass
+            else:
+                overrides["VOICE_LLM_PROVIDER"] = "groq"
     if data.get("stt_language"):
         # The token endpoint has always sent this for business agents; nothing
         # here read it, so an owner who picked a language got auto-detect

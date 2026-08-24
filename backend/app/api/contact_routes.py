@@ -149,15 +149,17 @@ async def overview(identity: Identity = Depends(get_identity)):
     """Everything the console's front page needs, assembled in one fast batch query."""
     _require_owner(identity)
 
+    import asyncio
     from app.database import async_session
     from app.models.db_models import ContactSessionRecord
-    from sqlalchemy import select
+    from sqlalchemy import select, func, or_
 
-    contacts_list = await repositories.list_contacts(identity.tenant_id)
-
-    # Fetch agent and business metadata for owner
-    agent = await repositories.get_agent(identity.tenant_id)
-    owner = await repositories.get_owner(identity.tenant_id)
+    # Parallelize independent reads — was 3 serial round trips (~3× pooler latency)
+    contacts_list, agent, owner = await asyncio.gather(
+        repositories.list_contacts(identity.tenant_id),
+        repositories.get_agent(identity.tenant_id),
+        repositories.get_owner(identity.tenant_id),
+    )
     agent_name = (agent.name if agent else "Assistant") or "Assistant"
     business_name = (owner.business_name if owner else "Business") or "Business"
 
@@ -180,55 +182,60 @@ async def overview(identity: Identity = Depends(get_identity)):
 
     contact_ids = [c.contact_id for c in contacts_list]
     contact_map = {c.contact_id: c for c in contacts_list}
-
-    sessions_all = []
-    async with async_session() as session:
-        q = (
-            select(ContactSessionRecord)
-            .where(ContactSessionRecord.contact_id.in_(contact_ids))
-            .order_by(ContactSessionRecord.started_at.desc())
-        )
-        res = await session.execute(q)
-        for s in res.scalars().all():
-            c = contact_map.get(s.contact_id)
-            if c:
-                sessions_all.append((c, s))
-
     since_week = datetime.now(timezone.utc) - timedelta(days=7)
 
-    def _started(session):
-        value = session.started_at
-        if value is None:
-            return None
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    # Real-talk filter pushed to SQL: voice with conversation OR any message_count>0 OR any conversation
+    real_talk = or_(
+        ContactSessionRecord.message_count > 0,
+        ContactSessionRecord.conversation_id.is_not(None),
+    )
 
-    # Filter out empty 0-message unstarted page loads
-    active_sessions_all = [
-        (c, s) for c, s in sessions_all
-        if (s.channel == "voice" and s.conversation_id)
-        or (s.message_count and s.message_count > 0)
-        or s.conversation_id
-    ]
-
-    display_sessions = active_sessions_all if active_sessions_all else []
-
-    voice_count = sum(1 for _, s in display_sessions if s.channel == "voice")
-    chat_count = sum(1 for _, s in display_sessions if s.channel != "voice")
+    async with async_session() as session:
+        # Totals via COUNT in SQL — sequential on same session (SQLAlchemy async session is not concurrent-safe)
+        total_q = select(func.count()).select_from(ContactSessionRecord).where(
+            ContactSessionRecord.contact_id.in_(contact_ids), real_talk
+        )
+        voice_q = select(func.count()).select_from(ContactSessionRecord).where(
+            ContactSessionRecord.contact_id.in_(contact_ids),
+            ContactSessionRecord.channel == "voice",
+            real_talk,
+        )
+        chat_q = select(func.count()).select_from(ContactSessionRecord).where(
+            ContactSessionRecord.contact_id.in_(contact_ids),
+            ContactSessionRecord.channel != "voice",
+            real_talk,
+        )
+        week_q = select(func.count()).select_from(ContactSessionRecord).where(
+            ContactSessionRecord.contact_id.in_(contact_ids),
+            real_talk,
+            ContactSessionRecord.started_at >= since_week,
+        )
+        recent_q = (
+            select(ContactSessionRecord)
+            .where(ContactSessionRecord.contact_id.in_(contact_ids), real_talk)
+            .order_by(ContactSessionRecord.started_at.desc())
+            .limit(25)
+        )
+        total_sessions = await session.scalar(total_q)
+        voice_count = await session.scalar(voice_q)
+        chat_count = await session.scalar(chat_q)
+        week_count = await session.scalar(week_q)
+        recent_res = await session.execute(recent_q)
+        recent_rows = list(recent_res.scalars().all())
 
     recent_sessions = []
-    for contact, session in sorted(
-        display_sessions,
-        key=lambda pair: pair[1].started_at or datetime.min.replace(tzinfo=timezone.utc),
-        reverse=True,
-    ):
+    for s in recent_rows:
+        c = contact_map.get(s.contact_id)
+        if not c:
+            continue
         recent_sessions.append({
-            "session_id": session.session_id,
-            "contact_id": contact.contact_id,
-            "name": contact.name,
-            "channel": session.channel or "voice",
-            "started_at": session.started_at.isoformat() if session.started_at else None,
-            "message_count": session.message_count or 0,
-            "has_transcript": bool(session.conversation_id),
+            "session_id": s.session_id,
+            "contact_id": c.contact_id,
+            "name": c.name,
+            "channel": s.channel or "voice",
+            "started_at": s.started_at.isoformat() if s.started_at else None,
+            "message_count": s.message_count or 0,
+            "has_transcript": bool(s.conversation_id),
             "agent_name": agent_name,
             "business_name": business_name,
         })
@@ -237,11 +244,11 @@ async def overview(identity: Identity = Depends(get_identity)):
 
     return {
         "totals": {
-            "total_sessions": len(display_sessions),
-            "conversations": len(display_sessions),
-            "conversations_this_week": len([p for p in display_sessions if (_started(p[1]) or since_week) >= since_week]),
-            "voice_calls": voice_count,
-            "chat_sessions": chat_count,
+            "total_sessions": int(total_sessions or 0),
+            "conversations": int(total_sessions or 0),
+            "conversations_this_week": int(week_count or 0),
+            "voice_calls": int(voice_count or 0),
+            "chat_sessions": int(chat_count or 0),
             "people": len(contacts_list),
             "unique_users": max(len(unique_names), 1 if contacts_list else 0),
             "active_people": sum(
@@ -409,7 +416,7 @@ async def open_link(request: Request, response: Response, body: OpenLinkRequest)
     except contacts.ContactError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
 
-    if record.pin and body.pin != record.pin:
+    if record.pin and not contacts.verify_pin(body.pin or "", record.pin, salt=record.token_hash):
         raise HTTPException(status_code=401, detail="Enter the PIN you were given.")
 
     import hashlib

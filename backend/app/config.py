@@ -15,14 +15,13 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
 class Settings(BaseSettings):
     # Groq Configuration
     GROQ_API_KEY: str
-    # Override via GROQ_MODEL in .env. Examples on Groq free tier:
-    #   llama-3.1-8b-instant     (30k TPM, fast)
-    #   llama-3.3-70b-versatile  (12k TPM)
-    #   qwen/qwen3-32b           (~6k TPM, capable)
-    #   openai/gpt-oss-20b       (8k TPM)
+    # Override via GROQ_MODEL in .env. Active Groq models (as of 08/16/26):
+    #   openai/gpt-oss-20b  (1k tok/s, fastest, replaces llama-3.1-8b retired)
+    #   openai/gpt-oss-120b (500 tok/s, premium, replaces llama-3.3-70b retired)
+    #   qwen/qwen3.6-27b    (500 tok/s, balanced, replaces qwen3-32b retired 07/17/26)
     GROQ_MODEL: str = "openai/gpt-oss-20b"
     # Vision model used automatically when images are in context.
-    GROQ_VISION_MODEL: str = "meta-llama/llama-4-scout-17b-16e-instruct"
+    GROQ_VISION_MODEL: str = "qwen/qwen3.6-27b"
     
     # Embedding Model
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"

@@ -9,6 +9,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { ScribeMark } from "../Logo";
 import { clearWorkspaceCache } from "../lib/workspaceCache";
 
 type AuthMode = "signin" | "signup";
@@ -69,17 +70,32 @@ export default function SignInPage() {
   }
 
   return (
-    <main className="signin-page">
-      <form className="signin-card ds-animate-scale" onSubmit={submit}>
-        <div className="signin-brand">
-          <span className="signin-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none">
-              <path d="M7 4h7l4 4v12H7z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-              <path d="M14 4v4h4" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-            </svg>
+    <div className="signin-page">
+      <header className="signin-header">
+        <Link href="/" className="signin-header-brand">
+          <span className="signin-header-mark" aria-hidden="true">
+            <ScribeMark className="w-5 h-5" />
           </span>
-          <span className="signin-brand-text">Scribe business console</span>
-        </div>
+          <span className="signin-header-text">Scribe</span>
+        </Link>
+        <nav className="signin-header-nav" aria-label="Secondary">
+          <Link href="/directory" className="signin-header-link">
+            Directory ↗
+          </Link>
+          <Link href="/" className="signin-header-link">
+            Home
+          </Link>
+        </nav>
+      </header>
+
+      <main className="signin-main">
+        <form className="signin-card ds-animate-scale" onSubmit={submit}>
+          <div className="signin-brand">
+            <span className="signin-mark" aria-hidden="true">
+              <ScribeMark className="w-4 h-4" />
+            </span>
+            <span className="signin-brand-text">Scribe business console</span>
+          </div>
 
         {/* Mode switcher tabs */}
         <div className="chan-tabs" role="tablist" style={{ marginTop: "4px" }}>
@@ -182,15 +198,16 @@ export default function SignInPage() {
             : "Sign in"}
         </button>
 
-        <div className="pt-2 border-t mt-2" style={{ borderColor: "var(--owner-border)" }}>
-          <p className="signin-foot text-center">
-            Want to test chat with your own API keys?{" "}
-            <Link href="/" className="font-semibold underline" style={{ color: "var(--owner-text)" }}>
-              Open personal demo →
-            </Link>
-          </p>
-        </div>
-      </form>
-    </main>
+          <div className="pt-3 border-t mt-1" style={{ borderColor: "var(--claude-border)" }}>
+            <p className="signin-foot text-center">
+              Want to test chat with your own API keys?{" "}
+              <Link href="/" className="font-semibold underline">
+                Open personal demo →
+              </Link>
+            </p>
+          </div>
+        </form>
+      </main>
+    </div>
   );
 }

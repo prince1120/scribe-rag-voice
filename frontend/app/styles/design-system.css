@@ -82,6 +82,18 @@
   --color-success-soft: #E3F0E8;
   --color-warning: #9A6B1F;
   --color-warning-soft: #F7EEDC;
+  /* ---- Claude palette (warm cream — first image) ---- */
+  --claude-accent: #4854A8;
+  --claude-accent-soft: #DEE2F2;
+  --claude-bg: #F0EEE6;
+  --claude-surface: #FAF9F5;
+  --claude-surface-2: #F5F3EB;
+  --claude-border: #DDD9CC;
+  --claude-border-strong: #C9C4B4;
+  --claude-text: #181818;
+  --claude-text-2: #2C2B28;
+  --claude-muted: #87847A;
+  --claude-bubble: #2A2C36;
 
   /* ---- Layout ---- */
   --sidebar-width: 17.5rem;

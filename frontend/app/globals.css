@@ -3,6 +3,7 @@
 @import "./styles/design-system.css";
 @import "./styles/chat.css";
 @import "./styles/owner.css";
+@import "./styles/responsive-polish.css";
 
 @theme {
   --breakpoint-sm: 640px;
@@ -11,18 +12,19 @@
 }
 
 :root {
-  /* Claude.ai authentic palette */
-  --claude-bg: #F0EEE6;          /* page — warm manuscript beige */
-  --claude-sidebar: #E9E6DC;     /* sidebar — slightly darker warm */
-  --claude-surface: #FAF9F5;     /* raised cards / composer */
-  --claude-surface-2: #F5F3EB;   /* hover surface */
-  --claude-border: #DDD9CC;      /* subtle warm border */
+  /* Warm cream manuscript — as in first image (#F0EEE6 background, #4854A8 accent).
+     Keep this as single source of truth; design-system mirrors these values. */
+  --claude-bg: #F0EEE6;
+  --claude-sidebar: #E9E6DC;
+  --claude-surface: #FAF9F5;
+  --claude-surface-2: #F5F3EB;
+  --claude-border: #DDD9CC;
   --claude-border-strong: #C9C4B4;
   --claude-text: #181818;
   --claude-text-2: #2C2B28;
   --claude-muted: #87847A;
-  --claude-bubble: #2A2C36;      /* dark slate user bubble */
-  --claude-accent: #4854A8;      /* deep indigo */
+  --claude-bubble: #2A2C36;
+  --claude-accent: #4854A8;
   --claude-accent-hover: #353F8A;
   --claude-accent-soft: #DEE2F2;
 

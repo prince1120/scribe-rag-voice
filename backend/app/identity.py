@@ -49,8 +49,9 @@ class Identity:
     def can_manage_documents(self) -> bool:
         """Contacts ask questions; they do not curate the library. Without
         this, an invite link would carry the right to delete every document
-        it can read."""
-        return self.is_owner
+        it can read. Demo users (personal app) manage their own isolated
+        tenant, so they are allowed — only contacts are blocked."""
+        return self.contact_id is None
 
 
 def resolve_identity(
