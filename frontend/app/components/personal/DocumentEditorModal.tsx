@@ -86,7 +86,7 @@ export function DocumentEditorModal({ docEditor, setDocEditor, onSave }: Documen
 
           {docEditor.editable && !docEditor.loading && (
             <div className="px-5 py-3 border-t flex-shrink-0 flex items-center justify-between gap-2" style={{ borderColor: "var(--claude-border)" }}>
-              <span className="text-[11px]" style={{ color: "#DC2626" }}>
+              <span className="text-[11px]" style={{ color: "var(--color-danger)" }}>
                 {docEditor.error || ""}
               </span>
               <div className="flex items-center gap-2">

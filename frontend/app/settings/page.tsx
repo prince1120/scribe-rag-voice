@@ -226,7 +226,7 @@ export default function SettingsPage() {
         {/* ── Card 1: Business Identity ────────────────────────── */}
         <form style={S.card} onSubmit={saveProfile}>
           <div style={S.cardHeader}>
-            <div style={{ ...S.iconWrap, background: "#ede9fe", color: "var(--claude-accent)" }}>
+            <div style={{ ...S.iconWrap, background: "var(--claude-accent-soft)", color: "var(--claude-accent)" }}>
               <Building2 size={18} />
             </div>
             <div>
@@ -270,7 +270,7 @@ export default function SettingsPage() {
           {profileError && <p style={S.errorText}>{profileError}</p>}
           {profileSaved && (
             <div style={S.successBanner}>
-              <CheckCircle2 size={15} style={{ color: "#16a34a" }} />
+              <CheckCircle2 size={15} style={{ color: "var(--color-success)" }} />
               <span>Business profile saved successfully.</span>
             </div>
           )}
@@ -296,7 +296,7 @@ export default function SettingsPage() {
 
         <form style={S.card} onSubmit={saveKeys}>
           <div style={S.cardHeader}>
-            <div style={{ ...S.iconWrap, background: "#e0e7ff", color: "var(--claude-accent)" }}>
+            <div style={{ ...S.iconWrap, background: "var(--claude-accent-soft)", color: "var(--claude-accent)" }}>
               <KeyRound size={18} />
             </div>
             <div>
@@ -429,7 +429,7 @@ export default function SettingsPage() {
           {keyError && <p style={S.errorText}>{keyError}</p>}
           {keysSaved && (
             <div style={S.successBanner}>
-              <CheckCircle2 size={15} style={{ color: "#16a34a" }} />
+              <CheckCircle2 size={15} style={{ color: "var(--color-success)" }} />
               <span>Provider API keys updated successfully.</span>
             </div>
           )}
@@ -445,7 +445,7 @@ export default function SettingsPage() {
         {/* ── Card 3: Security & Passwords ─────────────────────── */}
         <form style={S.card} onSubmit={save}>
           <div style={S.cardHeader}>
-            <div style={{ ...S.iconWrap, background: "#fdf2f8", color: "var(--color-danger)" }}>
+            <div style={{ ...S.iconWrap, background: "var(--color-danger-soft)", color: "var(--color-danger)" }}>
               <Lock size={18} />
             </div>
             <div>
@@ -510,7 +510,7 @@ export default function SettingsPage() {
           {error && <p style={S.errorText}>{error}</p>}
           {done && (
             <div style={S.successBanner}>
-              <CheckCircle2 size={15} style={{ color: "#16a34a" }} />
+              <CheckCircle2 size={15} style={{ color: "var(--color-success)" }} />
               <span>Owner credentials saved successfully.</span>
             </div>
           )}
@@ -668,7 +668,7 @@ const S: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     padding: "2px 6px",
     borderRadius: 6,
-    background: "#f0fdf4",
+    background: "var(--color-success-soft)",
     color: "var(--color-success)",
     border: "1px solid var(--claude-border-strong)",
     whiteSpace: "nowrap",
@@ -678,7 +678,7 @@ const S: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     padding: "2px 6px",
     borderRadius: 6,
-    background: "#fef2f2",
+    background: "var(--color-danger-soft)",
     color: "var(--color-danger)",
     border: "1px solid var(--color-danger-soft)",
     whiteSpace: "nowrap",
@@ -725,7 +725,7 @@ const S: Record<string, React.CSSProperties> = {
     gap: 6,
     padding: "8px 12px",
     borderRadius: 8,
-    background: "#f0fdf4",
+    background: "var(--color-success-soft)",
     border: "1px solid var(--claude-border-strong)",
     color: "var(--color-success)",
     fontSize: 12,

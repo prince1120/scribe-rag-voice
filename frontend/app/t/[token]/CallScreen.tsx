@@ -159,6 +159,7 @@ const S = {
     width: "100%",
     flex: 1,
     minHeight: 0,
+    maxHeight: "calc(100vh - 200px)",
     overflowY: "auto" as const,
     borderRadius: 14,
     border: "1px solid var(--claude-border)",
@@ -207,17 +208,17 @@ const S = {
     borderRadius: 9999,
     border:
       variant === "muted"
-        ? "1.5px solid #d97706"
+        ? "1.5px solid var(--color-warning)"
         : variant === "end"
         ? "none"
         : "1.5px solid var(--claude-border)",
     background:
       variant === "muted"
-        ? "#fef3c7"
+        ? "var(--color-warning-soft)"
         : variant === "end"
-        ? "#dc2626"
+        ? "#EF4444"
         : "var(--claude-surface)",
-    color: variant === "muted" ? "#92400e" : variant === "end" ? "#fff" : "var(--claude-text)",
+    color: variant === "muted" ? "#92400e" : variant === "end" ? "var(--claude-surface)" : "var(--claude-text)",
     cursor: "pointer",
     fontSize: 10,
     fontWeight: 600,
@@ -232,7 +233,7 @@ const S = {
     borderRadius: 9999,
     fontSize: 14,
     fontWeight: 600,
-    color: "#fff",
+    color: "var(--claude-surface)",
     background: "var(--claude-accent)",
     border: "none",
     cursor: "pointer",
@@ -648,7 +649,7 @@ export function CallScreen({ name }: { name?: string }) {
                   width: 6,
                   height: 6,
                   borderRadius: 9999,
-                  background: "#22c55e",
+                  background: "var(--color-success)",
                   animation: "pulse 1.5s ease-in-out infinite",
                 }}
               />
@@ -666,7 +667,7 @@ export function CallScreen({ name }: { name?: string }) {
           <p style={S.subText}>Tap below to connect your voice with the AI assistant.</p>
         )}
         {error && (
-          <p style={{ ...S.subText, color: "#dc2626" }}>{error}</p>
+          <p style={{ ...S.subText, color: "var(--color-danger)" }}>{error}</p>
         )}
 
         {/* Animated Voice Orb */}

@@ -148,8 +148,9 @@ class VoiceSettings(BaseSettings):
     VOICE_MAX_CALL_SECONDS: int = 0
     # Ends a call after this much silence with nobody speaking. This is the one
     # that catches a line left open: a caller who connects and walks away costs
-    # exactly as much as one who is talking, and never hangs up.
-    VOICE_IDLE_TIMEOUT_SECONDS: int = 0
+    # exactly as much as one who is talking, and never hangs up. The watcher
+    # asks "are you there?" at this mark and ends 10s later if still nothing.
+    VOICE_IDLE_TIMEOUT_SECONDS: int = 15
 
     # ---- Latency / turn-taking tuning ---------------------------------
     # These make the agent feel like a real voice assistant: it responds

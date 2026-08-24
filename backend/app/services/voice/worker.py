@@ -323,6 +323,7 @@ def _enforce_call_ceilings(session, params: SessionParams, room_name: str) -> No
 
     async def _watch() -> None:
         started = time.monotonic()
+        nudged = False
         while True:
             await asyncio.sleep(2.0)
             now = time.monotonic()
@@ -333,17 +334,49 @@ def _enforce_call_ceilings(session, params: SessionParams, room_name: str) -> No
                 )
                 break
             if idle_seconds > 0 and now - last_activity >= idle_seconds:
-                logger.info(
-                    "[LIMIT %s] ending call: %ds with nobody speaking",
-                    room_name, idle_seconds,
-                )
+                if not nudged:
+                    # First stage: check in before giving up. A caller who
+                    # stepped away may still be there — muted, thinking, or
+                    # holding the phone wrong. add_to_chat_ctx=False so the
+                    # nudge itself does not count as activity and restart
+                    # this very timer.
+                    nudged = True
+                    logger.info(
+                        "[LIMIT %s] %ds silent — asking if the caller is there",
+                        room_name, idle_seconds,
+                    )
+                    try:
+                        await session.say(
+                            "Are you there? I'm still on the line.",
+                            allow_interruptions=True,
+                            add_to_chat_ctx=False,
+                        )
+                    except Exception:
+                        logger.debug("Could not speak the nudge", exc_info=True)
+                    # Ten seconds to answer. Any turn from the caller touches
+                    # last_activity via _touch, which ends this grace window.
+                    deadline = time.monotonic() + 10.0
+                    answered = False
+                    while time.monotonic() < deadline:
+                        await asyncio.sleep(1.0)
+                        if time.monotonic() - last_activity < 2.0:
+                            answered = True
+                            break
+                    if answered:
+                        nudged = False
+                        continue
+                    logger.info(
+                        "[LIMIT %s] ending call: no answer within 10s of the nudge",
+                        room_name,
+                    )
                 break
         try:
             # Said before hanging up: a call that simply goes dead reads as a
             # dropped connection, and the caller redials — which costs more than
             # the call that was just ended.
             await session.say(
-                "We'll have to stop here for now. Thanks for calling, goodbye.",
+                "I didn't get anything from your side, so I'm going to end the "
+                "call. Thanks for calling, goodbye.",
                 allow_interruptions=False,
             )
         except Exception:

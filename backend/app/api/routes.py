@@ -8,6 +8,8 @@ import json
 from uuid import uuid4
 from datetime import datetime
 import logging
+from app.services.guardrails import is_prompt_injection, filter_output
+from app.services.guardrails.prompt_wrapper import build_hierarchy_header
 
 from app.models.schemas import (
     QueryRequest, QueryResponse, DocumentUploadResponse,
@@ -544,6 +546,18 @@ async def query_documents(
         tenant_id = identity.tenant_id
         x_user_groq_key = identity.groq_key
 
+        # Guardrail: direct injection in query — block before retrieval/LLM (saves tokens)
+        inj = is_prompt_injection(body.query)
+        if inj.is_injection:
+            logger.warning("blocked injection tenant=%s reason=%s", tenant_id, inj.reason)
+            return QueryResponse(
+                answer="I can help with your documents, but I can't follow instructions to ignore my guidelines. Try rephrasing your question about the documents.",
+                citations=[],
+                conversation_id=body.conversation_id or "",
+                processing_time_ms=int((time.time() - start_time) * 1000),
+                retrieval_ms=0,
+            )
+
         # Get conversation history if available
         conversation_history = None
         if body.conversation_id:
@@ -717,6 +731,12 @@ async def query_stream(
 
         tenant_id = identity.tenant_id
         x_user_groq_key = identity.groq_key
+
+        inj_s = is_prompt_injection(body.query)
+        if inj_s.is_injection:
+            logger.warning("blocked injection stream tenant=%s reason=%s", tenant_id, inj_s.reason)
+            msg = json.dumps({"text": "I can help with your documents, but I can't follow instructions to ignore my guidelines."})
+            return StreamingResponse(iter([f"data: {msg}\n\n"]), media_type="text/event-stream")
 
         # Get conversation history
         _t = time.time()

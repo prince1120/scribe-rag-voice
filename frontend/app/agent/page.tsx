@@ -410,20 +410,20 @@ export default function AgentPage() {
           <div
             style={{
               ...S.statusCard,
-              background: isLive ? "#f0fdf4" : "var(--claude-bg)",
-              borderColor: isLive ? "#bbf7d0" : "var(--claude-border)",
+              background: isLive ? "var(--color-success-soft)" : "var(--claude-bg)",
+              borderColor: isLive ? "var(--color-success-soft)" : "var(--claude-border)",
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span
                 style={{
                   ...S.statusDot,
-                  background: isLive ? "#16a34a" : "var(--claude-text-2)",
-                  boxShadow: isLive ? "0 0 8px #22c55e" : "none",
+                  background: isLive ? "var(--color-success)" : "var(--claude-text-2)",
+                  boxShadow: isLive ? "0 0 8px var(--color-success)" : "none",
                 }}
               />
               <div>
-                <span style={{ fontSize: 13, fontWeight: 700, color: isLive ? "#15803d" : "var(--claude-text-2)" }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: isLive ? "var(--color-success)" : "var(--claude-text-2)" }}>
                   {isLive ? "Assistant is Live" : "Draft Mode (Offline)"}
                 </span>
                 <p style={{ margin: "2px 0 0", fontSize: 11, color: isLive ? "#166534" : "var(--claude-text-2)" }}>
@@ -450,8 +450,8 @@ export default function AgentPage() {
                 style={{
                   ...S.deployBtn,
                   background: isLive ? "var(--claude-surface)" : "var(--claude-accent)",
-                  color: isLive ? "#dc2626" : "var(--claude-surface)",
-                  border: isLive ? "1px solid #fecaca" : "none",
+                  color: isLive ? "var(--color-danger)" : "var(--claude-surface)",
+                  border: isLive ? "1px solid var(--color-danger-soft)" : "none",
                 }}
               >
                 {deploying ? "Working…" : isLive ? "Take Offline" : "Deploy Live"}
@@ -542,7 +542,7 @@ export default function AgentPage() {
         {/* ── Card 1: Identity & Name ─────────────────────────── */}
         <div style={S.card}>
           <div style={S.cardHeader}>
-            <div style={{ ...S.iconWrap, background: "#ede9fe", color: "var(--claude-accent)" }}>
+            <div style={{ ...S.iconWrap, background: "var(--claude-accent-soft)", color: "var(--claude-accent)" }}>
               <Bot size={18} />
             </div>
             <div>
@@ -601,7 +601,7 @@ export default function AgentPage() {
                 <span
                   style={{
                     ...S.channelDot,
-                    background: ready ? "#22c55e" : "var(--claude-border)",
+                    background: ready ? "var(--color-success)" : "var(--claude-border)",
                   }}
                   title={ready ? "Configured & Ready" : "Prompt required"}
                 />
@@ -613,7 +613,7 @@ export default function AgentPage() {
         {/* ── Card 2: Conversational Prompt ───────────────────── */}
         <div style={S.card}>
           <div style={S.cardHeader}>
-            <div style={{ ...S.iconWrap, background: isVoice ? "#fdf2f8" : "#eff6ff", color: isVoice ? "#db2777" : "var(--claude-accent)" }}>
+            <div style={{ ...S.iconWrap, background: isVoice ? "var(--color-danger-soft)" : "var(--claude-accent-soft)", color: isVoice ? "var(--color-danger)" : "var(--claude-accent)" }}>
               {isVoice ? <Mic size={18} /> : <MessageSquare size={18} />}
             </div>
             <div>
@@ -847,7 +847,7 @@ style={{ width: 16, height: 16, accentColor: "var(--claude-accent)", cursor: "po
         <AgentDocuments />
 
         {/* ── Card 5: Danger Zone / Reset ─────────────────────── */}
-        <div style={{ ...S.card, borderColor: "#fee2e2", background: "#fef2f2" }}>
+        <div style={{ ...S.card, borderColor: "var(--color-danger-soft)", background: "var(--color-danger-soft)" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
             <div>
               <span style={{ fontSize: 13, fontWeight: 700, color: "#991b1b" }}>
@@ -908,9 +908,9 @@ style={{ width: 16, height: 16, accentColor: "var(--claude-accent)", cursor: "po
               disabled={deploying || !(channels?.voice || channels?.chat)}
               style={{
                 ...S.mainDeployBtn,
-                background: isLive ? "#fee2e2" : "#16a34a",
+                background: isLive ? "var(--color-danger-soft)" : "var(--color-success)",
                 color: isLive ? "#b91c1c" : "var(--claude-surface)",
-                border: isLive ? "1px solid #fecaca" : "none",
+                border: isLive ? "1px solid var(--color-danger-soft)" : "none",
               }}
             >
               <Radio size={15} />
@@ -925,7 +925,7 @@ style={{ width: 16, height: 16, accentColor: "var(--claude-accent)", cursor: "po
           </div>
 
           {saved && (
-            <span style={{ fontSize: 13, fontWeight: 600, color: "#16a34a", display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: "var(--color-success)", display: "flex", alignItems: "center", gap: 6 }}>
               <CheckCircle2 size={16} /> All configuration saved & updated
             </span>
           )}
@@ -1203,7 +1203,7 @@ const S: Record<string, React.CSSProperties> = {
     borderRadius: 6,
     border: "1px solid #fca5a5",
     background: "var(--claude-surface)",
-    color: "#dc2626",
+    color: "var(--color-danger)",
     fontSize: 12,
     fontWeight: 600,
     cursor: "pointer",
@@ -1212,7 +1212,7 @@ const S: Record<string, React.CSSProperties> = {
     padding: "6px 12px",
     borderRadius: 6,
     border: "none",
-    background: "#dc2626",
+    background: "var(--color-danger)",
     color: "var(--claude-surface)",
     fontSize: 12,
     fontWeight: 600,
@@ -1237,8 +1237,8 @@ const S: Record<string, React.CSSProperties> = {
   errorBanner: {
     padding: "12px 16px",
     borderRadius: 10,
-    background: "#fef2f2",
-    border: "1px solid #fecaca",
+    background: "var(--color-danger-soft)",
+    border: "1px solid var(--color-danger-soft)",
     color: "#b91c1c",
     fontSize: 13,
     fontWeight: 500,

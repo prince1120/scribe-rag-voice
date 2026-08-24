@@ -122,10 +122,14 @@ export default function DirectoryPage() {
   }, []);
 
   const handleConnect = async (agent: AgentCard, mode: "voice" | "chat") => {
+    if (!callerName.trim()) {
+      setError("Please enter your name.");
+      return;
+    }
     setConnectingId(agent.handle);
     setError("");
-    const finalName = callerName.trim() || "Guest Caller";
-    if (typeof window !== "undefined" && finalName !== "Guest Caller") {
+    const finalName = callerName.trim();
+    if (typeof window !== "undefined") {
       localStorage.setItem("directory_caller_name", finalName);
     }
 
@@ -457,10 +461,10 @@ export default function DirectoryPage() {
                         style={{
                           borderColor: !agent.has_voice ? "transparent" : "var(--claude-border)",
                           background: !agent.has_voice ? "var(--claude-accent)" : "var(--claude-surface)",
-                          color: !agent.has_voice ? "#fff" : "var(--claude-text-2)",
+                          color: !agent.has_voice ? "var(--claude-surface)" : "var(--claude-text-2)",
                         }}
                       >
-                        <MessageSquare className="w-3.5 h-3.5" style={{ color: !agent.has_voice ? "#fff" : "var(--claude-muted)" }} />
+                        <MessageSquare className="w-3.5 h-3.5" style={{ color: !agent.has_voice ? "var(--claude-surface)" : "var(--claude-muted)" }} />
                         <span>{isConnecting && connectMode === "chat" ? "Connecting…" : "Chat via Text"}</span>
                       </button>
                     )}
@@ -517,14 +521,16 @@ export default function DirectoryPage() {
               <>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-semibold" style={{ color: "var(--claude-text)" }}>
-                    Your Name <span className="font-normal text-[var(--claude-muted)]">(optional)</span>
+                    Your Name <span style={{ color: "var(--color-danger)" }}>*</span>
                   </label>
                   <input
                     type="text"
                     value={callerName}
                     onChange={(e) => setCallerName(e.target.value)}
-                    placeholder="e.g. Rahul Sharma"
-                    className="rounded-xl border px-3 py-2 text-xs outline-none focus:border-[var(--claude-accent)]"
+                    placeholder="Rahul Sharma"
+                    required
+                    maxLength={80}
+                    className="rounded-xl border px-3 py-2.5 text-sm outline-none focus:border-[var(--claude-accent)] focus:ring-2 focus:ring-[var(--claude-accent-soft)]"
                     style={{
                       borderColor: "var(--claude-border)",
                       background: "var(--claude-bg)",
@@ -538,8 +544,8 @@ export default function DirectoryPage() {
                   <button
                     type="button"
                     onClick={() => void handleConnect(connectModalAgent, connectMode)}
-                    disabled={connectingId !== null}
-                    className="flex-1 py-2.5 rounded-xl text-xs font-semibold text-white shadow-xs cursor-pointer"
+                    disabled={connectingId !== null || !callerName.trim()}
+                    className="flex-1 py-2.5 rounded-xl text-xs font-semibold text-white shadow-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{ background: "var(--claude-accent)" }}
                   >
                     {connectingId !== null ? "Creating session…" : `Connect & Start ${connectMode === "voice" ? "Call" : "Chat"} →`}

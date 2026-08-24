@@ -40,7 +40,7 @@ class ConnectRequest(BaseModel):
     # The opaque public handle from /agents, not a tenant id. The tenant id is
     # the key every other table joins on and is no longer published.
     handle: str = Field(min_length=8, max_length=32)
-    name: Optional[str] = Field(default=None, max_length=100)
+    name: str = Field(min_length=1, max_length=100, description="Full name of the caller — used to greet and attribute chats")
     mode: str = Field(default="voice", pattern="^(voice|chat|both)$")
 
 
@@ -147,7 +147,9 @@ async def connect_to_agent(
                 ),
             )
 
-    caller_name = (body.name or "").strip() or "Guest Caller"
+    caller_name = body.name.strip()
+    if not caller_name:
+        raise HTTPException(status_code=400, detail="Name is required.")
     token = contacts.generate_token()
 
     await repositories.create_contact(

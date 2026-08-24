@@ -24,6 +24,7 @@ import {
 import type { CustomModel } from "../lib/customModel";
 import type { PersonalDocument } from "./useDocuments";
 import { ToastType } from "../Toast";
+import { sanitizeQuery } from "../lib/sanitize";
 
 export interface ChatMessage {
   id: string;
@@ -278,7 +279,8 @@ export function useChat(options: UseChatOptions) {
     async (e?: React.FormEvent) => {
       if (e) e.preventDefault();
       if (isLoading) return;
-      if (!input.trim() && chatImages.length === 0) return;
+      const cleanInput = sanitizeQuery(input);
+      if (!cleanInput && chatImages.length === 0) return;
 
       const docs = documentsRef.current;
       const gen = generationRef.current;
@@ -299,7 +301,7 @@ export function useChat(options: UseChatOptions) {
       const userMessage: ChatMessage = {
         id: newMessageId(),
         role: "user",
-        content: input,
+        content: cleanInput,
         images: userImages?.map((i) => i.dataUrl),
       };
       const assistantId = newMessageId();

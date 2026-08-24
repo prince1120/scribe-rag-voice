@@ -162,8 +162,8 @@ export function SettingsPanel({
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0 flex items-center gap-2">
                     {session.groqKey && (
-                      <span className="relative flex-shrink-0 w-2 h-2 rounded-full" style={{ background: "#2e7d5b" }} title="Active">
-                        <span className="absolute inset-0 rounded-full animate-ping" style={{ background: "#2e7d5b", opacity: 0.6 }} />
+                      <span className="relative flex-shrink-0 w-2 h-2 rounded-full" style={{ background: "var(--color-success)" }} title="Active">
+                        <span className="absolute inset-0 rounded-full animate-ping" style={{ background: "var(--color-success)", opacity: 0.6 }} />
                       </span>
                     )}
                     <div className="min-w-0">
@@ -214,7 +214,7 @@ export function SettingsPanel({
                         </button>
                       </div>
                     </div>
-                    <button type="button" onClick={handleEndSession} className="self-start inline-flex items-center gap-1.5 mt-1 text-[12px] font-medium transition-colors" style={{ color: "#c0392b" }}>
+                    <button type="button" onClick={handleEndSession} className="self-start inline-flex items-center gap-1.5 mt-1 text-[12px] font-medium transition-colors" style={{ color: "var(--color-danger)" }}>
                       <LogOut className="w-3.5 h-3.5" />
                       Remove key & end session
                     </button>
@@ -235,8 +235,8 @@ export function SettingsPanel({
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0 flex items-center gap-2">
                     {session.sarvamKey && (
-                      <span className="relative flex-shrink-0 w-2 h-2 rounded-full" style={{ background: "#2e7d5b" }} title="Active">
-                        <span className="absolute inset-0 rounded-full animate-ping" style={{ background: "#2e7d5b", opacity: 0.6 }} />
+                      <span className="relative flex-shrink-0 w-2 h-2 rounded-full" style={{ background: "var(--color-success)" }} title="Active">
+                        <span className="absolute inset-0 rounded-full animate-ping" style={{ background: "var(--color-success)", opacity: 0.6 }} />
                       </span>
                     )}
                     <div className="min-w-0">
@@ -265,7 +265,7 @@ export function SettingsPanel({
                       </div>
                     </div>
                     {session.sarvamKey && (
-                      <button type="button" onClick={handleEndSession} className="self-start inline-flex items-center gap-1.5 mt-1 text-[12px] font-medium transition-colors" style={{ color: "#c0392b" }}>
+                      <button type="button" onClick={handleEndSession} className="self-start inline-flex items-center gap-1.5 mt-1 text-[12px] font-medium transition-colors" style={{ color: "var(--color-danger)" }}>
                         <LogOut className="w-3.5 h-3.5" />
                         Remove key & end session
                       </button>
@@ -289,7 +289,7 @@ export function SettingsPanel({
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="font-semibold" style={{ color: "var(--claude-text)" }}>{m.name}</span>
-                          <span className="text-[8px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full" style={{ background: active ? "var(--claude-accent)" : "var(--claude-surface-2)", color: active ? "#fff" : "var(--claude-muted)" }}>{m.tag}</span>
+                          <span className="text-[8px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full" style={{ background: active ? "var(--claude-accent)" : "var(--claude-surface-2)", color: active ? "var(--claude-surface)" : "var(--claude-muted)" }}>{m.tag}</span>
                         </div>
                         <div className="text-[10px] mt-0.5" style={{ color: "var(--claude-muted)" }}>{m.desc}</div>
                       </div>
@@ -304,12 +304,12 @@ export function SettingsPanel({
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="font-semibold" style={{ color: "var(--claude-text)" }}>{m.label}</span>
-                          <span className="text-[8px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full" style={{ background: active ? "var(--claude-accent)" : "var(--claude-surface-2)", color: active ? "#fff" : "var(--claude-muted)" }}>Custom</span>
+                          <span className="text-[8px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full" style={{ background: active ? "var(--claude-accent)" : "var(--claude-surface-2)", color: active ? "var(--claude-surface)" : "var(--claude-muted)" }}>Custom</span>
                         </div>
                         <div className="text-[10px] mt-0.5 truncate" style={{ color: "var(--claude-muted)" }}>{m.model} · {m.baseUrl}</div>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
-                        <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); modelActions.removeCustom(m.id); }} onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); modelActions.removeCustom(m.id); } }} title="Remove this model" aria-label="Remove this model" className="w-6 h-6 inline-flex items-center justify-center rounded-md transition-colors" style={{ color: "#c0392b" }}>
+                        <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); modelActions.removeCustom(m.id); }} onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); modelActions.removeCustom(m.id); } }} title="Remove this model" aria-label="Remove this model" className="w-6 h-6 inline-flex items-center justify-center rounded-md transition-colors" style={{ color: "var(--color-danger)" }}>
                           <Trash2 className="w-3.5 h-3.5" />
                         </span>
                         {active && <Check className="w-3.5 h-3.5" style={{ color: "var(--claude-accent)" }} />}

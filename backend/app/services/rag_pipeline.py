@@ -7,6 +7,8 @@ from typing import List, Dict, Any, Optional
 import logging
 from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_exponential
 import tiktoken
+from app.services.guardrails.prompt_wrapper import wrap_tool_data, build_hierarchy_header
+from app.services.guardrails.output_filter import filter_output
 
 try:
     from PIL import Image
@@ -446,6 +448,8 @@ class RAGPipeline:
         """
         # Build context with token budget so we never exceed Groq's TPM
         context, allowed_ids = self._build_context(context_chunks, max_context_tokens=4500)
+        # Wrap tool data so model treats excerpts as data, not instructions
+        context = wrap_tool_data(context) if context.strip() else context
 
         history_str = self._build_history(conversation_history, max_tokens=500)
 
@@ -453,7 +457,7 @@ class RAGPipeline:
             (c.get("payload", c) or {}).get("is_image") for c in context_chunks
         )
         has_text_context = bool(context.strip())
-        system_prompt = self._build_system_prompt(
+        system_prompt = build_hierarchy_header() + self._build_system_prompt(
             has_images, has_text_context, agent_prompt=agent_prompt,
         )
 
@@ -527,7 +531,12 @@ Answer with citations using ONLY the valid IDs listed above:"""
                 **self._model_extra_kwargs(model_to_use),
             )
 
-            return self._strip_think_tag(response.choices[0].message.content)
+            raw = self._strip_think_tag(response.choices[0].message.content)
+            filtered = filter_output(raw)
+            if filtered.blocked:
+                logger.warning("output blocked reason=%s", filtered.reason)
+                return filtered.text
+            return filtered.text
 
         except Exception as e:
             logger.error(f"Error generating response: {e}")

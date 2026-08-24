@@ -669,7 +669,7 @@ export function VoiceCallModal({
 
   const persona = personaForVoice(selectedVoice);
   const orbCore = agentThinking
-    ? "#d4a73b"
+    ? "var(--color-warning)"
     : agentActive
       ? persona.core
       : persona.accent;
@@ -680,7 +680,7 @@ export function VoiceCallModal({
       data-network={networkWarning ? "weak" : undefined}
       style={{
         background: agentActive
-          ? "radial-gradient(120% 120% at 50% 38%, #E7E9F6 0%, var(--claude-bg) 62%)"
+          ? "radial-gradient(120% 120% at 50% 38%, var(--claude-accent-soft) 0%, var(--claude-bg) 62%)"
           : agentThinking
             ? "radial-gradient(120% 120% at 50% 38%, #FDF9E2 0%, var(--claude-bg) 62%)"
             : "radial-gradient(120% 120% at 50% 40%, var(--claude-surface) 0%, var(--claude-bg) 65%)",
@@ -711,7 +711,7 @@ export function VoiceCallModal({
             className="px-3.5 py-1 rounded-full text-[11px] font-semibold uppercase tracking-wider transition-all duration-200"
             style={{
               background: activeTab === "call" ? "var(--claude-accent)" : "transparent",
-              color: activeTab === "call" ? "#fff" : "var(--claude-text-2)",
+              color: activeTab === "call" ? "var(--claude-surface)" : "var(--claude-text-2)",
             }}
           >
             Call
@@ -723,7 +723,7 @@ export function VoiceCallModal({
             className="px-3.5 py-1 rounded-full text-[11px] font-semibold uppercase tracking-wider transition-all duration-200"
             style={{
               background: activeTab === "sidebar" ? "var(--claude-accent)" : "transparent",
-              color: activeTab === "sidebar" ? "#fff" : "var(--claude-text-2)",
+              color: activeTab === "sidebar" ? "var(--claude-surface)" : "var(--claude-text-2)",
             }}
           >
             {live ? "Transcript" : "Setup"}
@@ -860,7 +860,7 @@ export function VoiceCallModal({
             <div className="flex flex-col items-center gap-2 text-center">
               <p
                 className="font-serif-display text-[32px] sm:text-[36px] leading-tight font-normal tracking-tight"
-                style={{ color: state === "error" ? "#c0392b" : "var(--claude-text)" }}
+                style={{ color: state === "error" ? "var(--color-danger)" : "var(--claude-text)" }}
               >
                 {statusLabel}
               </p>
@@ -894,7 +894,7 @@ export function VoiceCallModal({
                   aria-label="End call"
                   title="End call"
                   className="h-14 px-7 rounded-full inline-flex items-center gap-2 text-white text-sm font-medium transition-transform hover:scale-[1.03] active:scale-95 cursor-pointer"
-                  style={{ background: "#c0392b", boxShadow: "0 10px 30px -8px rgba(192,57,43,0.5)" }}
+                  style={{ background: "var(--color-danger)", boxShadow: "0 10px 30px -8px rgba(192,57,43,0.5)" }}
                 >
                   <PhoneOff className="w-5 h-5" />
                   End call
@@ -1140,7 +1140,7 @@ export function VoiceCallModal({
                       className="px-4 h-7 rounded-full text-[12px] font-medium capitalize transition-colors"
                       style={{
                         background: gender === g ? "var(--claude-accent)" : "transparent",
-                        color: gender === g ? "#fff" : "var(--claude-text-2)",
+                        color: gender === g ? "var(--claude-surface)" : "var(--claude-text-2)",
                       }}
                     >
                       {g}
@@ -1299,7 +1299,7 @@ export function VoiceCallModal({
                   style={{
                     color:
                       countWords(draftPrompt) >= MAX_CUSTOM_PROMPT_WORDS
-                        ? "#c0392b"
+                        ? "var(--color-danger)"
                         : "var(--claude-muted)",
                   }}
                 >

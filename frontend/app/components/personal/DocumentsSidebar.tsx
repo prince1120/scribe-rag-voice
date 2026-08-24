@@ -126,7 +126,7 @@ export function DocumentsSidebar({
           Paste text instead
         </button>
         {uploadError && (
-          <p className="mt-2 text-[11px] leading-snug px-1" style={{ color: "var(--claude-danger, #d9534f)" }}>
+          <p className="mt-2 text-[11px] leading-snug px-1" style={{ color: "var(--claude-danger, var(--color-danger))" }}>
             {uploadError}
           </p>
         )}
@@ -243,8 +243,8 @@ export function DocumentsSidebar({
                   className="p-1.5 rounded-md opacity-0 group-hover:opacity-100 transition-opacity"
                   style={{ color: "var(--claude-muted)" }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "#FEE2E2";
-                    e.currentTarget.style.color = "#DC2626";
+                    e.currentTarget.style.background = "var(--color-danger-soft)";
+                    e.currentTarget.style.color = "var(--color-danger)";
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.background = "transparent";
@@ -277,7 +277,7 @@ export function DocumentsSidebar({
               className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md font-medium transition-colors"
               style={{ color: "var(--claude-muted)" }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.color = "#d9534f";
+                e.currentTarget.style.color = "var(--color-danger)";
                 e.currentTarget.style.background = "rgba(217, 83, 79, 0.1)";
               }}
               onMouseLeave={(e) => {

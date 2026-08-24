@@ -307,7 +307,7 @@ input[type="range"].custom-range-slider::-moz-range-thumb:hover {
   padding: 2rem;
   border: 1px solid var(--claude-border);
   border-radius: 14px;
-  background: var(--claude-surface, #fff);
+  background: var(--claude-surface, var(--claude-surface));
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
@@ -347,7 +347,7 @@ input[type="range"].custom-range-slider::-moz-range-thumb:hover {
 .gate-error {
   margin: 0;
   font-size: 0.85rem;
-  color: #B4342B;
+  color: var(--color-danger);
 }
 
 .gate-button {
@@ -355,7 +355,7 @@ input[type="range"].custom-range-slider::-moz-range-thumb:hover {
   border: none;
   border-radius: 9px;
   background: var(--claude-accent);
-  color: #fff;
+  color: var(--claude-surface);
   font-size: 0.95rem;
   font-weight: 500;
   cursor: pointer;

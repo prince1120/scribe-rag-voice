@@ -324,10 +324,10 @@ export default function DashboardPage() {
                       <div
                         style={{
                           ...S.avatar,
-                          background: session.channel === "voice" ? "#fdf2f8" : "#eff6ff",
-                          color: session.channel === "voice" ? "#db2777" : "var(--claude-accent-hover)",
+                          background: session.channel === "voice" ? "var(--color-danger-soft)" : "var(--claude-accent-soft)",
+                          color: session.channel === "voice" ? "var(--color-danger)" : "var(--claude-accent-hover)",
                           border:
-                            session.channel === "voice" ? "1px solid #fbcfe8" : "1px solid #bfdbfe",
+                            session.channel === "voice" ? "1px solid var(--color-danger-soft)" : "1px solid var(--claude-border)",
                           marginTop: 2,
                         }}
                       >
@@ -343,7 +343,7 @@ export default function DashboardPage() {
                           <span
                             style={{
                               ...S.channelPill,
-                              background: session.channel === "voice" ? "#fce7f3" : "#dbeafe",
+                              background: session.channel === "voice" ? "var(--color-danger-soft)" : "var(--claude-accent-soft)",
                               color: session.channel === "voice" ? "#be185d" : "#1d4ed8",
                             }}
                           >
@@ -454,7 +454,7 @@ export default function DashboardPage() {
                     <span
                       style={{
                         ...S.channelPill,
-                        background: activeSession.channel === "voice" ? "#fce7f3" : "#dbeafe",
+                        background: activeSession.channel === "voice" ? "var(--color-danger-soft)" : "var(--claude-accent-soft)",
                         color: activeSession.channel === "voice" ? "#be185d" : "#1d4ed8",
                       }}
                     >
@@ -488,7 +488,7 @@ export default function DashboardPage() {
 
                     {/* Turn 1: Assistant Skeleton */}
                     <div style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: "80%" }}>
-                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#ede9fe", flexShrink: 0 }} />
+                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--claude-accent-soft)", flexShrink: 0 }} />
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
                         <div style={{ padding: "12px 16px", borderRadius: "4px 16px 16px 16px", background: "var(--claude-bg)", border: "1px solid var(--claude-surface-2)", display: "flex", flexDirection: "column", gap: 8, width: 240 }}>
                           <div style={{ width: "90%", height: 12, background: "var(--claude-border)", borderRadius: 4 }} />
@@ -500,16 +500,16 @@ export default function DashboardPage() {
                     {/* Turn 2: User Skeleton */}
                     <div style={{ display: "flex", gap: 10, alignItems: "flex-start", justifyContent: "flex-end", maxWidth: "80%", alignSelf: "flex-end" }}>
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end", width: "100%" }}>
-                        <div style={{ padding: "12px 16px", borderRadius: "16px 4px 16px 16px", background: "#eff6ff", border: "1px solid #dbeafe", display: "flex", flexDirection: "column", gap: 8, width: 190 }}>
-                          <div style={{ width: "85%", height: 12, background: "#bfdbfe", borderRadius: 4 }} />
+                        <div style={{ padding: "12px 16px", borderRadius: "16px 4px 16px 16px", background: "var(--claude-accent-soft)", border: "1px solid var(--claude-accent-soft)", display: "flex", flexDirection: "column", gap: 8, width: 190 }}>
+                          <div style={{ width: "85%", height: 12, background: "var(--claude-border)", borderRadius: 4 }} />
                         </div>
                       </div>
-                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#dbeafe", flexShrink: 0 }} />
+                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--claude-accent-soft)", flexShrink: 0 }} />
                     </div>
 
                     {/* Turn 3: Assistant Skeleton */}
                     <div style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: "80%" }}>
-                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#ede9fe", flexShrink: 0 }} />
+                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--claude-accent-soft)", flexShrink: 0 }} />
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
                         <div style={{ padding: "12px 16px", borderRadius: "4px 16px 16px 16px", background: "var(--claude-bg)", border: "1px solid var(--claude-surface-2)", display: "flex", flexDirection: "column", gap: 8, width: 260 }}>
                           <div style={{ width: "95%", height: 12, background: "var(--claude-border)", borderRadius: 4 }} />
@@ -634,8 +634,8 @@ const S: Record<string, React.CSSProperties> = {
   errorBanner: {
     padding: "12px 16px",
     borderRadius: 10,
-    background: "#fef2f2",
-    border: "1px solid #fecaca",
+    background: "var(--color-danger-soft)",
+    border: "1px solid var(--color-danger-soft)",
     color: "#b91c1c",
     fontSize: 13,
     fontWeight: 500,

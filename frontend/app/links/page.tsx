@@ -357,19 +357,18 @@ export default function LinksPage() {
   return (
     <OwnerShell>
       <main style={S.page} className="links-page-wrap">
-        {/* ── Header ─────────────────────────────────────────── */}
-        <header style={S.header} className="links-header">
-          <div>
-            <h1 style={S.title}>People & Call Management</h1>
-            <p style={S.subtitle}>
+        {/* ── Header — left-aligned, like Overview ───────────── */}
+        <header style={{ ...S.header, alignItems: "flex-start" }} className="links-header">
+          <div style={{ flex: 1, minWidth: 220, textAlign: "left" }}>
+            <h1 style={{ ...S.title, textAlign: "left" }}>People & Call Management</h1>
+            <p style={{ ...S.subtitle, textAlign: "left" }}>
               Manage customer access links, review unique callers, and inspect full conversation transcripts.
             </p>
           </div>
-
           <button
             type="button"
             onClick={() => setShowCreateModal(true)}
-            style={S.createBtn}
+            style={{ ...S.createBtn, alignSelf: "flex-start", marginTop: 2 }}
             className="links-create-btn"
           >
             <Plus size={16} />
@@ -385,7 +384,7 @@ export default function LinksPage() {
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <Check size={18} style={{ color: "var(--color-success)" }} />
               <div>
-                <span style={{ fontWeight: 700, fontSize: 13, color: "#14532d" }}>
+                <span style={{ fontWeight: 700, fontSize: 13, color: "var(--color-success)" }}>
                   Access Link for {freshLink.name} Ready
                 </span>
                 <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--claude-muted)" }}>
@@ -517,9 +516,9 @@ export default function LinksPage() {
                             <span
                               style={{
                                 ...S.sessionCountBadge,
-                                background: talksCount > 0 ? "#ede9fe" : "var(--claude-surface-2)",
-                                color: talksCount > 0 ? "#6d28d9" : "var(--claude-muted)",
-                                border: talksCount > 0 ? "1px solid #ddd6fe" : "1px solid var(--claude-border)",
+                                background: talksCount > 0 ? "var(--claude-accent-soft)" : "var(--claude-surface-2)",
+                                color: talksCount > 0 ? "var(--claude-accent)" : "var(--claude-muted)",
+                                border: talksCount > 0 ? "1px solid var(--claude-border)" : "1px solid var(--claude-border)",
                               }}
                             >
                               <History size={11} />
@@ -559,8 +558,8 @@ export default function LinksPage() {
                         </div>
                       </div>
 
-                      {/* Action Buttons */}
-                      <div style={S.actionsRow} className="links-actions-row">
+                      {/* Action Buttons — professional: primary + compact secondary, 2×2 on phone */}
+                      <div style={{ ...S.actionsRow, gap: 8 }} className="links-actions-row">
                         <button
                           type="button"
                           onClick={() => toggleSessions(contact.contact_id)}
@@ -569,45 +568,44 @@ export default function LinksPage() {
                             background: isSessionsOpen ? "var(--claude-accent)" : "var(--claude-bg)",
                             color: isSessionsOpen ? "var(--claude-surface)" : "var(--claude-text-2)",
                             borderColor: isSessionsOpen ? "var(--claude-accent)" : "var(--claude-border)",
+                            flex: "1 1 150px",
+                            justifyContent: "center",
                           }}
                         >
                           <History size={14} />
                           <span>{isSessionsOpen ? "Hide Sessions" : `View Sessions (${talksCount})`}</span>
                         </button>
-
-                        <button
-                          type="button"
-                          onClick={() => rotateToken(contact.contact_id, contact.name)}
-                          disabled={Boolean(busy[contact.contact_id])}
-                          style={S.actionBtn}
-                          title="Generate a new fresh link for this caller"
-                        >
-                          <Link2 size={14} />
-                          <span>New Link</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => toggleBlock(contact.contact_id, !contact.blocked)}
-                          disabled={Boolean(busy[contact.contact_id])}
-                          style={{
-                            ...S.actionBtn,
-                            color: contact.blocked ? "#16a34a" : "#d97706",
-                          }}
-                        >
-                          <Ban size={14} />
-                          <span>{contact.blocked ? "Unblock" : "Block"}</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => setDeleteTarget(contact)}
-                          disabled={Boolean(busy[contact.contact_id])}
-                          style={{ ...S.actionBtn, color: "#dc2626" }}
-                          title="Delete contact and all call transcripts"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                        <div style={{ display: "flex", gap: 8, flex: "1 1 220px", flexWrap: "wrap", minWidth: 0 }}>
+                          <button
+                            type="button"
+                            onClick={() => rotateToken(contact.contact_id, contact.name)}
+                            disabled={Boolean(busy[contact.contact_id])}
+                            style={{ ...S.actionBtn, flex: "1 1 90px", justifyContent: "center" }}
+                            title="Generate a new fresh link for this caller"
+                          >
+                            <Link2 size={14} />
+                            <span>New Link</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => toggleBlock(contact.contact_id, !contact.blocked)}
+                            disabled={Boolean(busy[contact.contact_id])}
+                            style={{ ...S.actionBtn, color: contact.blocked ? "var(--color-success)" : "var(--color-warning)", flex: "1 1 80px", justifyContent: "center" }}
+                          >
+                            <Ban size={14} />
+                            <span>{contact.blocked ? "Unblock" : "Block"}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeleteTarget(contact)}
+                            disabled={Boolean(busy[contact.contact_id])}
+                            style={{ ...S.actionBtn, color: "var(--color-danger)", flex: "0 0 42px", justifyContent: "center", padding: "7px 0" }}
+                            title="Delete contact and all call transcripts"
+                            aria-label="Delete"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -833,7 +831,7 @@ export default function LinksPage() {
           <div style={S.modalBackdrop} onClick={() => !deleting && setDeleteTarget(null)}>
             <div style={S.confirmCard} onClick={(e) => e.stopPropagation()}>
               <div style={S.confirmIconWrap}>
-                <AlertTriangle size={24} style={{ color: "#dc2626" }} />
+                <AlertTriangle size={24} style={{ color: "var(--color-danger)" }} />
               </div>
 
               <h2 style={S.confirmTitle}>Delete {deleteTarget.name}?</h2>
@@ -903,7 +901,7 @@ background: transcriptModal.channel === "voice" ? "var(--claude-surface)" : "var
 
                     {/* Turn 1: Assistant Skeleton */}
                     <div style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: "80%" }}>
-                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#ede9fe", flexShrink: 0 }} />
+                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--claude-accent-soft)", flexShrink: 0 }} />
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
                         <div style={{ padding: "12px 16px", borderRadius: "4px 16px 16px 16px", background: "var(--claude-bg)", border: "1px solid var(--claude-surface-2)", display: "flex", flexDirection: "column", gap: 8, width: 240 }}>
                           <div style={{ width: "90%", height: 12, background: "var(--claude-border)", borderRadius: 4 }} />
@@ -915,16 +913,16 @@ background: transcriptModal.channel === "voice" ? "var(--claude-surface)" : "var
                     {/* Turn 2: User Skeleton */}
                     <div style={{ display: "flex", gap: 10, alignItems: "flex-start", justifyContent: "flex-end", maxWidth: "80%", alignSelf: "flex-end" }}>
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end", width: "100%" }}>
-                        <div style={{ padding: "12px 16px", borderRadius: "16px 4px 16px 16px", background: "#eff6ff", border: "1px solid #dbeafe", display: "flex", flexDirection: "column", gap: 8, width: 190 }}>
-                          <div style={{ width: "85%", height: 12, background: "#bfdbfe", borderRadius: 4 }} />
+                        <div style={{ padding: "12px 16px", borderRadius: "16px 4px 16px 16px", background: "var(--claude-accent-soft)", border: "1px solid var(--claude-accent-soft)", display: "flex", flexDirection: "column", gap: 8, width: 190 }}>
+                          <div style={{ width: "85%", height: 12, background: "var(--claude-border)", borderRadius: 4 }} />
                         </div>
                       </div>
-                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#dbeafe", flexShrink: 0 }} />
+                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--claude-accent-soft)", flexShrink: 0 }} />
                     </div>
 
                     {/* Turn 3: Assistant Skeleton */}
                     <div style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: "80%" }}>
-                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#ede9fe", flexShrink: 0 }} />
+                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--claude-accent-soft)", flexShrink: 0 }} />
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
                         <div style={{ padding: "12px 16px", borderRadius: "4px 16px 16px 16px", background: "var(--claude-bg)", border: "1px solid var(--claude-surface-2)", display: "flex", flexDirection: "column", gap: 8, width: 260 }}>
                           <div style={{ width: "95%", height: 12, background: "var(--claude-border)", borderRadius: 4 }} />
@@ -1031,8 +1029,8 @@ const S: Record<string, React.CSSProperties> = {
   errorBanner: {
     padding: "12px 16px",
     borderRadius: 10,
-    background: "#fef2f2",
-    border: "1px solid #fecaca",
+    background: "var(--color-danger-soft)",
+    border: "1px solid var(--color-danger-soft)",
     color: "#b91c1c",
     fontSize: 13,
     fontWeight: 500,
@@ -1043,8 +1041,8 @@ const S: Record<string, React.CSSProperties> = {
     gap: 12,
     padding: "16px 18px",
     borderRadius: 14,
-    background: "#f0fdf4",
-    border: "1px solid #bbf7d0",
+    background: "var(--color-success-soft)",
+    border: "1px solid var(--color-success-soft)",
   },
   freshRow: {
     display: "flex",
@@ -1070,7 +1068,7 @@ const S: Record<string, React.CSSProperties> = {
     padding: "8px 14px",
     borderRadius: 8,
     border: "none",
-    background: "#16a34a",
+    background: "var(--color-success)",
     color: "var(--claude-surface)",
     fontSize: 13,
     fontWeight: 600,
@@ -1079,7 +1077,7 @@ const S: Record<string, React.CSSProperties> = {
   dismissBtn: {
     padding: "8px 14px",
     borderRadius: 8,
-    border: "1px solid #bbf7d0",
+    border: "1px solid var(--color-success-soft)",
     background: "transparent",
     color: "#166534",
     fontSize: 13,
@@ -1401,7 +1399,7 @@ const S: Record<string, React.CSSProperties> = {
     width: 48,
     height: 48,
     borderRadius: 9999,
-    background: "#fee2e2",
+    background: "var(--color-danger-soft)",
     marginBottom: 4,
   },
   confirmTitle: {
@@ -1428,7 +1426,7 @@ const S: Record<string, React.CSSProperties> = {
     padding: "8px 18px",
     borderRadius: 8,
     border: "none",
-    background: "#dc2626",
+    background: "var(--color-danger)",
     color: "var(--claude-surface)",
     fontSize: 13,
     fontWeight: 600,
