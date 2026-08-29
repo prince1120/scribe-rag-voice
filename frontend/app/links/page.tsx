@@ -7,26 +7,33 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Ban,
+  Bookmark,
   Bot,
   Building2,
+  Calendar,
   Check,
   ChevronLeft,
   ChevronRight,
   Clock,
   Copy,
   ExternalLink,
+  Globe,
   History,
+  Laptop,
   Link2,
   Lock,
   MessageCircle,
   MessageSquare,
   Mic,
+  Monitor,
   Phone,
   Plus,
+  Radio,
   RefreshCw,
   Search,
   Shield,
   Smartphone,
+  Tag,
   Trash2,
   User,
   Users,
@@ -57,6 +64,7 @@ interface Session {
   started_at?: string | null;
   ip_address?: string | null;
   user_agent?: string | null;
+  duration_seconds?: number;
   message_count: number;
   agent_name?: string;
   business_name?: string;
@@ -66,6 +74,33 @@ interface Turn {
   role: string;
   content: string;
   at?: string | null;
+}
+
+function parseDevice(ua?: string | null): string {
+  if (!ua) return "Browser Link";
+  let browser = "Browser";
+  if (ua.includes("Edg/")) browser = "Edge";
+  else if (ua.includes("Chrome/")) browser = "Chrome";
+  else if (ua.includes("Safari/") && !ua.includes("Chrome")) browser = "Safari";
+  else if (ua.includes("Firefox/")) browser = "Firefox";
+
+  let os = "Desktop";
+  if (ua.includes("Windows")) os = "Windows";
+  else if (ua.includes("iPhone")) os = "iPhone";
+  else if (ua.includes("iPad")) os = "iPad";
+  else if (ua.includes("Android")) os = "Android";
+  else if (ua.includes("Macintosh") || ua.includes("Mac OS")) os = "macOS";
+  else if (ua.includes("Linux")) os = "Linux";
+
+  return `${browser} on ${os}`;
+}
+
+function formatDuration(sec?: number): string {
+  if (!sec || sec <= 0) return "";
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m === 0) return `${s}s`;
+  return `${m}m ${s}s`;
 }
 
 function linkFor(token: string): string {
@@ -137,10 +172,15 @@ export default function LinksPage() {
   // Full transcript modal
   const [transcriptModal, setTranscriptModal] = useState<{
     callerName: string;
+    contactId?: string;
+    note?: string | null;
     sessionId: string;
     turns: Turn[];
     channel: string;
     date: string;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+    durationSeconds?: number;
   } | null>(null);
   const [loadingTranscript, setLoadingTranscript] = useState(false);
 
@@ -267,10 +307,15 @@ export default function LinksPage() {
   const viewTranscript = async (contact: Contact, session: Session) => {
     setTranscriptModal({
       callerName: contact.name,
+      contactId: contact.contact_id,
+      note: contact.note,
       sessionId: session.session_id,
       turns: [],
       channel: session.channel,
       date: formatWhen(session.started_at),
+      ipAddress: session.ip_address,
+      userAgent: session.user_agent,
+      durationSeconds: session.duration_seconds,
     });
     setLoadingTranscript(true);
 
@@ -512,6 +557,21 @@ export default function LinksPage() {
                           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                             <span style={S.contactName}>{contact.name}</span>
 
+                            <span
+                              style={{
+                                fontSize: 11,
+                                fontFamily: "monospace",
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                                background: "var(--claude-surface)",
+                                color: "var(--claude-muted)",
+                                border: "1px solid var(--claude-border)",
+                              }}
+                              title={`Contact ID: ${contact.contact_id}`}
+                            >
+                              #{contact.contact_id.slice(0, 6)}
+                            </span>
+
                             {/* Prominent Session Count Badge */}
                             <span
                               style={{
@@ -547,12 +607,24 @@ export default function LinksPage() {
                             )}
                           </div>
 
+                          {contact.note && (
+                            <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 4, fontSize: 11, fontWeight: 500, color: "var(--claude-accent)", background: "var(--claude-accent-soft)", padding: "3px 8px", borderRadius: 4, border: "1px solid var(--claude-border)" }}>
+                              {contact.note.includes("Public Directory") ? (
+                                <Radio size={11} style={{ flexShrink: 0 }} />
+                              ) : (
+                                <Tag size={11} style={{ flexShrink: 0 }} />
+                              )}
+                              <span>{contact.note}</span>
+                            </div>
+                          )}
+
                           <p style={S.contactMeta}>
                             {contact.mode === "voice"
                               ? "Voice Calls Only"
                               : contact.mode === "chat"
                               ? "Chat Only"
                               : "Voice & Chat"}{" "}
+                            {contact.created_at && `• Created ${formatWhen(contact.created_at)} `}
                             • Last active {formatWhen(contact.last_seen_at)}
                           </p>
                         </div>
@@ -638,25 +710,49 @@ export default function LinksPage() {
                                 const paginated = contactSessions.slice((sp - 1) * SESSIONS_PER_PAGE, sp * SESSIONS_PER_PAGE);
                                 return paginated.map((session) => (
                                   <div key={session.session_id} style={S.sessionCardItem}>
-                                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                      <span
-                                        style={{
-                                          ...S.channelBadge,
-                                          background: session.channel === "voice" ? "var(--claude-surface)" : "var(--claude-border)",
-                                          color: session.channel === "voice" ? "var(--color-danger)" : "var(--claude-accent)",
-                                        }}
-                                      >
-                                        {session.channel === "voice" ? <Mic size={12} /> : <MessageSquare size={12} />}
-                                        <span>{session.channel === "voice" ? "Voice Call" : "Chat"}</span>
-                                      </span>
-                                      <span style={{ fontSize: 12, fontWeight: 600, color: "var(--claude-text)" }}>
-                                        {formatWhen(session.started_at)}
+                                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                        <span
+                                          style={{
+                                            ...S.channelBadge,
+                                            background: session.channel === "voice" ? "var(--claude-surface)" : "var(--claude-border)",
+                                            color: session.channel === "voice" ? "var(--color-danger)" : "var(--claude-accent)",
+                                          }}
+                                        >
+                                          {session.channel === "voice" ? <Mic size={12} /> : <MessageSquare size={12} />}
+                                          <span>{session.channel === "voice" ? "Voice Call" : "Chat"}</span>
+                                        </span>
+                                        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--claude-text)" }}>
+                                          {formatWhen(session.started_at)}
+                                        </span>
+                                      </div>
+
+                                      <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 4, background: "var(--claude-surface)", color: "var(--claude-muted)", border: "1px solid var(--claude-border)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                        {session.user_agent?.includes("iPhone") || session.user_agent?.includes("Android") ? (
+                                          <Smartphone size={11} />
+                                        ) : (
+                                          <Laptop size={11} />
+                                        )}
+                                        <span>{parseDevice(session.user_agent)}</span>
                                       </span>
                                     </div>
+
                                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8, gap: 8, flexWrap: "wrap" }}>
-                                      <span style={{ fontSize: 11, color: "var(--claude-muted)" }}>
-                                        {session.message_count ? `${session.message_count} dialogue turns` : "Live Talk"}
-                                      </span>
+                                      <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: "var(--claude-muted)", flexWrap: "wrap" }}>
+                                        <span>{session.message_count ? `${session.message_count} turns` : "Live Talk"}</span>
+                                        {session.duration_seconds ? (
+                                          <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                                            <Clock size={11} />
+                                            <span>{formatDuration(session.duration_seconds)}</span>
+                                          </span>
+                                        ) : null}
+                                        {session.ip_address && (
+                                          <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                                            <Globe size={11} />
+                                            <span>{session.ip_address === "127.0.0.1" ? "Local / Dev" : session.ip_address}</span>
+                                          </span>
+                                        )}
+                                      </div>
                                       <button type="button" onClick={() => viewTranscript(contact, session)} style={S.viewTranscriptBtn}>
                                         <MessageCircle size={13} />
                                         <span>View Transcript</span>
@@ -786,8 +882,8 @@ export default function LinksPage() {
                     onChange={(e) => setMode(e.target.value as "voice" | "chat" | "both")}
                     style={S.modalInput}
                   >
-                    <option value="voice">Voice Call Only 📞</option>
-                    <option value="chat">Chat Only 💬</option>
+                    <option value="voice">Voice Call Only</option>
+                    <option value="chat">Chat Only</option>
                     <option value="both">Both Voice & Chat</option>
                   </select>
                 </div>
@@ -867,19 +963,60 @@ export default function LinksPage() {
             <div style={S.transcriptModalContent} onClick={(e) => e.stopPropagation()}>
               <div style={S.modalHeader}>
                 <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <span style={S.modalTitle}>{transcriptModal.callerName}'s Conversation</span>
+                    {transcriptModal.contactId && (
+                      <span style={{ fontSize: 11, fontFamily: "monospace", padding: "2px 6px", borderRadius: 4, background: "var(--claude-surface)", color: "var(--claude-muted)", border: "1px solid var(--claude-border)" }}>
+                        #{transcriptModal.contactId.slice(0, 6)}
+                      </span>
+                    )}
                     <span
                       style={{
                         ...S.channelBadge,
-background: transcriptModal.channel === "voice" ? "var(--claude-surface)" : "var(--claude-border)",
-                                      color: transcriptModal.channel === "voice" ? "var(--color-danger)" : "var(--claude-accent)",
+                        background: transcriptModal.channel === "voice" ? "var(--claude-surface)" : "var(--claude-border)",
+                        color: transcriptModal.channel === "voice" ? "var(--color-danger)" : "var(--claude-accent)",
                       }}
                     >
                       {transcriptModal.channel === "voice" ? "Voice Call" : "Chat"}
                     </span>
                   </div>
-                  <p style={S.modalSub}>{transcriptModal.date}</p>
+
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 6, flexWrap: "wrap", fontSize: 12, color: "var(--claude-muted)" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      <Calendar size={12} />
+                      <span>{transcriptModal.date}</span>
+                    </span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      {transcriptModal.userAgent?.includes("iPhone") || transcriptModal.userAgent?.includes("Android") ? (
+                        <Smartphone size={12} />
+                      ) : (
+                        <Laptop size={12} />
+                      )}
+                      <span>{parseDevice(transcriptModal.userAgent)}</span>
+                    </span>
+                    {transcriptModal.ipAddress && (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <Globe size={12} />
+                        <span>{transcriptModal.ipAddress === "127.0.0.1" ? "Local / Dev" : transcriptModal.ipAddress}</span>
+                      </span>
+                    )}
+                    {transcriptModal.durationSeconds ? (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <Clock size={12} />
+                        <span>{formatDuration(transcriptModal.durationSeconds)}</span>
+                      </span>
+                    ) : null}
+                    {transcriptModal.note && (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        {transcriptModal.note.includes("Public Directory") ? (
+                          <Radio size={12} />
+                        ) : (
+                          <Tag size={12} />
+                        )}
+                        <span>{transcriptModal.note}</span>
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <button
@@ -1423,15 +1560,16 @@ const S: Record<string, React.CSSProperties> = {
     width: "100%",
   },
   deleteBtn: {
-    padding: "8px 18px",
+    padding: "9px 20px",
     borderRadius: 8,
-    border: "none",
-    background: "var(--color-danger)",
-    color: "var(--claude-surface)",
+    border: "1px solid #DC2626",
+    background: "#DC2626",
+    color: "#FFFFFF",
     fontSize: 13,
     fontWeight: 600,
     cursor: "pointer",
-    boxShadow: "0 2px 6px rgba(220, 38, 38, 0.3)",
+    boxShadow: "0 2px 8px rgba(220, 38, 38, 0.35)",
+    transition: "background 0.15s ease",
   },
   /* Modal Transcript */
   transcriptModalContent: {

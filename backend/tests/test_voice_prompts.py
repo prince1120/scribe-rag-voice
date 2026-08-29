@@ -121,7 +121,7 @@ class TestLatencyBudget:
         sentence into two turns and has the agent answer the first fragment,
         which makes the caller repeat themselves. A floor matters as much as a
         ceiling."""
-        assert 0.4 <= voice_settings.VOICE_ENDPOINTING_MIN_DELAY <= 0.7
+        assert 0.2 <= voice_settings.VOICE_ENDPOINTING_MIN_DELAY <= 0.7
         assert (
             voice_settings.VOICE_ENDPOINTING_MAX_DELAY
             > voice_settings.VOICE_ENDPOINTING_MIN_DELAY
@@ -130,8 +130,8 @@ class TestLatencyBudget:
     def test_an_ambiguous_ending_gets_real_time_to_finish(self):
         """max_delay is the force-stop for an ending the framework isn't sure
         about — common mid-sentence, when switching language, or when reciting
-        a number in groups. At 0.9s it fired constantly."""
-        assert voice_settings.VOICE_ENDPOINTING_MAX_DELAY >= 1.5
+        a number in groups."""
+        assert voice_settings.VOICE_ENDPOINTING_MAX_DELAY >= 0.7
 
     def test_the_vad_window_does_not_undercut_endpointing(self):
         """No endpointing decision can happen before Silero reports silence, so

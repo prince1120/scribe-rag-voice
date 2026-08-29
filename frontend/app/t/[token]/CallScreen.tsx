@@ -46,7 +46,8 @@ function formatDuration(seconds: number): string {
 /* ─────────────────────────── styles (inline) ──────────────────────────── */
 const S = {
   main: {
-    minHeight: "100dvh",
+    height: "100dvh",
+    maxHeight: "100dvh",
     display: "flex",
     flexDirection: "column" as const,
     background: "var(--claude-bg)",
@@ -87,23 +88,24 @@ const S = {
     border: "1px solid var(--claude-border)",
     fontVariantNumeric: "tabular-nums" as const,
   },
-  center: {
+  center: (isDrawerOpen: boolean) => ({
     flex: 1,
     display: "flex",
     flexDirection: "column" as const,
     alignItems: "center",
-    justifyContent: "center",
-    gap: 12,
-    padding: "8px 16px",
+    justifyContent: isDrawerOpen ? "flex-start" : "center",
+    gap: isDrawerOpen ? 8 : 12,
+    padding: isDrawerOpen ? "4px 16px" : "8px 16px",
     minHeight: 0,
     overflow: "hidden",
-  },
+  }),
   statusText: {
     fontSize: 18,
     fontWeight: 700,
     letterSpacing: "-0.01em",
     textAlign: "center" as const,
     lineHeight: 1.2,
+    transition: "font-size 0.2s ease",
   },
   subText: {
     fontSize: 12,
@@ -118,6 +120,7 @@ const S = {
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
+    transition: "all 0.25s ease",
   },
   subtitle: {
     width: "100%",
@@ -133,7 +136,7 @@ const S = {
   },
   transcriptWrap: {
     width: "100%",
-    maxWidth: 340,
+    maxWidth: 400,
     display: "flex",
     flexDirection: "column" as const,
     alignItems: "center",
@@ -159,12 +162,11 @@ const S = {
     width: "100%",
     flex: 1,
     minHeight: 0,
-    maxHeight: "calc(100vh - 200px)",
     overflowY: "auto" as const,
     borderRadius: 14,
     border: "1px solid var(--claude-border)",
     background: "var(--claude-surface)",
-    padding: 8,
+    padding: "8px 10px",
     display: "flex",
     flexDirection: "column" as const,
     gap: 6,
@@ -266,7 +268,7 @@ export function CallScreen({ name }: { name?: string }) {
   const [transcripts, setTranscripts] = useState<TranscriptMessage[]>([]);
   const [showTranscript, setShowTranscript] = useState(false);
   const [currentSubtitle, setCurrentSubtitle] = useState("");
-  const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const transcriptListRef = useRef<HTMLDivElement>(null);
 
   const roomRef = useRef<Room | null>(null);
   const orbRef = useRef<HTMLDivElement>(null);
@@ -286,10 +288,15 @@ export function CallScreen({ name }: { name?: string }) {
     return () => clearInterval(timer);
   }, [phase]);
 
-  // Auto scroll transcript to bottom
+  // Auto scroll transcript container to bottom without scrolling window/body
   useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [transcripts, currentSubtitle]);
+    if (showTranscript && transcriptListRef.current) {
+      transcriptListRef.current.scrollTo({
+        top: transcriptListRef.current.scrollHeight,
+        behavior: "smooth",
+      });
+    }
+  }, [transcripts, showTranscript]);
 
   // Save session transcript to backend on call end
   const persistSession = useCallback(async () => {
@@ -439,11 +446,18 @@ export function CallScreen({ name }: { name?: string }) {
         }
       });
 
-      // Data packets (chat turns / assistant subtitles)
+      // Data packets (chat turns / assistant subtitles / end call signals)
       room.on(RoomEvent.DataReceived, (payload: Uint8Array) => {
         try {
           const str = new TextDecoder().decode(payload);
           const data = JSON.parse(str);
+          if (data.type === "call_ended" || data.type === "end_call") {
+            setPhase("ended");
+            void persistSession();
+            teardown();
+            try { room.disconnect(); } catch {}
+            return;
+          }
           if (data.text) {
             const role = data.role === "user" ? "user" : "assistant";
             const nowTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -461,6 +475,15 @@ export function CallScreen({ name }: { name?: string }) {
           }
         } catch {
           /* ignore */
+        }
+      });
+
+      // When the remote agent leaves or disconnects, cleanly end the call
+      room.on(RoomEvent.ParticipantDisconnected, (participant) => {
+        if (!participant.isLocal) {
+          setPhase("ended");
+          void persistSession();
+          teardown();
         }
       });
 
@@ -579,7 +602,8 @@ export function CallScreen({ name }: { name?: string }) {
     };
   }, [phase, persistBeacon]);
 
-  const orbSize = phase === "live" ? 100 : 120;
+  const isDrawerOpen = showTranscript && phase === "live";
+  const orbSize = phase === "live" ? (showTranscript ? 52 : 100) : 120;
 
   // Two different failures, deliberately kept apart. The first is the WebRTC
   // link; the second is the assistant going quiet, which the link cannot see
@@ -660,9 +684,16 @@ export function CallScreen({ name }: { name?: string }) {
       </header>
 
       {/* ── Center Content ──────────────────────────────────── */}
-      <div style={S.center}>
+      <div style={S.center(isDrawerOpen)}>
         {/* Status text */}
-        <h1 style={S.statusText}>{status}</h1>
+        <h1
+          style={{
+            ...S.statusText,
+            ...(isDrawerOpen ? { fontSize: 13, margin: 0, opacity: 0.85 } : {}),
+          }}
+        >
+          {status}
+        </h1>
         {phase === "idle" && (
           <p style={S.subText}>Tap below to connect your voice with the AI assistant.</p>
         )}
@@ -730,7 +761,7 @@ export function CallScreen({ name }: { name?: string }) {
             </button>
 
             {showTranscript && (
-              <div style={S.transcriptList}>
+              <div ref={transcriptListRef} style={S.transcriptList}>
                 {transcripts.length === 0 ? (
                   <p
                     style={{
@@ -756,7 +787,6 @@ export function CallScreen({ name }: { name?: string }) {
                     </div>
                   ))
                 )}
-                <div ref={transcriptEndRef} />
               </div>
             )}
           </div>

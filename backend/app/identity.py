@@ -43,19 +43,26 @@ class Identity:
 
     @property
     def is_contact(self) -> bool:
-        return self.contact_id is not None
+        """True only for a *pure* contact — someone who arrived through an
+        invite link and is NOT the owner.  When the owner tests a contact
+        link in the same browser, both cookies are present and both
+        ``is_owner`` and ``contact_id`` are set.  Treating that combined
+        identity as "contact" would block every owner route with 403."""
+        return self.contact_id is not None and not self.is_owner
 
     @property
     def can_manage_documents(self) -> bool:
         """Contacts ask questions; they do not curate the library. Without
         this, an invite link would carry the right to delete every document
         it can read. Demo users (personal app) manage their own isolated
-        tenant, so they are allowed — only contacts are blocked."""
-        return self.contact_id is None
+        tenant, so they are allowed — only contacts are blocked.
+        Owners always manage documents, even when testing a contact link."""
+        return self.is_owner or self.contact_id is None
 
 
 def resolve_identity(
     session_cookie: Optional[str] = None,
+    contact_cookie: Optional[str] = None,
     groq_key: Optional[str] = None,
     sarvam_key: Optional[str] = None,
     client_id: Optional[str] = None,
@@ -66,50 +73,63 @@ def resolve_identity(
     sarvam_key = (sarvam_key or "").strip()
     client_id = (client_id or "").strip()
 
-    # The owner's own session takes precedence over pasted keys, so leftover
-    # demo keys in a browser can't silently redirect the owner to a different
-    # library than the one they see in the UI.
-    try:
-        payload = verify(session_cookie)
-        kind = payload.get("kind", "owner")
+    is_owner = False
+    owner_tenant = None
+    contact_id = None
 
-        # A contact cookie is signed by the same key as the owner's, so the
-        # signature alone proves nothing about privilege — the kind has to be
-        # read. Skipping this check would let any invite link act as owner.
-        if isinstance(kind, str) and kind.startswith("contact:"):
-            # "contact:<contact_id>:<owner_tenant_id>". The owner's tenant is
-            # carried in the signed payload rather than looked up, so resolving
-            # identity stays synchronous and free of a database round trip on
-            # every request. It is inside the signature, so a contact cannot
-            # edit it to reach another owner's documents.
-            parts = kind.split(":", 2)
-            contact_id = parts[1] if len(parts) > 1 else ""
-            owner_tenant = parts[2] if len(parts) > 2 else OWNER_TENANT_ID
-            if contact_id:
-                return Identity(
-                    tenant_id=owner_tenant,
-                    is_owner=False,
-                    contact_id=contact_id,
-                )
-        elif isinstance(kind, str) and kind.startswith("owner:"):
-            # "owner:<tenant_id>" — a business owner who signed in with email
-            # and password. The tenant is inside the signature, so it cannot be
-            # edited to reach another workspace.
-            owner_tenant = kind.split(":", 1)[1]
-            if owner_tenant:
-                return Identity(tenant_id=owner_tenant, is_owner=True)
-        elif kind == "owner":
-            # The original single-owner passcode session.
-            return Identity(tenant_id=OWNER_TENANT_ID, is_owner=True)
-    except SessionError:
-        pass
+    # 1. Check the owner's session
+    if session_cookie:
+        try:
+            payload = verify(session_cookie)
+            kind = payload.get("kind", "owner")
+            if isinstance(kind, str) and kind.startswith("owner:"):
+                owner_tenant = kind.split(":", 1)[1]
+                if owner_tenant:
+                    is_owner = True
+            elif kind == "owner":
+                owner_tenant = OWNER_TENANT_ID
+                is_owner = True
+            elif isinstance(kind, str) and kind.startswith("contact:") and not contact_cookie:
+                # Legacy fallback if contact cookie was stored in session_cookie
+                parts = kind.split(":", 2)
+                contact_id = parts[1] if len(parts) > 1 else ""
+                owner_tenant = parts[2] if len(parts) > 2 else OWNER_TENANT_ID
+        except SessionError:
+            pass
 
+    # In dev mode (no passcode configured), the local user is the owner
+    if not settings.APP_ACCESS_PASSCODE:
+        is_owner = True
+
+    # 2. Check the contact session cookie if present
+    if contact_cookie:
+        try:
+            payload = verify(contact_cookie)
+            kind = payload.get("kind", "")
+            if isinstance(kind, str) and kind.startswith("contact:"):
+                parts = kind.split(":", 2)
+                contact_id = parts[1] if len(parts) > 1 else ""
+                c_owner_tenant = parts[2] if len(parts) > 2 else OWNER_TENANT_ID
+                if not owner_tenant:
+                    owner_tenant = c_owner_tenant
+        except SessionError:
+            pass
+
+    # 3. If groq_key is provided directly by header, it operates as personal BYOK mode
     if groq_key:
         return Identity(
             tenant_id=derive_tenant_id(groq_key, sarvam_key, client_id),
             is_owner=False,
             groq_key=groq_key,
             sarvam_key=sarvam_key or None,
+            contact_id=None,
+        )
+
+    if is_owner or contact_id:
+        return Identity(
+            tenant_id=owner_tenant or OWNER_TENANT_ID,
+            is_owner=is_owner,
+            contact_id=contact_id,
         )
 
     # No passcode configured means local development: nobody could have logged
@@ -185,6 +205,7 @@ async def _resolve_real_owner_tenant() -> str:
 
 async def get_identity(
     scribe_session: Optional[str] = Cookie(default=None),
+    scribe_contact_session: Optional[str] = Cookie(default=None),
     x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
     x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
     x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
@@ -192,6 +213,7 @@ async def get_identity(
     """FastAPI dependency — use this in routes."""
     identity = resolve_identity(
         session_cookie=scribe_session,
+        contact_cookie=scribe_contact_session,
         groq_key=x_user_groq_key,
         sarvam_key=x_user_sarvam_key,
         client_id=x_client_id,

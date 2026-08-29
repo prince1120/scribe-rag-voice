@@ -69,6 +69,10 @@ html, body {
   60%, 100% { content: '...'; }
 }
 
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 /* Animated Shimmer / Pulse for AI Thinking Skeleton */
 @keyframes aiShimmer {
   0% { background-position: -200% 0; }

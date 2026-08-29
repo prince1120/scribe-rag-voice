@@ -474,7 +474,7 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
                   </div>
 
                   <Link
-                    href={`/link/${agent.handle}`}
+                    href={`/directory?handle=${agent.handle}`}
                     className="text-xs font-semibold text-center mt-4 py-2.5 rounded-xl border hover:bg-[var(--claude-accent)] hover:text-white transition-all block ds-pressable"
                     style={{ background: "var(--claude-bg)", color: "var(--claude-text)", borderColor: "var(--claude-border)" }}
                   >

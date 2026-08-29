@@ -76,7 +76,7 @@
   --ease-spring: cubic-bezier(0.34, 1.35, 0.64, 1);
 
   /* ---- Semantic colour ---- */
-  --color-danger: var(--color-danger);
+  --color-danger: #C0392B;
   --color-danger-soft: #F7E4E2;
   --color-success: #2F6F44;
   --color-success-soft: #E3F0E8;

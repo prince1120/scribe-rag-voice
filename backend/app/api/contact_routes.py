@@ -22,8 +22,7 @@ from app import contacts, repositories
 from app.identity import Identity, get_identity
 from app.config import settings
 from app.rate_limit import client_ip, limiter
-from app.api.session_routes import cookie_params
-from app.session import COOKIE_NAME, issue
+from app.session import COOKIE_NAME, contact_cookie_params, issue
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -282,6 +281,7 @@ async def contact_sessions(contact_id: str, identity: Identity = Depends(get_ide
                 "ip_address": s.ip_address,
                 "user_agent": s.user_agent,
                 "message_count": s.message_count,
+                "duration_seconds": s.duration_seconds,
             }
             for s in sessions
         ],
@@ -472,15 +472,12 @@ async def open_link(request: Request, response: Response, body: OpenLinkRequest)
         device_id=device_id,
     )
 
-    # Same signed-cookie mechanism as the owner session, with a different kind
-    # so identity resolution can tell them apart and scope data accordingly.
-    # cookie_params() supplies `key` along with the flags, so the name must not
-    # also be passed positionally — that raised "multiple values for argument
-    # 'key'" and surfaced as a 500 on every link open.
+    # Uses contact_cookie_params() so testing links in the same browser does not
+    # overwrite the owner's scribe_session login cookie.
     response.set_cookie(
         value=issue(kind=f"contact:{record.contact_id}:{record.owner_tenant_id}"),
         max_age=settings.SESSION_TTL_DAYS * 86400,
-        **cookie_params(),
+        **contact_cookie_params(),
     )
 
     logger.info("Contact link opened: %s", record.contact_id)

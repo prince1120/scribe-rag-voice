@@ -3,7 +3,7 @@
 // Assistant Studio: Voice & Chat prompts, TTS voice selector, model configuration,
 // document knowledge integration, and real-time live deployment controls.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Bot,
@@ -11,6 +11,7 @@ import {
   Cpu,
   FileText,
   Languages,
+  Loader2,
   MessageSquare,
   Mic,
   Play,
@@ -19,6 +20,7 @@ import {
   Save,
   Sliders,
   Sparkles,
+  Square,
   Trash2,
   Volume2,
   Zap,
@@ -96,6 +98,23 @@ const DEFAULT_MODELS: ModelOption[] = [
   },
 ];
 
+const DEFAULT_VOICES: Record<string, Voice[]> = {
+  female: [
+    { id: "priya", label: "Priya", tagline: "Cheerful & Engaging" },
+    { id: "ishita", label: "Ishita", tagline: "Polished & Articulate" },
+    { id: "neha", label: "Neha", tagline: "Energetic & Warm" },
+    { id: "roopa", label: "Roopa", tagline: "Gentle & Soothing" },
+    { id: "shreya", label: "Shreya", tagline: "Bright & Warm" },
+  ],
+  male: [
+    { id: "shubh", label: "Shubh", tagline: "Confident & Bold" },
+    { id: "rahul", label: "Rahul", tagline: "Deep & Authoritative" },
+    { id: "amit", label: "Amit", tagline: "Steady & Trustworthy" },
+    { id: "kabir", label: "Kabir", tagline: "Rich & Cinematic" },
+    { id: "dev", label: "Dev", tagline: "Casual & Relatable" },
+  ],
+};
+
 import { getWorkspaceCache, setWorkspaceCache, useWorkspace } from "../lib/workspaceCache";
 import { AGENT_TEMPLATES, defaultTemplate, templateForCategory } from "./templates";
 
@@ -110,6 +129,7 @@ export default function AgentPage() {
   const [models, setModels] = useState<ModelOption[]>(DEFAULT_MODELS);
 
   const [tab, setTab] = useState<Channel>("voice");
+  const [voiceGenderFilter, setVoiceGenderFilter] = useState<"all" | "female" | "male">("all");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -290,20 +310,50 @@ export default function AgentPage() {
     }
   }
 
+  // "loading:voiceId" while fetching audio, "playing:voiceId" while audio is audible
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+
   async function preview(voiceId: string) {
-    setPreviewing(voiceId);
+    // Stop any currently playing preview
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      previewAudioRef.current = null;
+    }
+
+    // If clicking the same voice that was playing, just stop
+    if (previewing === `playing:${voiceId}`) {
+      setPreviewing("");
+      return;
+    }
+
+    setPreviewing(`loading:${voiceId}`);
     try {
       const response = await ownerFetch("/api/v1/voice/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ speaker: voiceId }),
       });
-      if (!response.ok) return;
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        setError(body?.detail || "Could not preview this voice.");
+        setPreviewing("");
+        return;
+      }
       const data = await response.json();
-      await new Audio(`data:${data.mime_type};base64,${data.audio_base64}`).play();
+      const audio = new Audio(`data:${data.mime_type};base64,${data.audio_base64}`);
+      previewAudioRef.current = audio;
+
+      setPreviewing(`playing:${voiceId}`);
+      audio.onended = () => {
+        setPreviewing("");
+        previewAudioRef.current = null;
+      };
+      audio.onerror = () => {
+        setPreviewing("");
+        previewAudioRef.current = null;
+      };
+      await audio.play();
     } catch {
-      /* ignore */
-    } finally {
       setPreviewing("");
     }
   }
@@ -324,7 +374,15 @@ export default function AgentPage() {
     );
   }
 
-  const allVoices = [...(voices.female || []), ...(voices.male || [])];
+  const effectiveFemale = (voices.female && voices.female.length > 0) ? voices.female : DEFAULT_VOICES.female;
+  const effectiveMale = (voices.male && voices.male.length > 0) ? voices.male : DEFAULT_VOICES.male;
+  const femaleList = effectiveFemale.map((v) => ({ ...v, gender: "female" as const }));
+  const maleList = effectiveMale.map((v) => ({ ...v, gender: "male" as const }));
+  const selectedVoiceObj = [...femaleList, ...maleList].find((v) => v.id === config.voice_id) || femaleList[0];
+  const allVoices = [
+    ...(voiceGenderFilter === "male" ? [] : femaleList),
+    ...(voiceGenderFilter === "female" ? [] : maleList),
+  ];
   const isVoice = tab === "voice";
 
   const prompt = (isVoice ? config.voice_script : config.chat_script) ?? "";
@@ -558,7 +616,7 @@ export default function AgentPage() {
                 style={S.input}
                 value={config.name || ""}
                 onChange={(e) => update({ name: e.target.value })}
-                placeholder="e.g. Asha, Alex"
+                placeholder="e.g. Asha, Alex, Shiro"
                 maxLength={120}
               />
             </div>
@@ -575,6 +633,58 @@ export default function AgentPage() {
                 maxLength={500}
               />
             </div>
+          </div>
+
+          {/* Quick Voice Indicator in Identity */}
+          <div
+            style={{
+              marginTop: 12,
+              padding: "10px 14px",
+              borderRadius: 10,
+              background: "var(--claude-bg)",
+              border: "1px solid var(--claude-border)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+              <Volume2 size={15} style={{ color: "var(--claude-accent)" }} />
+              <span>
+                Active Spoken Voice:{" "}
+                <strong style={{ color: "var(--claude-text)" }}>{selectedVoiceObj.label}</strong>{" "}
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    padding: "1px 6px",
+                    borderRadius: 6,
+                    background: selectedVoiceObj.gender === "female" ? "#fce7f3" : "#e0e7ff",
+                    color: selectedVoiceObj.gender === "female" ? "#9d174d" : "#3730a3",
+                  }}
+                >
+                  {selectedVoiceObj.gender === "female" ? "👩 Female" : "👨 Male"}
+                </span>{" "}
+                <span style={{ color: "var(--claude-muted)" }}>— {selectedVoiceObj.tagline}</span>
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setTab("voice")}
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: "var(--claude-accent)",
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                textDecoration: "underline",
+              }}
+            >
+              Choose Male / Female Voice Below ↓
+            </button>
           </div>
         </div>
 
@@ -718,10 +828,52 @@ color: "var(--claude-text-2)",
 
               {/* Speaker Voice Selection */}
               <div>
-                <label style={S.label}>Assistant Voice Persona</label>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+                  <div>
+                    <label style={S.label}>Assistant Voice & Gender</label>
+                    <p style={{ fontSize: 11, color: "var(--claude-muted)", margin: "2px 0 0" }}>
+                      Pick a neural voice persona. Click the play button to hear a live audio preview.
+                    </p>
+                  </div>
+
+                  {/* Gender Filter Pills */}
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {[
+                      { id: "all", label: `All (${femaleList.length + maleList.length})` },
+                      { id: "female", label: `👩 Female (${femaleList.length})` },
+                      { id: "male", label: `👨 Male (${maleList.length})` },
+                    ].map((g) => {
+                      const active = voiceGenderFilter === g.id;
+                      return (
+                        <button
+                          key={g.id}
+                          type="button"
+                          onClick={() => setVoiceGenderFilter(g.id as any)}
+                          style={{
+                            padding: "5px 12px",
+                            borderRadius: 9999,
+                            fontSize: 11,
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            border: "1px solid",
+                            borderColor: active ? "var(--claude-accent)" : "var(--claude-border)",
+                            background: active ? "var(--claude-accent)" : "var(--claude-surface)",
+                            color: active ? "#ffffff" : "var(--claude-text)",
+                            boxShadow: active ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                            transition: "all 0.15s ease",
+                          }}
+                        >
+                          {g.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <div style={S.voicesGrid}>
                   {allVoices.map((voice) => {
                     const isSelected = config.voice_id === voice.id;
+                    const isFemale = voice.gender === "female";
                     return (
                       <div
                         key={voice.id}
@@ -730,12 +882,27 @@ color: "var(--claude-text-2)",
                           ...S.voiceCard,
                           borderColor: isSelected ? "var(--claude-accent)" : "var(--claude-border)",
                           background: isSelected ? "#eef2ff" : "var(--claude-surface)",
+                          cursor: "pointer",
                         }}
                       >
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <span style={{ fontSize: 13, fontWeight: 700, color: isSelected ? "var(--claude-accent)" : "var(--claude-text)" }}>
-                            {voice.label}
-                          </span>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: isSelected ? "var(--claude-accent)" : "var(--claude-text)" }}>
+                              {voice.label}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 700,
+                                padding: "1px 6px",
+                                borderRadius: 6,
+                                background: isFemale ? "#fce7f3" : "#e0e7ff",
+                                color: isFemale ? "#9d174d" : "#3730a3",
+                              }}
+                            >
+                              {isFemale ? "Female" : "Male"}
+                            </span>
+                          </div>
                           <p style={{ margin: "2px 0 0", fontSize: 11, color: "var(--claude-text-2)" }}>
                             {voice.tagline}
                           </p>
@@ -747,10 +914,24 @@ color: "var(--claude-text-2)",
                             e.stopPropagation();
                             void preview(voice.id);
                           }}
-                          style={S.playVoiceBtn}
-                          title="Listen to sample"
+                          disabled={previewing === `loading:${voice.id}`}
+                          style={{
+                            ...S.playVoiceBtn,
+                            ...(previewing === `playing:${voice.id}` ? { background: "var(--claude-accent)", color: "#fff" } : {}),
+                          }}
+                          title={
+                            previewing === `loading:${voice.id}` ? "Loading…"
+                            : previewing === `playing:${voice.id}` ? "Stop preview"
+                            : "Listen to sample"
+                          }
                         >
-                          <Play size={12} className={previewing === voice.id ? "animate-spin" : ""} />
+                          {previewing === `loading:${voice.id}` ? (
+                            <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} />
+                          ) : previewing === `playing:${voice.id}` ? (
+                            <Square size={10} fill="currentColor" />
+                          ) : (
+                            <Play size={12} />
+                          )}
                         </button>
                       </div>
                     );

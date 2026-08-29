@@ -136,7 +136,7 @@ class VoiceSettings(BaseSettings):
     # SECONDS the model may think before the agent makes a noise. Below the
     # point where silence reads as a dropped call, above the point where a fast
     # reply would be preceded by a pointless "okay". 0 disables it.
-    VOICE_THINKING_FILLER_DELAY: float = 0.7
+    VOICE_THINKING_FILLER_DELAY: float = 0.5
 
     # Sarvam speech shaping. pace 1.0 is the model's default rate; a touch under
     # reads as considered rather than hurried, and gives a listener room to
@@ -150,140 +150,31 @@ class VoiceSettings(BaseSettings):
     # that catches a line left open: a caller who connects and walks away costs
     # exactly as much as one who is talking, and never hangs up. The watcher
     # asks "are you there?" at this mark and ends 10s later if still nothing.
-    VOICE_IDLE_TIMEOUT_SECONDS: int = 15
+    VOICE_IDLE_TIMEOUT_SECONDS: int = 10
 
     # ---- Latency / turn-taking tuning ---------------------------------
     # These make the agent feel like a real voice assistant: it responds
     # quickly after you stop, starts speaking sooner, and handles barge-in
     # cleanly. All are overridable via .env.
 
-    # Pause (s) after you stop talking before the agent takes its turn. This
-    # is dead air on EVERY turn, so it dominates perceived latency more than
-    # any model choice. 0.35 sits just above natural inter-word pauses, which
-    # is as low as it can go without the agent talking over a mid-sentence
-    # breath. max_delay bounds the wait when the endpoint is ambiguous.
     # Silence (s) after you stop before the agent takes its turn.
-    #
-    # 0.35 was tuned purely for snappiness and it was below the length of an
-    # ordinary mid-sentence pause — the gap while someone thinks of the next
-    # word. The result was one sentence arriving as two turns, with the agent
-    # answering the first half ("मतलब सर में दर्द है।" → reply → "तो क्या कोई
-    # फिजियोलॉजिस्ट है?" → second reply). Splitting a turn is far more damaging
-    # than waiting an extra fifth of a second: the caller has to repeat
-    # themselves and the agent has already committed to answering a fragment.
-    VOICE_ENDPOINTING_MIN_DELAY: float = 0.4
-    # The hard stop for an *ambiguous* ending — when the framework isn't sure
-    # you're finished, this is how long it waits before taking the turn anyway.
-    #
-    # 0.9 was the bigger of the two bugs. A pause that reads as ambiguous (very
-    # common when switching languages mid-sentence, or reciting a phone number
-    # in groups) got force-ended at 0.9s no matter what. The framework's own
-    # default is 3.0; 2.0 keeps most of that safety without letting a genuinely
-    # finished turn hang.
-    VOICE_ENDPOINTING_MAX_DELAY: float = 2.0
-    # "dynamic" adapts the wait to the caller's own speaking rhythm rather than
-    # applying one fixed number to everyone. Free — no model, no extra process.
-    # "fixed" restores the previous single-value behaviour.
+    # Tuned to ~250ms-300ms for snappy STT finalization and minimal turnaround delay.
+    VOICE_ENDPOINTING_MIN_DELAY: float = 0.25
+    # The hard stop for an *ambiguous* ending (lowered from 1.6s to 0.75s to prevent lingering silence).
+    VOICE_ENDPOINTING_MAX_DELAY: float = 0.75
+    # "dynamic" adapts the wait to the caller's rhythm, or "fixed" enforces exact min_delay.
     VOICE_ENDPOINTING_MODE: str = "dynamic"
 
     # Use a local semantic end-of-turn model to decide whether the caller
-    # finished a *thought*, rather than inferring it from silence alone. This
-    # is the correct fix for one sentence arriving as two turns, and no timer
-    # value substitutes for it.
-    #
-    # OFF, and the reason is memory rather than quality. Measured on this
-    # project: the model runs in its own inference process at a 2.26 GB
-    # resident baseline with no call in progress, and ~31s to initialise. That
-    # does not fit a free hosting tier, which is what this product deploys to.
-    #
-    # It is deliberately left switched off in development too, rather than
-    # enabled locally and disabled in production. Tuning turn-taking against
-    # behaviour the deployed system will never have produces numbers that are
-    # wrong for the thing users actually call.
-    #
-    # To enable (needs ~4 GB): pip install livekit-plugins-turn-detector,
-    # run `python -m app.services.voice.worker download-files`, set this true,
-    # and drop VOICE_ENDPOINTING_MAX_DELAY to ~1.2 — the slack above exists
-    # purely to avoid guillotining an ambiguous pause, which the model would
-    # instead classify.
+    # finished a *thought*, rather than inferring it from silence alone.
     VOICE_SEMANTIC_TURN_DETECTION: bool = False
-    # Start synthesising audio before the turn is confirmed. OFF: the
-    # framework retries a preemptive generation as the transcript changes, and
-    # once TTS is running a superseded attempt can reach the speaker — heard as
-    # the agent giving two different answers to one question. The LLM still
-    # runs preemptively (see session_factory), which is the bulk of the win
-    # without the risk. Turn on only if you need the last ~200ms more than you
-    # need the agent to answer once.
     VOICE_PREEMPTIVE_TTS: bool = False
 
-    # How overlapping speech is judged.
-    #
-    #   "vad"      — Silero hears speech, the agent stops. Local, instant, and
-    #                the only option that works without extra services.
-    #   "adaptive" — classifies the overlapping speech before deciding. Reads
-    #                better on paper, but it is backed by a HOSTED LiveKit
-    #                inference service (AdaptiveInterruptionDetector takes
-    #                base_url/api_key/api_secret). Without those credentials
-    #                there is no detector to consult and interruptions never
-    #                fire at all — the agent talks until its TTS drains, no
-    #                matter how loudly you talk over it. Do not enable this
-    #                without configuring the service.
-    #
-    # The bug that made barge-in feel broken was never the mode. It was
-    # min_duration below, at 0.2s — shorter than a breath, so a cough or an
-    # "okay" stopped the agent and the false-interruption resume then replayed
-    # the sentence from the start. Fixing the threshold fixes that while
-    # keeping barge-in instant.
     VOICE_INTERRUPTION_MODE: str = "vad"
-    # Minimum words before overlapping speech counts as an interruption.
-    # Consulted in STT-driven modes only — "vad" cuts on audio, not words — so
-    # this is 0 to make it explicit that nothing here waits for a transcript.
     VOICE_INTERRUPTION_MIN_WORDS: int = 0
-    # How long you must be speaking before the agent stops. This is the real
-    # barge-in knob — with mode="vad" it is measured on audio, so nothing waits
-    # for a transcript and the cut lands as soon as this elapses.
-    #
-    # 0.25 is about one syllable: effectively "stop the moment I start". This
-    # was 0.2 originally and caused false cuts on coughs and breaths, so the
-    # obvious read is that we are walking back into that bug. Two things
-    # changed since:
-    #
-    #   - The browser now explicitly requests echoCancellation. Before, the
-    #     agent's own voice came out the speaker and back in the mic, and the
-    #     loudest source of "random" interruptions was the agent interrupting
-    #     itself. That is gone, which is most of why 0.2 misbehaved.
-    #   - preemptive_tts is off, so a cut can no longer collide with a
-    #     half-spoken preemptive generation.
-    #
-    # If background noise still cuts the agent off mid-sentence, this is the
-    # number to raise — 0.4 is a good next step. Note the interaction with
-    # VOICE_RESUME_FALSE_INTERRUPTION below: a false cut is cheap to recover
-    # from only because the agent resumes.
-    #
-    # Raised to 0.4 after exactly that happened on a live call: the agent was
-    # cut mid-question repeatedly, and each false cut produced a noise-only user
-    # turn that the model answered by asking again — six re-phrasings of the
-    # same question in one 14.8s turn. The empty-turn guard in agent.py is the
-    # real fix for the repetition; this reduces how often the cut happens at
-    # all. 0.4 is still well inside "stop the moment I start" for real speech,
-    # and above the length of a breath or a single-syllable room noise.
-    VOICE_INTERRUPTION_MIN_DURATION: float = 0.4
-    # After an interruption turns out to be false — you were cut off by a noise
-    # and then said nothing for ~2s — resume what was being said.
-    #
-    # Kept ON, and it is the safety net that makes the aggressive
-    # min_duration above affordable. Without it a false cut leaves the agent
-    # silent mid-sentence with no user turn to answer, and the call just sits
-    # there dead until someone speaks. Resuming is the lesser fault: worst
-    # case you hear part of a sentence twice, rather than the assistant
-    # appearing to hang up on you.
+    VOICE_INTERRUPTION_MIN_DURATION: float = 0.25
     VOICE_RESUME_FALSE_INTERRUPTION: bool = True
-    # Silero end-of-speech silence window (s) — how long Silero must hear
-    # nothing before it reports that speech ended. This is the floor under
-    # VOICE_ENDPOINTING_MIN_DELAY: no endpointing decision can happen sooner
-    # than Silero reports silence, so setting the two independently is how you
-    # end up with a min_delay that never actually applies. Tracks min_delay.
-    VOICE_VAD_MIN_SILENCE: float = 0.4
+    VOICE_VAD_MIN_SILENCE: float = 0.25
     # Greet the user out loud the moment the call connects, like a real
     # voice agent — avoids the awkward "is this working?" silence.
     VOICE_GREET_ON_CONNECT: bool = True

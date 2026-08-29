@@ -120,12 +120,11 @@ class RAGPipeline:
         follow it: those are not style, they are what keeps the model from
         inventing a source, and an owner cannot opt out of that.
         """
-        # The owner's voice, first. Prefixed rather than merged so what they
-        # wrote reaches the model unaltered — the same guarantee the voice path
-        # gives, so one assistant does not answer differently by channel.
         lead = ""
         if agent_prompt and agent_prompt.strip():
-            lead = agent_prompt.strip() + chr(10) + chr(10)
+            lead = agent_prompt.strip() + "\n\n" + build_hierarchy_header()
+        else:
+            lead = build_hierarchy_header()
 
         base = (
             "LENGTH:\n"
@@ -457,7 +456,7 @@ class RAGPipeline:
             (c.get("payload", c) or {}).get("is_image") for c in context_chunks
         )
         has_text_context = bool(context.strip())
-        system_prompt = build_hierarchy_header() + self._build_system_prompt(
+        system_prompt = self._build_system_prompt(
             has_images, has_text_context, agent_prompt=agent_prompt,
         )
 

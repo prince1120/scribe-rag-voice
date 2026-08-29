@@ -168,7 +168,8 @@ class Settings(BaseSettings):
     # Applied to callers who arrived through the public directory: strangers,
     # unauthenticated, spending money that is ours before it is anyone's.
     DIRECTORY_MAX_CALL_SECONDS: int = 180
-    DIRECTORY_IDLE_TIMEOUT_SECONDS: int = 25
+    DIRECTORY_IDLE_TIMEOUT_SECONDS: int = 10
+    VOICE_IDLE_TIMEOUT_SECONDS: int = 10
     DIRECTORY_SESSIONS_PER_DAY: int = 3
     DIRECTORY_LINK_TTL_DAYS: int = 1
     # Reaching this many different businesses in DIRECTORY_VELOCITY_WINDOW_MIN

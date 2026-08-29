@@ -10,7 +10,6 @@ import {
   Building2,
   Check,
   Copy,
-  ExternalLink,
   MessageSquare,
   Phone,
   Search,
@@ -19,10 +18,6 @@ import {
 import { ScribeMark } from "../Logo";
 
 interface AgentCard {
-  /** Opaque public identifier. Deliberately not the workspace's tenant id:
-   *  that is the key everything else joins on, and publishing it gave anyone a
-   *  permanent targeting parameter the owner could never change. A handle can
-   *  be rotated from the console if a business gets targeted. */
   handle: string;
   business_name: string;
   business_category: string;
@@ -35,9 +30,6 @@ interface AgentCard {
   deployed_at: string | null;
 }
 
-/** A stable id for this browser, created on first use. Not proof of identity —
- *  it can be cleared — but it survives IP rotation, which is what the velocity
- *  check needs. */
 function browserId(): string {
   const KEY = "app_client_id";
   let id = localStorage.getItem(KEY);
@@ -76,7 +68,20 @@ export default function DirectoryPage() {
         }
         const data = await res.json();
         if (!cancelled) {
-          setAgents(data.agents || []);
+          const list: AgentCard[] = data.agents || [];
+          setAgents(list);
+
+          if (typeof window !== "undefined") {
+            const params = new URLSearchParams(window.location.search);
+            const targetHandle = params.get("handle") || params.get("agent");
+            if (targetHandle) {
+              const matched = list.find((a) => a.handle === targetHandle);
+              if (matched) {
+                setConnectModalAgent(matched);
+                setConnectMode("voice");
+              }
+            }
+          }
         }
       } catch (err) {
         if (!cancelled) {
@@ -137,11 +142,9 @@ export default function DirectoryPage() {
       const res = await fetch("/api/v1/directory/connect", {
         method: "POST",
         headers: {
-            "Content-Type": "application/json",
-            // Stable per browser. Velocity limiting keys on this rather than
-            // the IP, which rotates on mobile and is shared behind NAT.
-            "X-Client-Id": browserId(),
-          },
+          "Content-Type": "application/json",
+          "X-Client-Id": browserId(),
+        },
         body: JSON.stringify({
           handle: agent.handle,
           name: finalName,

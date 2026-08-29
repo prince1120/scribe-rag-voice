@@ -20,6 +20,7 @@ from typing import Optional
 
 from livekit.agents import JobContext, WorkerOptions, cli, llm
 
+from app import repositories
 from app.logging_config import configure_logging
 from app.services.voice import rag_client, turn_metrics
 from app.services.voice.agent import VoiceAssistant
@@ -58,7 +59,8 @@ class SessionParams:
     instructions: str
     rag_enabled: bool
     tenant_id: str
-    conversation_id: Optional[str]
+    conversation_id: Optional[str] = None
+    contact_id: Optional[str] = None
 
 
 def _params_for_job(ctx: JobContext) -> SessionParams:
@@ -160,6 +162,7 @@ def _params_for_job(ctx: JobContext) -> SessionParams:
         rag_enabled=bool(data.get("rag_enabled")),
         tenant_id=data.get("tenant_id") or "default",
         conversation_id=data.get("conversation_id"),
+        contact_id=data.get("contact_id"),
     )
 
 
@@ -270,7 +273,45 @@ async def entrypoint(ctx: JobContext) -> None:
     # hello). Wait for the user to actually be in the room so they hear it.
     logger.info("[CONNECT %s] session started at %.2fs", ctx.room.name, _elapsed())
 
-    _enforce_call_ceilings(session, params, ctx.room.name)
+    # Server-side guaranteed transcript recorder: triggers when the user closes the
+    # browser, loses connection, or when the agent ends the call, so conversations
+    # are never lost even if the client disconnects abruptly.
+    saved_session = False
+
+    async def _persist_transcript_on_worker():
+        nonlocal saved_session
+        if saved_session:
+            return
+        saved_session = True
+        try:
+            raw_messages = []
+            if hasattr(session, "chat_ctx") and session.chat_ctx:
+                for m in session.chat_ctx.messages:
+                    role = getattr(m, "role", None)
+                    content = getattr(m, "content", "")
+                    if role in ("user", "assistant") and content:
+                        text = content if isinstance(content, str) else str(content)
+                        if text.strip():
+                            raw_messages.append({"role": role, "content": text.strip()})
+            if raw_messages:
+                dur = max(1, int(time.monotonic() - t0))
+                await repositories.record_voice_transcript(
+                    tenant_id=params.tenant_id,
+                    contact_id=params.contact_id,
+                    messages=raw_messages,
+                    duration_seconds=dur,
+                )
+                logger.info(
+                    "[RECORD %s] Auto-saved %d voice turns from worker server-side (duration=%ds)",
+                    ctx.room.name, len(raw_messages), dur,
+                )
+        except Exception:
+            logger.warning("[RECORD %s] Could not auto-save voice transcript", ctx.room.name, exc_info=True)
+
+    ctx.add_shutdown_callback(_persist_transcript_on_worker)
+    ctx.room.on("disconnected", lambda *_: asyncio.create_task(_persist_transcript_on_worker()))
+
+    _enforce_call_ceilings(session, params, ctx.room)
 
     if params.settings.VOICE_GREET_ON_CONNECT:
         greeting_text = params.settings.VOICE_GREETING_TEXT or "Hello! How can I help you today?"
@@ -297,7 +338,7 @@ async def entrypoint(ctx: JobContext) -> None:
             logger.warning("Error playing greeting: %s", e)
 
 
-def _enforce_call_ceilings(session, params: SessionParams, room_name: str) -> None:
+def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> None:
     """End a call that has run too long, or gone quiet and stayed quiet.
 
     A call bills the owner's provider keys for as long as it is open, so an
@@ -305,27 +346,45 @@ def _enforce_call_ceilings(session, params: SessionParams, room_name: str) -> No
     caller who never hangs up and a caller who connects and walks away. Neither
     is caught by any per-turn limit, because neither involves any turns.
 
-    Both ceilings are off by default and set per session from the token
-    endpoint, which is where the difference between "someone the owner sent a
-    link to" and "a stranger from the public directory" is known.
+    If 10s of continuous silence occurs after speech finishes, the agent
+    speaks a check-in reminder. If no answer is received in the next 10s, it
+    speaks a closing message, sends an end_call signal to the client, and
+    gracefully disconnects the room.
     """
     max_seconds = params.settings.VOICE_MAX_CALL_SECONDS
     idle_seconds = params.settings.VOICE_IDLE_TIMEOUT_SECONDS
     if max_seconds <= 0 and idle_seconds <= 0:
         return
 
+    room = room_or_name if hasattr(room_or_name, "name") else None
+    room_name = getattr(room_or_name, "name", str(room_or_name))
+
     last_activity = time.monotonic()
 
-    @session.on("conversation_item_added")
-    def _touch(_event) -> None:  # pragma: no cover - needs a live session
+    def _touch(*_args) -> None:  # pragma: no cover - needs a live session
         nonlocal last_activity
         last_activity = time.monotonic()
+
+    # Track activity on conversation item additions and speech completions
+    try:
+        session.on("conversation_item_added", _touch)
+        session.on("user_speech_committed", _touch)
+        session.on("agent_speech_committed", _touch)
+        session.on("user_input_transcribed", _touch)
+        session.on("user_started_speaking", _touch)
+        session.on("agent_started_speaking", _touch)
+    except Exception:
+        pass
 
     async def _watch() -> None:
         started = time.monotonic()
         nudged = False
         while True:
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(0.5)
+            # If the assistant or user is currently speaking, keep resetting the idle timer
+            if getattr(session, "current_speech", None) is not None:
+                last_activity = time.monotonic()
+
             now = time.monotonic()
             if max_seconds > 0 and now - started >= max_seconds:
                 logger.info(
@@ -333,55 +392,92 @@ def _enforce_call_ceilings(session, params: SessionParams, room_name: str) -> No
                     room_name, max_seconds,
                 )
                 break
+
             if idle_seconds > 0 and now - last_activity >= idle_seconds:
                 if not nudged:
-                    # First stage: check in before giving up. A caller who
-                    # stepped away may still be there — muted, thinking, or
-                    # holding the phone wrong. add_to_chat_ctx=False so the
-                    # nudge itself does not count as activity and restart
-                    # this very timer.
+                    # 1. First stage: check in after 10s of continuous silence
                     nudged = True
                     logger.info(
-                        "[LIMIT %s] %ds silent — asking if the caller is there",
+                        "[LIMIT %s] %ds silent — asking if caller is there",
                         room_name, idle_seconds,
                     )
                     try:
-                        await session.say(
+                        speech_handle = await session.say(
                             "Are you there? I'm still on the line.",
                             allow_interruptions=True,
                             add_to_chat_ctx=False,
                         )
+                        if speech_handle is not None:
+                            try:
+                                await speech_handle
+                            except Exception:
+                                pass
                     except Exception:
                         logger.debug("Could not speak the nudge", exc_info=True)
-                    # Ten seconds to answer. Any turn from the caller touches
-                    # last_activity via _touch, which ends this grace window.
-                    deadline = time.monotonic() + 10.0
+
+                    # Timestamp immediately after the nudge finishes speaking
+                    nudge_finished_at = time.monotonic()
+                    last_activity = nudge_finished_at
+
+                    # 2. 8s grace window: wait for user to speak or respond
+                    deadline = nudge_finished_at + 8.0
                     answered = False
                     while time.monotonic() < deadline:
-                        await asyncio.sleep(1.0)
-                        if time.monotonic() - last_activity < 2.0:
+                        await asyncio.sleep(0.3)
+                        # If user started speaking or any activity registered
+                        if getattr(session, "current_speech", None) is not None or last_activity > nudge_finished_at:
                             answered = True
                             break
+
                     if answered:
+                        # User spoke within 8s! Reset state completely so future 10s silences trigger again
+                        logger.info("[LIMIT %s] Caller responded after nudge — resetting idle timer", room_name)
                         nudged = False
+                        last_activity = time.monotonic()
                         continue
+
+                    # 3. If caller did not reply within 8s, conclude and hang up
                     logger.info(
-                        "[LIMIT %s] ending call: no answer within 10s of the nudge",
+                        "[LIMIT %s] ending call: no answer within 8s of the nudge",
                         room_name,
                     )
                 break
+
         try:
-            # Said before hanging up: a call that simply goes dead reads as a
-            # dropped connection, and the caller redials — which costs more than
-            # the call that was just ended.
-            await session.say(
-                "I didn't get anything from your side, so I'm going to end the "
-                "call. Thanks for calling, goodbye.",
+            # Spoken before hanging up
+            speech_handle = await session.say(
+                "I didn't hear anything from your side, so I'm going to end the "
+                "call. Goodbye.",
                 allow_interruptions=False,
             )
+            if speech_handle is not None:
+                try:
+                    await speech_handle
+                except Exception:
+                    pass
         except Exception:
             logger.debug("Could not speak the closing line", exc_info=True)
-        await session.aclose()
+
+        # Allow the last goodbye audio packet to flush across WebRTC
+        await asyncio.sleep(1.0)
+
+        # Signal the client browser to immediately transition to Call Ended screen
+        try:
+            if room and hasattr(room, "local_participant") and room.local_participant:
+                await room.local_participant.publish_data(b'{"type":"call_ended","reason":"idle"}')
+        except Exception:
+            pass
+
+        try:
+            if room and hasattr(room, "disconnect"):
+                await room.disconnect()
+        except Exception:
+            pass
+
+        try:
+            await session.aclose()
+        except Exception:
+            pass
 
     task = asyncio.create_task(_watch())
     # Held so the task is not garbage collected mid-call, and cancelled with the
