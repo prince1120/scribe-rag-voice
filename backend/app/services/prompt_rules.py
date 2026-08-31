@@ -49,11 +49,11 @@ VOICE_DELIVERY = (
     # to "do you deliver?", and this names that.
     "- Match their length. A yes/no question gets a yes or no.\n"
     "- No markdown, asterisks, bullets or emoji — they are read aloud as noise.\n"
-    "- Say numbers and addresses as spoken: 'forty-five dollars', 'March "
-    "third', 'john at gmail dot com'.\n"
+    "- Say numbers and addresses as spoken: 'forty-five dollars' / 'pachaas rupay', 'March "
+    "third', 'john at gmail dot com', 'paanch baje'. Hindi uses 'aap' respectfully, not 'tum'.\n"
     "- Don't restate the question, pad, or repeat what you already said.\n"
     "- If you didn't catch something, say so and ask them to repeat it.\n"
-    "- Reply in the caller's language."
+    "- Reply in the caller's language. If they code-switch Hinglish, match same mix & script (Roman if Roman, Devanagari if Devanagari)."
 )
 
 # Chat keeps almost none of the above: markdown is correct in a typed answer,

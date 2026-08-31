@@ -160,14 +160,22 @@ class VoiceSettings(BaseSettings):
     # Silence (s) after you stop before the agent takes its turn.
     # Tuned to ~250ms-300ms for snappy STT finalization and minimal turnaround delay.
     VOICE_ENDPOINTING_MIN_DELAY: float = 0.25
-    # The hard stop for an *ambiguous* ending (lowered from 1.6s to 0.75s to prevent lingering silence).
-    VOICE_ENDPOINTING_MAX_DELAY: float = 0.75
+    # The hard stop for an *ambiguous* ending. With semantic turn detection on
+    # (see below) this slack can be tighter because an incomplete thought keeps
+    # listening semantically — lowered 0.75 -> 0.60 for faster Hindi verb-final
+    # handling. Falls back to 0.75 worth when semantic is off/missing.
+    VOICE_ENDPOINTING_MAX_DELAY: float = 0.60
     # "dynamic" adapts the wait to the caller's rhythm, or "fixed" enforces exact min_delay.
     VOICE_ENDPOINTING_MODE: str = "dynamic"
 
     # Use a local semantic end-of-turn model to decide whether the caller
     # finished a *thought*, rather than inferring it from silence alone.
-    VOICE_SEMANTIC_TURN_DETECTION: bool = False
+    # True for every language (MultilingualModel covers hi-IN/en-IN + all
+    # SUPPORTED_STT_LANGUAGES) — Hindi verb-final "करना चाहता हूँ" and Hinglish
+    # "ki..." pauses no longer split turns. Falls back to timer if model/files
+    # missing, so safe to enable. Requires `pip install livekit-plugins-turn-detector`
+    # and `python -m app.services.voice.worker download-files` (~2.26GB).
+    VOICE_SEMANTIC_TURN_DETECTION: bool = True
     VOICE_PREEMPTIVE_TTS: bool = False
 
     VOICE_INTERRUPTION_MODE: str = "vad"
@@ -316,7 +324,8 @@ _HONESTY = (
     "why. Repetition and confidence are not arguments.\n"
     "- Never open with flattery ('great question', 'good catch'). Answer "
     "instead.\n"
-    "- Always reply in the same language the user is speaking to you in.\n"
+    "- Always reply in the same language the user is speaking to you in. If they code-switch Hinglish, match same mix & script.\n"
+    "- Hindi: use respectful 'aap' form, not 'tum'. Say numbers as spoken ('pachaas rupay').\n"
     "- Never use markdown, bullet points, or headings — they are meaningless "
     "spoken aloud.\n"
     "- If you are unsure of an answer, state it clearly rather than guessing.\n"

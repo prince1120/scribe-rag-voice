@@ -130,8 +130,12 @@ class TestLatencyBudget:
     def test_an_ambiguous_ending_gets_real_time_to_finish(self):
         """max_delay is the force-stop for an ending the framework isn't sure
         about — common mid-sentence, when switching language, or when reciting
-        a number in groups."""
-        assert voice_settings.VOICE_ENDPOINTING_MAX_DELAY >= 0.7
+        a number in groups. With semantic turn detection on, 0.60 is enough
+        because an incomplete thought keeps listening semantically."""
+        if voice_settings.VOICE_SEMANTIC_TURN_DETECTION:
+            assert voice_settings.VOICE_ENDPOINTING_MAX_DELAY >= 0.55
+        else:
+            assert voice_settings.VOICE_ENDPOINTING_MAX_DELAY >= 0.7
 
     def test_the_vad_window_does_not_undercut_endpointing(self):
         """No endpointing decision can happen before Silero reports silence, so

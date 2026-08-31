@@ -30,9 +30,10 @@ asyncpg==0.31.0
 slowapi==0.1.10
 python-json-logger==4.1.0
 
-# VoiceBot (LiveKit Agents worker + Groq LLM + Sarvam STT/TTS)
+# VoiceBot (LiveKit Agents worker + Groq LLM + Sarvam STT/TTS + semantic turn)
 livekit-agents==1.6.6
 livekit-plugins-sarvam==1.6.6
 livekit-plugins-groq==1.6.6
 livekit-plugins-silero==1.6.6
+livekit-plugins-turn-detector==1.6.6
 livekit-api==1.2.0
