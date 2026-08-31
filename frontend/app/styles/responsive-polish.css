@@ -1,0 +1,156 @@
+/* Responsive + professional polish — unified across portals.
+    Keeps motion capped at 260ms, respects prefers-reduced-motion, ensures
+    safe-area insets and proper touch targets on mobile. */
+
+/* ── Landing: safe-area + header + hero ──────────────────── */
+header.sticky {
+  padding-top: max(0.5rem, env(safe-area-inset-top, 0));
+}
+
+/* Prevent 320px overflow: header nav wraps gracefully */
+@media (max-width: 360px) {
+  header nav {
+    gap: 0.375rem !important;
+  }
+  header nav a {
+    padding-left: 0.6rem !important;
+    padding-right: 0.6rem !important;
+    font-size: 11px !important;
+  }
+}
+
+@media (max-width: 640px) {
+  /* Landing + Directory hero: tighter vertical rhythm */
+  .font-serif-display {
+    line-height: 1.15;
+  }
+
+  /* Console headings: 1 step smaller on phone for density (professional, not marketing) */
+  .dash-page h1,
+  .links-page-wrap h1,
+  .agent-page h1,
+  .settings-page h1 {
+    font-size: var(--text-xl) !important; /* 22px vs 24px */
+  }
+  .dash-page h2,
+  .links-page-wrap h2,
+  .agent-page h2,
+  .settings-page h2,
+  .agent-page h3,
+  .dash-page h3,
+  .links-page-wrap h3 {
+    font-size: var(--text-md) !important; /* 16px vs 17-18px */
+  }
+  .dash-page h1 + p,
+  .links-page-wrap h1 + p,
+  .agent-page h1 + p {
+    font-size: var(--text-xs) !important;
+  }
+  /* GuidedSetup + Assistant Identity card titles */
+  .agent-page [style*="cardTitle"],
+  .links-page-wrap [style*="cardTitle"] {
+    font-size: var(--text-md) !important;
+  }
+
+  /* Other surfaces — Landing/Directory hero, Setup/Signin, Personal */
+  .min-h-screen h1.font-serif-display,
+  .font-serif-display.text-\[34px\],
+  h1.font-serif-display {
+    font-size: var(--text-2xl) !important; /* 28px vs 34-42px hero */
+  }
+  .setup-title,
+  .signin-title,
+  .gate-title,
+  .link-title {
+    font-size: var(--text-xl) !important; /* 20px vs 24px */
+  }
+  .setup-card-title,
+  .signin-card h2,
+  .gate-card h2 {
+    font-size: var(--text-md) !important;
+  }
+
+  /* Setup cards stack full width */
+  .setup-choices {
+    grid-template-columns: 1fr !important;
+  }
+  .setup-card {
+    padding: 16px !important;
+  }
+
+  /* Agent studio: tabs full width */
+  [style*="channelTabs"] {
+    width: 100% !important;
+  }
+
+  /* Dashboard stats: single column on tiny */
+  @media (max-width: 480px) {
+    [style*="statsGrid"] {
+      grid-template-columns: 1fr !important;
+    }
+  }
+
+  /* Links / Dashboard pagination rows stack */
+  .links-toolbar,
+  .dash-header,
+  .links-header {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  /* Prevent fixed-width children widening page */
+  img, video, canvas {
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* Primary CTAs should be thumb-friendly on mobile */
+  .setup-continue,
+  .links-create-btn,
+  [style*="createBtn"],
+  [style*="mainSaveBtn"],
+  [style*="mainDeployBtn"] {
+    min-height: 44px;
+  }
+
+  /* Landing hero: reduce horizontal padding bleed */
+  section {
+    overflow-x: clip;
+  }
+}
+
+/* Personal chat composer respects iPhone home indicator */
+.ds-scroll {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+/* Landing footer safe area */
+footer {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0));
+}
+
+/* Ensure owner rail drawer is truly off-canvas on mobile */
+@media (max-width: 768px) {
+  .owner-rail.is-open {
+    transform: translateX(0);
+  }
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Professional elevation on cards (subtle, warm) */
+.agent-section,
+.dash-section-card,
+.links-contact-card,
+.dash-stat-card {
+  transition: box-shadow var(--duration-fast, 150ms) var(--ease-decelerate, ease-out);
+}
+.agent-section:hover,
+.dash-section-card:hover {
+  box-shadow: 0 4px 12px rgba(20, 20, 18, 0.06);
+}

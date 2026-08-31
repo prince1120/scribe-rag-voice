@@ -158,9 +158,7 @@ at rest and never shown back to the browser.
 
 ## What it deliberately does not do
 
-- **No public directory.** Callers reach an assistant because an owner sent
-  them a link, not by browsing strangers. A directory is a different product
-  with abuse and moderation problems this one has no answer for.
+- **No open discovery without limits.** The public directory (`/directory`) is intentionally a *preview* (search + 3-card teaser on `/`) that funnels to invite links, not a marketplace. Direct links (`/t/<token>`) remain the primary, private entry — directory adds discovery without exposing tenant ids.
 - **More than three documents per business agent.** These are an assistant's
   working knowledge — an FAQ, a price list, a policy sheet. A high cap invites
   dumping a drive in and getting vague answers, which reads as the assistant

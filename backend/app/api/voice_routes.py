@@ -114,16 +114,24 @@ async def voice_health() -> dict:
 @router.post("/preview", dependencies=[Depends(verify_api_key)])
 async def voice_preview(
     body: VoicePreviewRequest,
+    identity: Identity = Depends(get_identity),
     x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
 ) -> dict:
     """Synthesize a short sample of the requested voice so the picker can be
     "hear it, then pick it" instead of choosing blind off a one-line tagline.
     Uses Sarvam's one-shot REST endpoint directly (not the worker/LiveKit
     room) — there's no call in progress yet, just a voice sample."""
-    if not x_user_sarvam_key or not x_user_sarvam_key.strip():
+    # Resolve the Sarvam key: explicit header > owner's stored key > server default.
+    sarvam_key = (x_user_sarvam_key or "").strip()
+    if not sarvam_key:
+        creds = await owner_service.resolve_credentials(identity.tenant_id)
+        sarvam_key = (creds.get("sarvam_api_key") or "").strip()
+    if not sarvam_key:
+        sarvam_key = voice_settings.SARVAM_API_KEY
+    if not sarvam_key:
         raise HTTPException(
             status_code=400,
-            detail="Sarvam API Key is required to preview a voice.",
+            detail="No Sarvam API Key available. Add one in Settings or .env to preview voices.",
         )
     if body.speaker not in SUPPORTED_TTS_VOICE_IDS:
         raise HTTPException(status_code=400, detail="Unknown voice.")
@@ -139,7 +147,7 @@ async def voice_preview(
         "output_audio_codec": "mp3",
     }
     headers = {
-        "api-subscription-key": x_user_sarvam_key,
+        "api-subscription-key": sarvam_key,
         "Content-Type": "application/json",
     }
     try:
@@ -443,6 +451,7 @@ async def create_voice_token(
     meta: dict = {
         "rag_enabled": rag_enabled,
         "tenant_id": tenant_id,
+        "contact_id": identity.contact_id,
         "instructions": instructions,
         # The worker needs this separately from the prompt: it decides which
         # token ceiling applies, and it cannot infer that from instructions it
@@ -494,13 +503,14 @@ async def create_voice_token(
     if conversation_id:
         meta["conversation_id"] = conversation_id
 
-    # Cost ceilings for this call. A caller who arrived through the public
-    # directory is an unauthenticated stranger spending the owner's provider
-    # quota, so their calls are bounded in wall-clock time and hung up if the
-    # line goes quiet. Someone the owner sent a link to is not treated that way.
+    # Cost ceilings for this call.
+    meta["idle_timeout_seconds"] = (
+        settings.DIRECTORY_IDLE_TIMEOUT_SECONDS
+        if (contact is not None and getattr(contact, "source", "owner") == DIRECTORY_SOURCE)
+        else getattr(settings, "VOICE_IDLE_TIMEOUT_SECONDS", 10)
+    )
     if contact is not None and getattr(contact, "source", "owner") == DIRECTORY_SOURCE:
         meta["max_call_seconds"] = settings.DIRECTORY_MAX_CALL_SECONDS
-        meta["idle_timeout_seconds"] = settings.DIRECTORY_IDLE_TIMEOUT_SECONDS
 
     if identity.contact_id:
         # Concurrent, not sequential: the session row references the

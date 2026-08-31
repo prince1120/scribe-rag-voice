@@ -237,10 +237,18 @@ async def create_contact(
     max_sessions_per_day: int, mode: str = "both", source: str = "owner",
     client_id: Optional[str] = None,
 ) -> ContactRecord:
+    # Hash the PIN before persisting — a database leak must not yield the PIN
+    # directly. Salt with the token hash so identical PINs across contacts
+    # produce different stored values.
+    stored_pin: Optional[str] = None
+    if pin:
+        from app.contacts import hash_pin as _hash_pin
+
+        stored_pin = _hash_pin(pin, salt=token_hash)
     async with async_session() as session:
         record = ContactRecord(
             contact_id=contact_id, owner_tenant_id=owner_tenant_id, name=name,
-            note=note, token_hash=token_hash, pin=pin, expires_at=expires_at,
+            note=note, token_hash=token_hash, pin=stored_pin, expires_at=expires_at,
             max_sessions_per_day=max_sessions_per_day, mode=mode, source=source,
             client_id=client_id,
         )

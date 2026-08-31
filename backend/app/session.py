@@ -22,6 +22,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 COOKIE_NAME = "scribe_session"
+CONTACT_COOKIE_NAME = "scribe_contact_session"
 
 # The owner's tenant. Kept as the literal "default" that pre-session data was
 # written under, so enabling the passcode gate doesn't orphan an existing
@@ -109,6 +110,17 @@ def cookie_params() -> dict:
     Set-Cookie that doesn't match the original's flags won't clear it."""
     return {
         "key": COOKIE_NAME,
+        "httponly": True,
+        "samesite": "lax",
+        "secure": not settings.DEBUG,
+        "path": "/",
+    }
+
+
+def contact_cookie_params() -> dict:
+    """Cookie flags for contact guest session cookies, keeping owner and contact separate."""
+    return {
+        "key": CONTACT_COOKIE_NAME,
         "httponly": True,
         "samesite": "lax",
         "secure": not settings.DEBUG,

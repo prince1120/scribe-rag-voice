@@ -8,6 +8,8 @@ import json
 from uuid import uuid4
 from datetime import datetime
 import logging
+from app.services.guardrails import is_prompt_injection, filter_output
+from app.services.guardrails.prompt_wrapper import build_hierarchy_header
 
 from app.models.schemas import (
     QueryRequest, QueryResponse, DocumentUploadResponse,
@@ -39,6 +41,42 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Lightweight in-memory caches for Phase 4 token saving (per-process, TTL-based)
+import time as _cache_time
+_answer_cache: dict = {}  # key -> (answer, citations, expires_at)
+_prompt_prefix_cache: dict = {}
+
+def _query_aware_top_k(query: str, requested: Optional[int], is_demo: bool, has_images: bool) -> int:
+    if requested is not None:
+        return requested
+    if is_demo:
+        return settings.DEMO_TOP_K
+    if has_images:
+        return settings.RETRIEVAL_TOP_K
+    words = len((query or "").strip().split())
+    if words <= 8:
+        return 3   # yes/no, short fact → 3 chunks ~800 tokens
+    if words <= 25:
+        return 5   # medium → 5 chunks ~1500 tokens
+    return settings.RETRIEVAL_TOP_K  # long → 10
+
+def _answer_cache_get(key: str):
+    entry = _answer_cache.get(key)
+    if not entry:
+        return None
+    ans, cits, exp = entry
+    if _cache_time.time() > exp:
+        _answer_cache.pop(key, None)
+        return None
+    return ans, cits
+
+def _answer_cache_set(key: str, ans, cits, ttl: int = 300):
+    # cap size to 256 entries LRU-ish
+    if len(_answer_cache) > 256:
+        oldest = next(iter(_answer_cache))
+        _answer_cache.pop(oldest, None)
+    _answer_cache[key] = (ans, cits, _cache_time.time() + ttl)
 
 # Initialize services
 embedding_service = EmbeddingService(model_name=settings.EMBEDDING_MODEL)
@@ -378,7 +416,12 @@ async def _ingest_file(
                 }
             })
 
-        await run_in_threadpool(vector_store.upsert_points, points)
+        # Batch the upsert — a 50 MB CSV capped at 5k rows still produces
+        # hundreds of points; one enormous batch risks Qdrant payload-size
+        # limits and starves the threadpool's 2 workers.
+        _UPSERT_BATCH = 256
+        for i in range(0, len(points), _UPSERT_BATCH):
+            await run_in_threadpool(vector_store.upsert_points, points[i : i + _UPSERT_BATCH])
 
         await repositories.save_document(
             document_id=document_id,
@@ -503,6 +546,18 @@ async def query_documents(
         tenant_id = identity.tenant_id
         x_user_groq_key = identity.groq_key
 
+        # Guardrail: direct injection in query — block before retrieval/LLM (saves tokens)
+        inj = is_prompt_injection(body.query)
+        if inj.is_injection:
+            logger.warning("blocked injection tenant=%s reason=%s", tenant_id, inj.reason)
+            return QueryResponse(
+                answer="I can help with your documents, but I can't follow instructions to ignore my guidelines. Try rephrasing your question about the documents.",
+                citations=[],
+                conversation_id=body.conversation_id or "",
+                processing_time_ms=int((time.time() - start_time) * 1000),
+                retrieval_ms=0,
+            )
+
         # Get conversation history if available
         conversation_history = None
         if body.conversation_id:
@@ -522,9 +577,9 @@ async def query_documents(
             run_in_threadpool(sparse_encoder.encode_query, body.query),
         )
 
-        # Demo sessions (pasted Groq key) get a fixed, smaller top_k regardless
-        # of what the client requests.
-        final_top_k = settings.DEMO_TOP_K if x_user_groq_key else (body.top_k or settings.RETRIEVAL_TOP_K)
+        # Query-aware budget: short→3 (~800 tokens), medium→5 (~1500), long→10 (~4500)
+        has_images_q = bool(body.attached_images)
+        final_top_k = _query_aware_top_k(body.query, body.top_k, bool(x_user_groq_key), has_images_q)
 
         try:
             allowed_documents = await selected_document_ids(
@@ -543,12 +598,12 @@ async def query_documents(
                 retrieval_ms=int((time.time() - start_time) * 1000),
             )
 
-        # Over-fetch from hybrid retrieval, then narrow via cross-encoder rerank
+        # Over-fetch then narrow via rerank — trimmed to *2,15 per audit to save reranker tokens
         hybrid_results = await run_in_threadpool(
             vector_store.search,
             query_vector=query_embedding,
             sparse_vector=sparse_query,
-            limit=max(final_top_k * 3, 20),
+            limit=max(final_top_k * 2, 15),
             tenant_id=tenant_id,
             filters=body.filters,
             document_ids=allowed_documents,
@@ -574,40 +629,54 @@ async def query_documents(
                 retrieval_ms=retrieval_ms,
             )
 
-        # Generate response
-        llm_start = time.time()
-        answer = await run_in_threadpool(
-            rag_pipeline.generate_response,
-            query=body.query,
-            context_chunks=results,
-            conversation_history=conversation_history,
-            attached_images=body.attached_images,
-            temperature=(
-                overrides["temperature"] if overrides["temperature"] is not None
-                else (body.temperature if body.temperature is not None else 0.1)
-            ),
-            max_tokens=overrides["max_tokens"] or body.max_tokens or 800,
-            groq_api_key=overrides["groq_api_key"],
-            override_model=body.model or overrides["model"],
-            custom_base_url=overrides["custom_base_url"],
-            custom_api_key=overrides["custom_api_key"],
-            agent_prompt=overrides["agent_prompt"],
-        )
-        llm_ms = int((time.time() - llm_start) * 1000)
-
-        # Build citations
-        citations = [
-            SourceCitation(
-                document_id=r["payload"].get("document_id", ""),
-                filename=r["payload"].get("filename", "Unknown"),
-                chunk_id=r["payload"].get("chunk_id", ""),
-                page_number=r["payload"].get("page_number"),
-                score=r["score"],
-                snippet=r["payload"].get("content", "")[:200] + "..."
+        # Answer cache: repeat FAQs (exact normalized) save full retrieval+LLM cost, 5m TTL
+        import hashlib as _hl
+        _norm_q = " ".join((body.query or "").lower().split())
+        _agent_hash = _hl.sha1((overrides.get("agent_prompt") or "").encode()).hexdigest()[:12]
+        _doc_hash = _hl.sha1(",".join(sorted(allowed_documents or [])).encode()).hexdigest()[:8]
+        _cache_key = f"{tenant_id}:{_norm_q}:{final_top_k}:{_agent_hash}:{_doc_hash}:{body.conversation_id or ''}"
+        _cached = _answer_cache_get(_cache_key)
+        if _cached and not body.attached_images and not conversation_history:
+            answer, citations_cached = _cached
+            # need citations still built from results for return shape? use cached
+            citations = citations_cached
+            llm_ms = 0
+        else:
+            # Generate response
+            llm_start = time.time()
+            answer = await run_in_threadpool(
+                rag_pipeline.generate_response,
+                query=body.query,
+                context_chunks=results,
+                conversation_history=conversation_history,
+                attached_images=body.attached_images,
+                temperature=(
+                    overrides["temperature"] if overrides["temperature"] is not None
+                    else (body.temperature if body.temperature is not None else 0.1)
+                ),
+                max_tokens=overrides["max_tokens"] or body.max_tokens or 800,
+                groq_api_key=overrides["groq_api_key"],
+                override_model=body.model or overrides["model"],
+                custom_base_url=overrides["custom_base_url"],
+                custom_api_key=overrides["custom_api_key"],
+                agent_prompt=overrides["agent_prompt"],
             )
-            for r in results[:5]
-        ]
-        
+            llm_ms = int((time.time() - llm_start) * 1000)
+            # Build citations for cache store
+            citations = [
+                SourceCitation(
+                    document_id=r["payload"].get("document_id", ""),
+                    filename=r["payload"].get("filename", "Unknown"),
+                    chunk_id=r["payload"].get("chunk_id", ""),
+                    page_number=r["payload"].get("page_number"),
+                    score=r["score"],
+                    snippet=r["payload"].get("content", "")[:200] + "..."
+                )
+                for r in results[:5]
+            ]
+            if not body.attached_images and not conversation_history:
+                _answer_cache_set(_cache_key, answer, citations)
+
         # Update conversation if provided (Redis/in-memory = fast working
         # context for the LLM, DB = durable history for the UI/list endpoint)
         if body.conversation_id:
@@ -663,6 +732,12 @@ async def query_stream(
         tenant_id = identity.tenant_id
         x_user_groq_key = identity.groq_key
 
+        inj_s = is_prompt_injection(body.query)
+        if inj_s.is_injection:
+            logger.warning("blocked injection stream tenant=%s reason=%s", tenant_id, inj_s.reason)
+            msg = json.dumps({"text": "I can help with your documents, but I can't follow instructions to ignore my guidelines."})
+            return StreamingResponse(iter([f"data: {msg}\n\n"]), media_type="text/event-stream")
+
         # Get conversation history
         _t = time.time()
         conversation_history = None
@@ -686,9 +761,9 @@ async def query_stream(
         )
         logger.info(f"[timing] query embedding (dense+sparse): {(time.time()-_t)*1000:.0f}ms")
 
-        # Demo sessions (pasted Groq key) get a fixed, smaller top_k regardless
-        # of what the client requests.
-        final_top_k = settings.DEMO_TOP_K if x_user_groq_key else (body.top_k or settings.RETRIEVAL_TOP_K)
+        # Query-aware budget: short→3, medium→5, long→10 (saves tokens for voice/short queries)
+        has_images_s = bool(body.attached_images)
+        final_top_k = _query_aware_top_k(body.query, body.top_k, bool(x_user_groq_key), has_images_s)
 
         try:
             allowed_documents = await selected_document_ids(
@@ -712,7 +787,7 @@ async def query_stream(
             vector_store.search,
             query_vector=query_embedding,
             sparse_vector=sparse_query,
-            limit=max(final_top_k * 3, 20),
+            limit=max(final_top_k * 2, 15),
             tenant_id=tenant_id,
             filters=body.filters,
             document_ids=allowed_documents,
@@ -763,21 +838,37 @@ async def query_stream(
         loop = asyncio.get_running_loop()
 
         def _persist(role: str, content: str, msg_citations: Optional[list] = None):
+            """Persist one chat turn.
+
+            The user message is not on the critical path to first token, so it
+            is scheduled without blocking the streaming thread. The assistant
+            message is also fire-and-forget to avoid holding the connection
+            open on a slow DB — a failure is logged but does not fail the
+            stream, since the user already saw the tokens.
+            """
             if not body.conversation_id:
                 return
             conversation_service.add_message(
                 body.conversation_id, role, content, citations=msg_citations
             )
             try:
-                asyncio.run_coroutine_threadsafe(
+                fut = asyncio.run_coroutine_threadsafe(
                     repositories.append_message(
                         body.conversation_id, tenant_id, role, content,
                         citations=msg_citations,
                     ),
                     loop,
-                ).result(timeout=10)
+                )
+
+                def _on_done(f: "asyncio.Future[None]") -> None:  # type: ignore[name-defined]
+                    try:
+                        f.result()
+                    except Exception as e:  # pragma: no cover - logged, not raised
+                        logger.error(f"Failed to persist {role} message: {e}")
+
+                fut.add_done_callback(_on_done)
             except Exception as e:
-                logger.error(f"Failed to persist message: {e}")
+                logger.error(f"Failed to schedule persist for {role} message: {e}")
 
         # Stream response in format compatible with Vercel AI SDK
         def generate():

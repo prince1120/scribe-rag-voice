@@ -12,8 +12,8 @@ export interface ToastItem {
 }
 
 const ACCENTS: Record<ToastType, { bar: string; icon: React.ReactNode }> = {
-  error: { bar: "#c0392b", icon: <AlertTriangle className="w-4 h-4" style={{ color: "#c0392b" }} /> },
-  success: { bar: "#2e7d5b", icon: <CheckCircle2 className="w-4 h-4" style={{ color: "#2e7d5b" }} /> },
+  error: { bar: "var(--color-danger)", icon: <AlertTriangle className="w-4 h-4" style={{ color: "var(--color-danger)" }} /> },
+  success: { bar: "var(--color-success)", icon: <CheckCircle2 className="w-4 h-4" style={{ color: "var(--color-success)" }} /> },
   info: { bar: "var(--claude-accent)", icon: <Info className="w-4 h-4" style={{ color: "var(--claude-accent)" }} /> },
 };
 

@@ -32,19 +32,22 @@ def derive_tenant_id(
     client_id: Optional[str] = None,
     fallback_tenant_id: str = "default",
 ) -> str:
-    """Derive a stable, isolated cryptographic tenant ID from user keys and client ID.
+    """Derive a stable, isolated tenant ID.
 
-    Combines Groq Key, Sarvam Key, and Client UUID using SHA-256 to ensure
-    100% cryptographic isolation between different users and browser sessions.
+    Groq key + client id are the identity; Sarvam is voice-only and must NOT
+    change the tenant — otherwise adding a Sarvam key later would orphan the
+    user's documents (same groq+client but different hash). Sarvam is accepted
+    as a param for backwards-compat but deliberately excluded from the digest.
     """
     g = (groq_key or "").strip()
-    s = (sarvam_key or "").strip()
+    # sarvam_key intentionally not used for tenant — see docstring.
+    _ = (sarvam_key or "").strip()
     c = (client_id or "").strip()
 
-    if not g and not s and not c:
+    if not g and not c:
         return fallback_tenant_id
 
-    payload = f"groq:{g}|sarvam:{s}|client:{c}"
+    payload = f"groq:{g}|client:{c}"
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
     return f"tenant-{digest}"
 

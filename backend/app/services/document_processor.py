@@ -249,61 +249,90 @@ class DocumentProcessor:
         
         return chunks
     
+    # Safety: a 50 MB CSV could hold hundreds of thousands of rows — one chunk
+    # per row would OOM during embedding and upsert. Cap rows and group them
+    # so the output stays bounded regardless of file size.
+    _MAX_CSV_ROWS = 5000
+    _CSV_ROWS_PER_CHUNK = 20
+
     def _process_csv(self, file_path: str, metadata: Dict) -> List[Dict]:
-        """Process CSV files."""
-        chunks = []
+        """Process CSV files — bounded: groups rows and caps total rows."""
+        chunks: List[Dict] = []
         try:
             df = pd.read_csv(file_path)
-            
-            # Convert each row to text
-            for idx, row in df.iterrows():
-                row_text = " | ".join(f"{col}: {val}" for col, val in row.items())
-                
+
+            if len(df) > self._MAX_CSV_ROWS:
+                logger.warning(
+                    f"CSV has {len(df)} rows; capping at {self._MAX_CSV_ROWS} "
+                    f"({self._CSV_ROWS_PER_CHUNK} rows per chunk)"
+                )
+                df = df.head(self._MAX_CSV_ROWS)
+
+            for start in range(0, len(df), self._CSV_ROWS_PER_CHUNK):
+                batch = df.iloc[start : start + self._CSV_ROWS_PER_CHUNK]
+                lines = []
+                for _, row in batch.iterrows():
+                    lines.append(" | ".join(f"{col}: {val}" for col, val in row.items()))
+                row_text = "\n".join(lines)
+                chunk_index = len(chunks)
                 chunks.append({
                     "chunk_id": str(uuid4()),
                     "document_id": metadata["document_id"],
                     "content": row_text,
-                    "chunk_index": idx,
-                    "row_number": idx + 1,
-                    "metadata": {**metadata, "row_number": idx + 1}
+                    "chunk_index": chunk_index,
+                    "row_number": int(batch.index[0]) + 1,
+                    "metadata": {**metadata, "row_number": int(batch.index[0]) + 1},
                 })
-            
-            logger.info(f"Processed CSV: {len(chunks)} chunks")
+
+            logger.info(f"Processed CSV: {len(chunks)} chunks from {len(df)} rows")
         except Exception as e:
             logger.error(f"Error processing CSV: {e}")
             raise
-        
+
         return chunks
     
+    _MAX_EXCEL_ROWS_TOTAL = 5000
+    _EXCEL_ROWS_PER_CHUNK = 20
+
     def _process_excel(self, file_path: str, metadata: Dict) -> List[Dict]:
-        """Process Excel files."""
-        chunks = []
+        """Process Excel files — bounded across all sheets."""
+        chunks: List[Dict] = []
         try:
-            # Read all sheets
             xl_file = pd.ExcelFile(file_path)
-            
+
+            rows_seen = 0
             for sheet_name in xl_file.sheet_names:
-                df = pd.read_excel(file_path, sheet_name=sheet_name)
-                
-                # Add sheet info to metadata
-                sheet_metadata = {**metadata, "sheet_name": sheet_name}
-                
-                for idx, row in df.iterrows():
-                    row_text = f"Sheet: {sheet_name} | " + " | ".join(
-                        f"{col}: {val}" for col, val in row.items()
+                if rows_seen >= self._MAX_EXCEL_ROWS_TOTAL:
+                    logger.warning(
+                        f"Excel capped at {self._MAX_EXCEL_ROWS_TOTAL} rows total; "
+                        f"skipping remaining sheets after '{sheet_name}'"
                     )
-                    
+                    break
+                df = pd.read_excel(file_path, sheet_name=sheet_name)
+                remaining = self._MAX_EXCEL_ROWS_TOTAL - rows_seen
+                if len(df) > remaining:
+                    logger.warning(f"Sheet '{sheet_name}' capped from {len(df)} to {remaining} rows")
+                    df = df.head(remaining)
+
+                sheet_metadata = {**metadata, "sheet_name": sheet_name}
+                for start in range(0, len(df), self._EXCEL_ROWS_PER_CHUNK):
+                    batch = df.iloc[start : start + self._EXCEL_ROWS_PER_CHUNK]
+                    lines = []
+                    for _, row in batch.iterrows():
+                        lines.append(" | ".join(f"{col}: {val}" for col, val in row.items()))
+                    row_text = f"Sheet: {sheet_name} | " + "\n".join(lines)
                     chunks.append({
                         "chunk_id": str(uuid4()),
                         "document_id": metadata["document_id"],
                         "content": row_text,
                         "chunk_index": len(chunks),
-                        "row_number": idx + 1,
+                        "row_number": int(batch.index[0]) + 1,
                         "sheet_name": sheet_name,
-                        "metadata": sheet_metadata
+                        "metadata": sheet_metadata,
                     })
-            
-            logger.info(f"Processed Excel: {len(chunks)} chunks")
+                rows_seen += len(df)
+
+            logger.info(f"Processed Excel: {len(chunks)} chunks from {rows_seen} rows")
         except Exception as e:
             logger.error(f"Error processing Excel: {e}")
             raise

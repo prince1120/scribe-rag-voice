@@ -110,10 +110,11 @@ export default function DashboardPage() {
   const [transcriptTurns, setTranscriptTurns] = useState<TranscriptTurn[]>([]);
   const [loadingTranscript, setLoadingTranscript] = useState(false);
 
-  const fetchOverview = async () => {
+  const fetchOverview = async (opts?: { background?: boolean }) => {
+    const isBackground = Boolean(opts?.background && data);
+    if (!isBackground) setLoading(true);
     try {
       const overviewRes = await ownerFetch("/api/v1/contacts/overview");
-
       if (overviewRes.status === 403 || overviewRes.status === 401) {
         setError("Sign in as the owner to view your console.");
         return;
@@ -135,8 +136,12 @@ export default function DashboardPage() {
     if (cached.overviewData) {
       setData(cached.overviewData);
       setLoading(false);
+      // Revalidate in background without blocking UI — stale-while-revalidate
+      void fetchOverview({ background: true });
+      return;
     }
     void fetchOverview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const openTranscript = async (session: SessionItem) => {
@@ -202,12 +207,12 @@ export default function DashboardPage() {
         {/* ── Analytics Stat Cards Grid ────────────────────────── */}
         <div style={S.statsGrid} className="dash-stats-grid">
           {/* Total Conversations */}
-          <div style={{ ...S.statCard, background: "#f5f3ff", borderColor: "#ddd6fe" }} className="dash-stat-card">
+          <div style={{ ...S.statCard, background: "var(--claude-surface)", borderColor: "var(--claude-border)" }} className="dash-stat-card">
             <div style={S.statTop}>
-              <div style={{ ...S.statIconWrap, background: "#ede9fe", color: "#6d28d9" }}>
+              <div style={{ ...S.statIconWrap, background: "var(--claude-surface-2)", color: "var(--claude-accent)" }}>
                 <BarChart3 size={18} />
               </div>
-              <span style={{ ...S.statValue, color: "#6d28d9" }}>
+              <span style={{ ...S.statValue, color: "var(--claude-text)" }}>
                 {data ? data.totals.total_sessions : 0}
               </span>
             </div>
@@ -218,12 +223,12 @@ export default function DashboardPage() {
           </div>
 
           {/* Voice Calls */}
-          <div style={{ ...S.statCard, background: "#fdf2f8", borderColor: "#fbcfe8" }} className="dash-stat-card">
+          <div style={{ ...S.statCard, background: "var(--claude-surface)", borderColor: "var(--claude-border)" }} className="dash-stat-card">
             <div style={S.statTop}>
-              <div style={{ ...S.statIconWrap, background: "#fce7f3", color: "#db2777" }}>
+              <div style={{ ...S.statIconWrap, background: "var(--claude-surface-2)", color: "var(--claude-accent)" }}>
                 <Phone size={18} />
               </div>
-              <span style={{ ...S.statValue, color: "#db2777" }}>
+              <span style={{ ...S.statValue, color: "var(--claude-text)" }}>
                 {data ? data.totals.voice_calls : 0}
               </span>
             </div>
@@ -232,12 +237,12 @@ export default function DashboardPage() {
           </div>
 
           {/* Chat Conversations */}
-          <div style={{ ...S.statCard, background: "#eff6ff", borderColor: "#bfdbfe" }} className="dash-stat-card">
+          <div style={{ ...S.statCard, background: "var(--claude-surface)", borderColor: "var(--claude-border)" }} className="dash-stat-card">
             <div style={S.statTop}>
-              <div style={{ ...S.statIconWrap, background: "#dbeafe", color: "#2563eb" }}>
+              <div style={{ ...S.statIconWrap, background: "var(--claude-surface-2)", color: "var(--claude-accent)" }}>
                 <MessageSquare size={18} />
               </div>
-              <span style={{ ...S.statValue, color: "#2563eb" }}>
+              <span style={{ ...S.statValue, color: "var(--claude-text)" }}>
                 {data ? data.totals.chat_sessions : 0}
               </span>
             </div>
@@ -246,12 +251,12 @@ export default function DashboardPage() {
           </div>
 
           {/* Unique Callers */}
-          <div style={{ ...S.statCard, background: "#f0fdf4", borderColor: "#bbf7d0" }} className="dash-stat-card">
+          <div style={{ ...S.statCard, background: "var(--claude-surface)", borderColor: "var(--claude-border)" }} className="dash-stat-card">
             <div style={S.statTop}>
-              <div style={{ ...S.statIconWrap, background: "#dcfce7", color: "#16a34a" }}>
+              <div style={{ ...S.statIconWrap, background: "var(--claude-surface-2)", color: "var(--claude-accent)" }}>
                 <Users size={18} />
               </div>
-              <span style={{ ...S.statValue, color: "#16a34a" }}>
+              <span style={{ ...S.statValue, color: "var(--claude-text)" }}>
                 {data ? data.totals.unique_users : 0}
               </span>
             </div>
@@ -269,7 +274,7 @@ export default function DashboardPage() {
           <div style={S.sectionHeader} className="dash-section-header">
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div style={S.sectionIconWrap}>
-                <Clock size={16} style={{ color: "#4f46e5" }} />
+                <Clock size={16} style={{ color: "var(--claude-accent)" }} />
               </div>
               <div>
                 <h2 style={S.sectionTitle}>Completed Conversations & Calls</h2>
@@ -285,17 +290,17 @@ export default function DashboardPage() {
 
           {loading && !data ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", color: "#64748b", fontSize: 13 }}>
-                <RefreshCw size={14} className="animate-spin" style={{ color: "#3b82f6" }} />
-                <span>Loading latest analytics and conversation history…</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", color: "var(--claude-text-2)", fontSize: 13 }}>
+                <span className="w-3 h-3 rounded-full border-2 border-[var(--claude-border)] border-t-[var(--claude-accent)] animate-spin" aria-hidden />
+                <span>Loading latest analytics…</span>
               </div>
               {[1, 2, 3].map((i) => (
-                <div key={i} style={{ ...S.sessionRow, opacity: 0.7 }} className="dash-session-row">
+                <div key={i} style={{ ...S.sessionRow, opacity: 0.9 }} className="dash-session-row">
                   <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
-                    <div style={{ ...S.avatar, background: "#e2e8f0" }} />
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      <div style={{ width: 140, height: 16, background: "#e2e8f0", borderRadius: 4 }} />
-                      <div style={{ width: 80, height: 12, background: "#f1f5f9", borderRadius: 4 }} />
+                    <div className="ds-skeleton" style={{ width: 40, height: 40, borderRadius: 9999 }} />
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
+                      <div className="ds-skeleton" style={{ width: "42%", height: 14, borderRadius: 6 }} />
+                      <div className="ds-skeleton" style={{ width: "28%", height: 10, borderRadius: 6, opacity: 0.7 }} />
                     </div>
                   </div>
                 </div>
@@ -303,9 +308,9 @@ export default function DashboardPage() {
             </div>
           ) : recentList.length === 0 ? (
             <div style={S.emptyState}>
-              <Users size={32} style={{ color: "#cbd5e1", marginBottom: 8 }} />
+              <Users size={32} style={{ color: "var(--claude-border-strong)", marginBottom: 8 }} />
               <p style={{ margin: 0, fontWeight: 600 }}>No conversations recorded yet</p>
-              <p style={{ margin: "4px 0 0", fontSize: 12, color: "#94a3b8" }}>
+              <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--claude-muted)" }}>
                 Start a voice call or chat session from your invite link to view transcripts here.
               </p>
             </div>
@@ -319,10 +324,10 @@ export default function DashboardPage() {
                       <div
                         style={{
                           ...S.avatar,
-                          background: session.channel === "voice" ? "#fdf2f8" : "#eff6ff",
-                          color: session.channel === "voice" ? "#db2777" : "#2563eb",
+                          background: session.channel === "voice" ? "var(--color-danger-soft)" : "var(--claude-accent-soft)",
+                          color: session.channel === "voice" ? "var(--color-danger)" : "var(--claude-accent-hover)",
                           border:
-                            session.channel === "voice" ? "1px solid #fbcfe8" : "1px solid #bfdbfe",
+                            session.channel === "voice" ? "1px solid var(--color-danger-soft)" : "1px solid var(--claude-border)",
                           marginTop: 2,
                         }}
                       >
@@ -338,7 +343,7 @@ export default function DashboardPage() {
                           <span
                             style={{
                               ...S.channelPill,
-                              background: session.channel === "voice" ? "#fce7f3" : "#dbeafe",
+                              background: session.channel === "voice" ? "var(--color-danger-soft)" : "var(--claude-accent-soft)",
                               color: session.channel === "voice" ? "#be185d" : "#1d4ed8",
                             }}
                           >
@@ -368,7 +373,7 @@ export default function DashboardPage() {
                           {typeof session.message_count === "number" && session.message_count > 0 ? (
                             <>
                               <span>•</span>
-                              <span style={{ fontWeight: 600, color: "#334155" }}>
+                              <span style={{ fontWeight: 600, color: "var(--claude-text-2)" }}>
                                 {session.message_count} dialogue turns
                               </span>
                             </>
@@ -449,7 +454,7 @@ export default function DashboardPage() {
                     <span
                       style={{
                         ...S.channelPill,
-                        background: activeSession.channel === "voice" ? "#fce7f3" : "#dbeafe",
+                        background: activeSession.channel === "voice" ? "var(--color-danger-soft)" : "var(--claude-accent-soft)",
                         color: activeSession.channel === "voice" ? "#be185d" : "#1d4ed8",
                       }}
                     >
@@ -476,18 +481,18 @@ export default function DashboardPage() {
               <div style={S.modalBody}>
                 {loadingTranscript ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: "12px 4px" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "8px 14px", background: "#f8fafc", borderRadius: 20, border: "1px solid #e2e8f0", width: "fit-content", margin: "0 auto 8px", fontSize: 12, color: "#64748b", fontWeight: 500 }}>
-                      <RefreshCw size={13} className="animate-spin" style={{ color: "#4f46e5" }} />
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "8px 14px", background: "var(--claude-bg)", borderRadius: 20, border: "1px solid var(--claude-border)", width: "fit-content", margin: "0 auto 8px", fontSize: 12, color: "var(--claude-muted)", fontWeight: 500 }}>
+                      <RefreshCw size={13} className="animate-spin" style={{ color: "var(--claude-accent)" }} />
                       <span>Loading dialogue transcript from database…</span>
                     </div>
 
                     {/* Turn 1: Assistant Skeleton */}
                     <div style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: "80%" }}>
-                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#ede9fe", flexShrink: 0 }} />
+                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--claude-accent-soft)", flexShrink: 0 }} />
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
-                        <div style={{ padding: "12px 16px", borderRadius: "4px 16px 16px 16px", background: "#f8fafc", border: "1px solid #f1f5f9", display: "flex", flexDirection: "column", gap: 8, width: 240 }}>
-                          <div style={{ width: "90%", height: 12, background: "#e2e8f0", borderRadius: 4 }} />
-                          <div style={{ width: "65%", height: 12, background: "#e2e8f0", borderRadius: 4 }} />
+                        <div style={{ padding: "12px 16px", borderRadius: "4px 16px 16px 16px", background: "var(--claude-bg)", border: "1px solid var(--claude-surface-2)", display: "flex", flexDirection: "column", gap: 8, width: 240 }}>
+                          <div style={{ width: "90%", height: 12, background: "var(--claude-border)", borderRadius: 4 }} />
+                          <div style={{ width: "65%", height: 12, background: "var(--claude-border)", borderRadius: 4 }} />
                         </div>
                       </div>
                     </div>
@@ -495,20 +500,20 @@ export default function DashboardPage() {
                     {/* Turn 2: User Skeleton */}
                     <div style={{ display: "flex", gap: 10, alignItems: "flex-start", justifyContent: "flex-end", maxWidth: "80%", alignSelf: "flex-end" }}>
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end", width: "100%" }}>
-                        <div style={{ padding: "12px 16px", borderRadius: "16px 4px 16px 16px", background: "#eff6ff", border: "1px solid #dbeafe", display: "flex", flexDirection: "column", gap: 8, width: 190 }}>
-                          <div style={{ width: "85%", height: 12, background: "#bfdbfe", borderRadius: 4 }} />
+                        <div style={{ padding: "12px 16px", borderRadius: "16px 4px 16px 16px", background: "var(--claude-accent-soft)", border: "1px solid var(--claude-accent-soft)", display: "flex", flexDirection: "column", gap: 8, width: 190 }}>
+                          <div style={{ width: "85%", height: 12, background: "var(--claude-border)", borderRadius: 4 }} />
                         </div>
                       </div>
-                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#dbeafe", flexShrink: 0 }} />
+                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--claude-accent-soft)", flexShrink: 0 }} />
                     </div>
 
                     {/* Turn 3: Assistant Skeleton */}
                     <div style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: "80%" }}>
-                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#ede9fe", flexShrink: 0 }} />
+                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--claude-accent-soft)", flexShrink: 0 }} />
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
-                        <div style={{ padding: "12px 16px", borderRadius: "4px 16px 16px 16px", background: "#f8fafc", border: "1px solid #f1f5f9", display: "flex", flexDirection: "column", gap: 8, width: 260 }}>
-                          <div style={{ width: "95%", height: 12, background: "#e2e8f0", borderRadius: 4 }} />
-                          <div style={{ width: "70%", height: 12, background: "#e2e8f0", borderRadius: 4 }} />
+                        <div style={{ padding: "12px 16px", borderRadius: "4px 16px 16px 16px", background: "var(--claude-bg)", border: "1px solid var(--claude-surface-2)", display: "flex", flexDirection: "column", gap: 8, width: 260 }}>
+                          <div style={{ width: "95%", height: 12, background: "var(--claude-border)", borderRadius: 4 }} />
+                          <div style={{ width: "70%", height: 12, background: "var(--claude-border)", borderRadius: 4 }} />
                         </div>
                       </div>
                     </div>
@@ -516,7 +521,7 @@ export default function DashboardPage() {
                 ) : transcriptTurns.length === 0 ? (
                   <div style={S.emptyTranscript}>
                     <p style={{ margin: 0, fontWeight: 600 }}>No recorded turns for this session</p>
-                    <p style={{ margin: "4px 0 0", fontSize: 12, color: "#94a3b8" }}>
+                    <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--claude-muted)" }}>
                       The session connected but had no recorded speech turns.
                     </p>
                   </div>
@@ -535,18 +540,18 @@ export default function DashboardPage() {
                           <div
                             style={{
                               ...S.turnBubble,
-                              background: isUser ? "#4f46e5" : "#ffffff",
-                              color: isUser ? "#ffffff" : "#1e293b",
-                              border: isUser ? "none" : "1px solid #e2e8f0",
+background: isUser ? "var(--claude-accent)" : "var(--claude-surface)",
+                              color: isUser ? "var(--claude-surface)" : "#1e293b",
+                              border: isUser ? "none" : "1px solid var(--claude-border)",
                               boxShadow: isUser
                                 ? "0 2px 8px rgba(79, 70, 229, 0.25)"
                                 : "0 1px 3px rgba(0, 0, 0, 0.05)",
                             }}
-                          >
+                            >
                             <div
                               style={{
                                 ...S.turnWho,
-                                color: isUser ? "rgba(255,255,255,0.75)" : "#6366f1",
+                                color: isUser ? "rgba(255,255,255,0.75)" : "var(--claude-accent)",
                               }}
                             >
                               {isUser ? activeSession.name || "Caller" : activeSession.agent_name || "AI Assistant"}
@@ -589,11 +594,11 @@ const S: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     letterSpacing: "-0.02em",
     margin: 0,
-    color: "#0f172a",
+    color: "var(--claude-text)",
   },
   subtitle: {
     fontSize: 13,
-    color: "#64748b",
+    color: "var(--claude-muted)",
     marginTop: 4,
     margin: 0,
   },
@@ -602,35 +607,35 @@ const S: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 6,
     padding: "8px 14px",
-    borderRadius: 8,
-    border: "1px solid #e2e8f0",
-    background: "#ffffff",
-    color: "#334155",
+    borderRadius: "var(--radius-md)",
+    border: "1px solid var(--claude-border)",
+    background: "var(--claude-surface)",
+    color: "var(--claude-text)",
     fontSize: 13,
     fontWeight: 500,
     cursor: "pointer",
-    boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+    boxShadow: "var(--shadow-xs)",
   },
   previewBtn: {
     display: "inline-flex",
     alignItems: "center",
     gap: 6,
     padding: "8px 14px",
-    borderRadius: 8,
+    borderRadius: "var(--radius-md)",
     border: "none",
-    background: "#4f46e5",
-    color: "#ffffff",
+    background: "var(--claude-accent)",
+    color: "var(--claude-surface)",
     fontSize: 13,
     fontWeight: 500,
     cursor: "pointer",
     textDecoration: "none",
-    boxShadow: "0 2px 6px rgba(79,70,229,0.3)",
+    boxShadow: "var(--shadow-sm)",
   },
   errorBanner: {
     padding: "12px 16px",
     borderRadius: 10,
-    background: "#fef2f2",
-    border: "1px solid #fecaca",
+    background: "var(--color-danger-soft)",
+    border: "1px solid var(--color-danger-soft)",
     color: "#b91c1c",
     fontSize: 13,
     fontWeight: 500,
@@ -645,9 +650,9 @@ const S: Record<string, React.CSSProperties> = {
     flexDirection: "column",
     gap: 6,
     padding: "18px 20px",
-    borderRadius: 14,
-    border: "1px solid transparent",
-    boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
+    borderRadius: "var(--radius-lg)",
+    border: "1px solid var(--claude-border)",
+    boxShadow: "var(--shadow-sm)",
   },
   statTop: {
     display: "flex",
@@ -671,22 +676,22 @@ const S: Record<string, React.CSSProperties> = {
   statLabel: {
     fontSize: 13,
     fontWeight: 600,
-    color: "#1e293b",
+    color: "var(--claude-text)",
     marginTop: 4,
   },
   statSub: {
     fontSize: 11,
-    color: "#64748b",
+    color: "var(--claude-muted)",
   },
   sectionCard: {
     display: "flex",
     flexDirection: "column",
     gap: 16,
     padding: "20px 22px",
-    borderRadius: 16,
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+    borderRadius: "var(--radius-lg)",
+    background: "var(--claude-surface)",
+    border: "1px solid var(--claude-border)",
+    boxShadow: "var(--shadow-sm)",
   },
   sectionHeader: {
     display: "flex",
@@ -694,7 +699,7 @@ const S: Record<string, React.CSSProperties> = {
     justifyContent: "space-between",
     flexWrap: "wrap",
     gap: 10,
-    borderBottom: "1px solid #f1f5f9",
+    borderBottom: "1px solid var(--claude-border)",
     paddingBottom: 12,
   },
   sectionIconWrap: {
@@ -703,30 +708,30 @@ const S: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     width: 32,
     height: 32,
-    borderRadius: 8,
-    background: "#eef2ff",
+    borderRadius: "var(--radius-md)",
+    background: "var(--claude-accent-soft)",
   },
   sectionTitle: {
     fontSize: 16,
     fontWeight: 700,
-    color: "#0f172a",
+    color: "var(--claude-text)",
     margin: 0,
   },
   sectionDesc: {
     fontSize: 12,
-    color: "#64748b",
+    color: "var(--claude-muted)",
     margin: "2px 0 0",
   },
   seeAllLink: {
     fontSize: 12,
     fontWeight: 600,
-    color: "#4f46e5",
+    color: "var(--claude-accent)",
     textDecoration: "none",
   },
   loadingPlaceholder: {
     textAlign: "center",
     padding: "36px 0",
-    color: "#64748b",
+    color: "var(--claude-muted)",
     fontSize: 13,
   },
   emptyState: {
@@ -736,10 +741,10 @@ const S: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     padding: "40px 16px",
     textAlign: "center",
-    color: "#475569",
-    background: "#f8fafc",
-    borderRadius: 12,
-    border: "1px dashed #cbd5e1",
+    color: "var(--claude-text-2)",
+    background: "var(--claude-surface-2)",
+    borderRadius: "var(--radius-lg)",
+    border: "1px dashed var(--claude-border-strong)",
   },
   sessionsList: {
     display: "flex",
@@ -751,9 +756,9 @@ const S: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 14,
     padding: "12px 16px",
-    borderRadius: 12,
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
+    borderRadius: "var(--radius-lg)",
+    background: "var(--claude-surface)",
+    border: "1px solid var(--claude-border)",
     transition: "all 0.15s ease",
   },
   avatar: {
@@ -777,7 +782,7 @@ const S: Record<string, React.CSSProperties> = {
   sessionName: {
     fontSize: 14,
     fontWeight: 600,
-    color: "#0f172a",
+    color: "var(--claude-text)",
   },
   channelPill: {
     display: "inline-flex",
@@ -795,16 +800,16 @@ const S: Record<string, React.CSSProperties> = {
     fontSize: 11,
     fontWeight: 500,
     padding: "2px 8px",
-    borderRadius: 6,
-    background: "#f1f5f9",
-    color: "#475569",
+    borderRadius: "var(--radius-sm)",
+    background: "var(--claude-surface-2)",
+    color: "var(--claude-muted)",
   },
   sessionMeta: {
     display: "flex",
     alignItems: "center",
     gap: 6,
     fontSize: 12,
-    color: "#64748b",
+    color: "var(--claude-muted)",
     flexWrap: "wrap",
   },
   transcriptBtn: {
@@ -812,10 +817,10 @@ const S: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 6,
     padding: "7px 12px",
-    borderRadius: 8,
-    border: "1px solid #e2e8f0",
-    background: "#f8fafc",
-    color: "#334155",
+    borderRadius: "var(--radius-md)",
+    border: "1px solid var(--claude-border)",
+    background: "var(--claude-surface-2)",
+    color: "var(--claude-text)",
     fontSize: 12,
     fontWeight: 600,
     cursor: "pointer",
@@ -827,13 +832,13 @@ const S: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     paddingTop: 12,
-    borderTop: "1px solid #f1f5f9",
+    borderTop: "1px solid var(--claude-border)",
     flexWrap: "wrap",
     gap: 10,
   },
   paginationText: {
     fontSize: 12,
-    color: "#64748b",
+    color: "var(--claude-muted)",
   },
   paginationBtns: {
     display: "flex",
@@ -845,17 +850,17 @@ const S: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 4,
     padding: "6px 12px",
-    borderRadius: 6,
-    border: "1px solid #e2e8f0",
-    background: "#ffffff",
-    color: "#334155",
+    borderRadius: "var(--radius-sm)",
+    border: "1px solid var(--claude-border)",
+    background: "var(--claude-surface)",
+    color: "var(--claude-text)",
     fontSize: 12,
     fontWeight: 500,
   },
   pageIndicator: {
     fontSize: 12,
     fontWeight: 600,
-    color: "#0f172a",
+    color: "var(--claude-text)",
   },
   /* Modal Transcript */
   modalBackdrop: {
@@ -875,9 +880,9 @@ const S: Record<string, React.CSSProperties> = {
     maxHeight: "85vh",
     display: "flex",
     flexDirection: "column",
-    background: "#ffffff",
-    borderRadius: 18,
-    boxShadow: "0 20px 40px rgba(0,0,0,0.2)",
+    background: "var(--claude-surface)",
+    borderRadius: "var(--radius-lg)",
+    boxShadow: "var(--shadow-lg)",
     overflow: "hidden",
   },
   modalHeader: {
@@ -885,17 +890,17 @@ const S: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     padding: "16px 20px",
-    borderBottom: "1px solid #e2e8f0",
-    background: "#f8fafc",
+    borderBottom: "1px solid var(--claude-border)",
+    background: "var(--claude-surface-2)",
   },
   modalTitle: {
     fontSize: 16,
     fontWeight: 700,
-    color: "#0f172a",
+    color: "var(--claude-text)",
   },
   modalSub: {
     fontSize: 12,
-    color: "#64748b",
+    color: "var(--claude-muted)",
     margin: "2px 0 0",
   },
   modalClose: {
@@ -904,22 +909,22 @@ const S: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     width: 32,
     height: 32,
-    borderRadius: 8,
+    borderRadius: "var(--radius-md)",
     border: "none",
-    background: "#e2e8f0",
-    color: "#475569",
+    background: "var(--claude-border)",
+    color: "var(--claude-text-2)",
     cursor: "pointer",
   },
   modalBody: {
     padding: 16,
     overflowY: "auto",
     flex: 1,
-    background: "#f8fafc",
+    background: "var(--claude-bg)",
   },
   emptyTranscript: {
     textAlign: "center",
     padding: "40px 16px",
-    color: "#64748b",
+    color: "var(--claude-muted)",
   },
   dialogueContainer: {
     display: "flex",

@@ -1,7 +1,7 @@
 """Vision-based OCR using Groq's free vision model.
 
 Replaces Tesseract — no system binary required, more accurate on slides /
-diagrams / mixed layouts. Uses meta-llama/llama-4-scout-17b-16e-instruct on
+diagrams / mixed layouts. Uses qwen/qwen3.6-27b on
 Groq's free tier.
 """
 import base64
@@ -30,7 +30,7 @@ class VisionOCR:
     def __init__(
         self,
         groq_api_key: str,
-        model: str = "meta-llama/llama-4-scout-17b-16e-instruct",
+        model: str = "qwen/qwen3.6-27b",
     ):
         self.client = groq.Groq(api_key=groq_api_key)
         self.model = model
