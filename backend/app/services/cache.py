@@ -207,8 +207,9 @@ def invalidate_tenant(tenant_id: str) -> None:
     """
     if not tenant_id:
         return
-    for prefix in ("agent", "owner", "creds", "channels"):
+    for prefix in ("agent", "owner", "creds", "channels", "docs"):
         config_cache.invalidate((prefix, tenant_id))
+    config_cache.invalidate(("directory-listing",))
 
 
 def all_stats() -> list[dict]:

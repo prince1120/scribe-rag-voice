@@ -20,7 +20,7 @@ _RAG_FILLER_PHRASES = [
     "Hold on, let me pull that up.",
     "Give me a moment to check the sources.",
 ]
-_RAG_FILLER_DELAY_S = 1.0
+_RAG_FILLER_DELAY_S = 0.35
 
 _THINKING_FILLERS = [
     "Mm-hmm,", "Right,", "Okay,", "Sure,", "Got it,",

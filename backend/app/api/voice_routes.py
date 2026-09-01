@@ -176,7 +176,7 @@ async def voice_preview(
 @router.post("/retrieve", dependencies=[Depends(verify_internal_api_key)])
 async def voice_retrieve(body: VoiceRetrieveRequest) -> dict:
     """Retrieval-only endpoint the voice worker calls each turn when RAG is
-    enabled. Reuses the exact same embeddings / hybrid search / reranker as
+    enabled. Reuses the exact same embeddings / hybrid search pipeline as
     text chat (imported here, not re-instantiated) and returns just the top
     chunk texts for the worker to feed its LLM."""
     query = body.query.strip()
@@ -184,11 +184,10 @@ async def voice_retrieve(body: VoiceRetrieveRequest) -> dict:
         return {"chunks": []}
 
     # Imported lazily to reuse the singletons the API server already built at
-    # startup (avoids a second copy of the embedding/reranker models).
+    # startup (avoids a second copy of the embedding/sparse models).
     from app.api.routes import (
         NoDocumentsSelected,
         embedding_service,
-        reranker,
         selected_document_ids,
         sparse_encoder,
         vector_store,
@@ -212,19 +211,15 @@ async def voice_retrieve(body: VoiceRetrieveRequest) -> dict:
         run_in_threadpool(embedding_service.encode_query, query),
         run_in_threadpool(sparse_encoder.encode_query, query),
     )
-    # Narrower over-fetch than text chat's `max(top_k * 3, 20)`. Every extra
-    # candidate is another cross-encoder pass, and this runs inside the pause
-    # between the user finishing a sentence and the assistant speaking — where
-    # text chat can absorb the cost behind a streaming cursor, voice cannot.
-    hybrid = await run_in_threadpool(
+    # Fast: direct hybrid results, no reranker cross-encoder — RRF fused score is ranking
+    results = await run_in_threadpool(
         vector_store.search,
         query_vector=query_embedding,
         sparse_vector=sparse_query,
-        limit=max(top_k * 3, 10),
+        limit=top_k,
         tenant_id=body.tenant_id,
         document_ids=allowed_documents,
     )
-    results = await run_in_threadpool(reranker.rerank, query, hybrid, top_k=top_k)
     chunks = [
         (r.get("payload") or {}).get("content", "") for r in results
     ]
@@ -400,8 +395,17 @@ async def create_voice_token(
     # style_rules_enabled off and owns the result.
     rag_enabled = body.rag_enabled
 
-    channel = owner_service.channel_settings(agent, "voice")
+    cal_summary = ""
+    try:
+        from app.services import calendar_service as cal
+        svcs = await cal.list_services(identity.tenant_id)
+        if svcs:
+            lines = [f"- {s.name} ({s.duration_mins} mins)" for s in svcs]
+            cal_summary = "Bookable services:\n" + "\n".join(lines) + "\nUse check_availability to check free slots, and book_appointment when caller confirms."
+    except Exception:
+        pass
 
+    channel = owner_service.channel_settings(agent, "voice") if agent else {}
     if agent is not None and channel.get("script"):
         instructions = owner_service.build_agent_prompt(
             script=channel["script"],
@@ -409,9 +413,11 @@ async def create_voice_token(
             business_name=workspace.business_name if workspace else None,
             channel="voice",
             style_rules=channel.get("style_rules", True),
+            calendar_summary=cal_summary,
         )
-        # The owner's saved toggle wins for voice; chat always retrieves.
-        rag_enabled = agent.rag_enabled
+        # Per-channel RAG: Both OFF by default (prompt-first, fallback only when enabled). None -> False.
+        _vrag = getattr(agent, "voice_rag_enabled", None)
+        rag_enabled = bool(_vrag) if _vrag is not None else False
 
         # Voice, greeting and language are configuration the owner set and the
         # caller hears, so they come from the agent rather than the request.

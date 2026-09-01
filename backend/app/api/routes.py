@@ -29,7 +29,6 @@ from app.services.document_processor import DocumentProcessor
 from app.services.embedding_service import EmbeddingService
 from app.services.sparse_encoder import SparseEncoder
 from app.services.vector_store import VectorStoreService
-from app.services.reranker import Reranker
 from app.services.rag_pipeline import RAGPipeline
 from app.services.vision_ocr import VisionOCR
 from app.services.conversation_service import ConversationService
@@ -81,7 +80,6 @@ def _answer_cache_set(key: str, ans, cits, ttl: int = 300):
 # Initialize services
 embedding_service = EmbeddingService(model_name=settings.EMBEDDING_MODEL)
 sparse_encoder = SparseEncoder()
-reranker = Reranker()
 vector_store = VectorStoreService(
     host=settings.QDRANT_HOST,
     port=settings.QDRANT_PORT,
@@ -184,6 +182,16 @@ async def _chat_overrides(identity: Identity, x_user_groq_key, x_custom_llm_base
     )
     channel = owner_service.channel_settings(agent, "chat")
 
+    cal_summary = ""
+    try:
+        from app.services import calendar_service as cal
+        svcs = await cal.list_services(identity.tenant_id)
+        if svcs:
+            lines = [f"- {s.name} ({s.duration_mins} mins)" for s in svcs]
+            cal_summary = "Active bookable services:\n" + "\n".join(lines) + "\nFor appointments, ask for preferred date and time."
+    except Exception:
+        pass
+
     agent_prompt = None
     if agent is not None and channel.get("script"):
         agent_prompt = owner_service.build_agent_prompt(
@@ -192,7 +200,11 @@ async def _chat_overrides(identity: Identity, x_user_groq_key, x_custom_llm_base
             business_name=workspace.business_name if workspace else None,
             channel="chat",
             style_rules=channel.get("style_rules", True),
+            calendar_summary=cal_summary,
         )
+
+    _crag = getattr(agent, "chat_rag_enabled", None)
+    chat_rag_enabled = bool(_crag) if _crag is not None else False
 
     # Passes the record it already has, so this does not re-read the same row.
     stored = await owner_service.resolve_credentials(
@@ -200,6 +212,7 @@ async def _chat_overrides(identity: Identity, x_user_groq_key, x_custom_llm_base
     )
     return {
         "agent_prompt": agent_prompt,
+        "chat_rag_enabled": chat_rag_enabled,
         "groq_api_key": x_user_groq_key or stored.get("groq_api_key"),
         # The chat channel's own provider wins over the workspace default, for
         # the same reason as voice: an owner may want a different endpoint per
@@ -352,7 +365,8 @@ def _remove_quiet(path: str):
 
 
 async def _ingest_file(
-    data: bytes, document_id: str, safe_name: str, tenant_id: str, file_size: int,
+    data: bytes, document_id: str, safe_name: str, tenant_id: str, file_size: int, purpose: str = "rag",
+    source_snapshot_id: Optional[str] = None,
 ) -> DocumentUploadResponse:
     """Shared pipeline: process a file already on disk into chunks, embed,
     upsert into the vector store, and persist its metadata. Used by both
@@ -429,6 +443,8 @@ async def _ingest_file(
             filename=safe_name,
             file_size=file_size,
             chunk_count=len(chunks),
+            purpose="agent" if purpose == "agent" else "rag",
+            source_snapshot_id=source_snapshot_id,
         )
         # The new document is enabled by default, so the cached selection is now
         # wrong — without this the assistant would not see it until the TTL
@@ -460,11 +476,15 @@ async def _ingest_file(
 async def upload_document(
     request: Request, file: UploadFile = File(...),
     identity: Identity = Depends(get_identity),
+    purpose: Optional[str] = None,
 ):
-    """Upload and process a document."""
+    """Upload and process a document. purpose=agent (creation) vs rag (live)."""
     tenant_id = identity.tenant_id
     await _require_document_manager(identity)
     await _enforce_document_cap(identity)
+    # purpose may come via query ?purpose=agent or mis-sent as form; fallback to query
+    raw_purpose = purpose or request.query_params.get("purpose")
+    purpose_val = "agent" if (raw_purpose or "").strip().lower() == "agent" else "rag"
 
     safe_name = sanitize_filename(file.filename)
     ext = os.path.splitext(safe_name)[1].lower()
@@ -494,7 +514,7 @@ async def upload_document(
             )
         parts.append(chunk)
 
-    return await _ingest_file(b"".join(parts), document_id, safe_name, tenant_id, size)
+    return await _ingest_file(b"".join(parts), document_id, safe_name, tenant_id, size, purpose=purpose_val)
 
 
 @router.post(
@@ -506,11 +526,14 @@ async def upload_document(
 async def paste_text(
     request: Request, body: PasteTextRequest,
     identity: Identity = Depends(get_identity),
+    purpose: Optional[str] = None,
 ):
     """Ingest pasted text as a document, through the same pipeline as a file upload."""
     tenant_id = identity.tenant_id
     await _require_document_manager(identity)
     await _enforce_document_cap(identity)
+    raw_purpose = purpose or request.query_params.get("purpose")
+    purpose_val = "agent" if (raw_purpose or "").strip().lower() == "agent" else "rag"
 
     document_id = str(uuid4())
     safe_name = sanitize_filename(body.title) or "pasted-text"
@@ -526,7 +549,7 @@ async def paste_text(
         )
 
     return await _ingest_file(
-        content_bytes, document_id, safe_name, tenant_id, len(content_bytes)
+        content_bytes, document_id, safe_name, tenant_id, len(content_bytes), purpose=purpose_val
     )
 
 
@@ -569,65 +592,42 @@ async def query_documents(
                 conversation_service.get_conversation_history, body.conversation_id
             )
 
-        # Hybrid retrieval: dense + BM25 sparse, fused by RRF
-        # Dense and sparse query encoding are independent — run concurrently
-        # instead of paying two sequential model calls.
-        query_embedding, sparse_query = await asyncio.gather(
-            run_in_threadpool(embedding_service.encode_query, body.query),
-            run_in_threadpool(sparse_encoder.encode_query, body.query),
-        )
-
-        # Query-aware budget: short→3 (~800 tokens), medium→5 (~1500), long→10 (~4500)
-        has_images_q = bool(body.attached_images)
-        final_top_k = _query_aware_top_k(body.query, body.top_k, bool(x_user_groq_key), has_images_q)
-
-        try:
-            allowed_documents = await selected_document_ids(
-                tenant_id, body.document_ids
-            )
-        except NoDocumentsSelected:
-            return QueryResponse(
-                answer=(
-                    "I don't have any documents to answer from yet. Add one in "
-                    "your assistant's settings, or select one you've already "
-                    "uploaded."
-                ),
-                citations=[],
-                conversation_id=body.conversation_id or "",
-                processing_time_ms=int((time.time() - start_time) * 1000),
-                retrieval_ms=int((time.time() - start_time) * 1000),
-            )
-
-        # Over-fetch then narrow via rerank — trimmed to *2,15 per audit to save reranker tokens
-        hybrid_results = await run_in_threadpool(
-            vector_store.search,
-            query_vector=query_embedding,
-            sparse_vector=sparse_query,
-            limit=max(final_top_k * 2, 15),
-            tenant_id=tenant_id,
-            filters=body.filters,
-            document_ids=allowed_documents,
-        )
-
-        # Cross-encoder rerank for final ordering
-        results = await run_in_threadpool(reranker.rerank, body.query, hybrid_results, top_k=final_top_k)
-
-        # Hierarchical citation numbering: doc.chunk (e.g. 1.1, 1.2, 2.1)
-        results = assign_display_numbers(results)
-        await _resolve_image_paths(results)
         overrides = await _chat_overrides(
             identity, x_user_groq_key, x_custom_llm_base_url, x_custom_llm_key
         )
-        retrieval_ms = int((time.time() - start_time) * 1000)
 
-        if not results:
-            return QueryResponse(
-                answer="I don't have enough information in the provided documents to answer this question.",
-                citations=[],
-                conversation_id=body.conversation_id or "",
-                processing_time_ms=int((time.time() - start_time) * 1000),
-                retrieval_ms=retrieval_ms,
+        results = []
+        retrieval_ms = 0
+
+        # RAG Fallback: only execute retrieval if chat_rag_enabled is ON
+        if overrides.get("chat_rag_enabled"):
+            _t = time.time()
+            query_embedding, sparse_query = await asyncio.gather(
+                run_in_threadpool(embedding_service.encode_query, body.query),
+                run_in_threadpool(sparse_encoder.encode_query, body.query),
             )
+            has_images_q = bool(body.attached_images)
+            final_top_k = _query_aware_top_k(body.query, body.top_k, bool(x_user_groq_key), has_images_q)
+
+            try:
+                allowed_documents = await selected_document_ids(
+                    tenant_id, body.document_ids
+                )
+                raw_results = await run_in_threadpool(
+                    vector_store.search,
+                    query_vector=query_embedding,
+                    sparse_vector=sparse_query,
+                    limit=final_top_k,
+                    tenant_id=tenant_id,
+                    filters=body.filters,
+                    document_ids=allowed_documents,
+                )
+                results = assign_display_numbers(raw_results)
+                await _resolve_image_paths(results)
+            except NoDocumentsSelected:
+                results = []
+
+            retrieval_ms = int((time.time() - _t) * 1000)
 
         # Answer cache: repeat FAQs (exact normalized) save full retrieval+LLM cost, 5m TTL
         import hashlib as _hl
@@ -751,69 +751,45 @@ async def query_stream(
             )
         logger.info(f"[timing] conversation history fetch: {(time.time()-_t)*1000:.0f}ms")
 
-        # Hybrid retrieval: dense + BM25 sparse with RRF fusion, then rerank
-        # Dense and sparse query encoding are independent — run concurrently
-        # instead of paying two sequential model calls.
-        _t = time.time()
-        query_embedding, sparse_query = await asyncio.gather(
-            run_in_threadpool(embedding_service.encode_query, body.query),
-            run_in_threadpool(sparse_encoder.encode_query, body.query),
-        )
-        logger.info(f"[timing] query embedding (dense+sparse): {(time.time()-_t)*1000:.0f}ms")
-
-        # Query-aware budget: short→3, medium→5, long→10 (saves tokens for voice/short queries)
-        has_images_s = bool(body.attached_images)
-        final_top_k = _query_aware_top_k(body.query, body.top_k, bool(x_user_groq_key), has_images_s)
-
-        try:
-            allowed_documents = await selected_document_ids(
-                tenant_id, body.document_ids
-            )
-        except NoDocumentsSelected:
-            msg = json.dumps({
-                "text": (
-                    "I don't have any documents to answer from yet. Add one in "
-                    "your assistant's settings, or select one you've already "
-                    "uploaded."
-                )
-            })
-            return StreamingResponse(
-                iter([f"data: {msg}\n\n", "data: [DONE]\n\n"]),
-                media_type="text/event-stream",
-            )
-
-        _t = time.time()
-        hybrid_results = await run_in_threadpool(
-            vector_store.search,
-            query_vector=query_embedding,
-            sparse_vector=sparse_query,
-            limit=max(final_top_k * 2, 15),
-            tenant_id=tenant_id,
-            filters=body.filters,
-            document_ids=allowed_documents,
-        )
-        logger.info(f"[timing] vector_store.search total: {(time.time()-_t)*1000:.0f}ms")
-
-        _t = time.time()
-        results = await run_in_threadpool(reranker.rerank, body.query, hybrid_results, top_k=final_top_k)
-        logger.info(f"[timing] rerank: {(time.time()-_t)*1000:.0f}ms")
-
-        # Hierarchical citation numbering: doc.chunk (e.g. 1.1, 1.2, 2.1)
-        results = assign_display_numbers(results)
-        await _resolve_image_paths(results)
         overrides = await _chat_overrides(
             identity, x_user_groq_key, x_custom_llm_base_url, x_custom_llm_key
         )
-        retrieval_ms = int((time.time() - request_start) * 1000)
 
-        if not results:
-            msg = json.dumps({"text": "I don't have enough information in the provided documents."})
-            return StreamingResponse(
-                iter([f"data: {msg}\n\n"]),
-                media_type="text/event-stream"
+        results = []
+        citations = []
+        retrieval_ms = 0
+
+        # RAG Fallback: only execute retrieval if chat_rag_enabled is ON (default OFF for prompt-first)
+        if overrides.get("chat_rag_enabled"):
+            _t = time.time()
+            query_embedding, sparse_query = await asyncio.gather(
+                run_in_threadpool(embedding_service.encode_query, body.query),
+                run_in_threadpool(sparse_encoder.encode_query, body.query),
             )
-        
-        # Build citations for the response
+            has_images_s = bool(body.attached_images)
+            final_top_k = _query_aware_top_k(body.query, body.top_k, bool(x_user_groq_key), has_images_s)
+
+            try:
+                allowed_documents = await selected_document_ids(
+                    tenant_id, body.document_ids
+                )
+                raw_results = await run_in_threadpool(
+                    vector_store.search,
+                    query_vector=query_embedding,
+                    sparse_vector=sparse_query,
+                    limit=final_top_k,
+                    tenant_id=tenant_id,
+                    filters=body.filters,
+                    document_ids=allowed_documents,
+                )
+                results = assign_display_numbers(raw_results)
+                await _resolve_image_paths(results)
+            except NoDocumentsSelected:
+                results = []
+
+            retrieval_ms = int((time.time() - _t) * 1000)
+
+        # Build citations if RAG results exist
         def _build_citation(r):
             payload = r.get("payload") or {}
             full = payload.get("content", "") or ""
@@ -830,7 +806,10 @@ async def query_stream(
                 "display_number": r.get("display_number"),
             }
 
-        citations = [_build_citation(r) for r in results[:5]]
+        if results:
+            citations = [_build_citation(r) for r in results[:5]]
+        else:
+            citations = []
 
         # generate() runs in a worker thread (Starlette wraps sync generators
         # passed to StreamingResponse via iterate_in_threadpool), so DB writes
@@ -951,10 +930,15 @@ async def query_stream(
 @router.get("/documents", response_model=List[DocumentUploadResponse], dependencies=[Depends(verify_api_key)])
 async def get_documents(
     identity: Identity = Depends(get_identity),
+    purpose: Optional[str] = None,
 ):
-    """List previously uploaded documents for a tenant (persisted, survives restarts)."""
+    """List previously uploaded documents for a tenant (persisted, survives restarts).
+
+    purpose=agent => only creation docs (for agent building), purpose=rag => only live RAG docs.
+    Omit => all (back-compat). Agent creation docs never mix with live RAG.
+    """
     tenant_id = identity.tenant_id
-    records = await repositories.list_documents(tenant_id)
+    records = await repositories.list_documents(tenant_id, purpose=purpose if purpose in ("agent", "rag") else None)
     return [
         DocumentUploadResponse(
             document_id=r.document_id,

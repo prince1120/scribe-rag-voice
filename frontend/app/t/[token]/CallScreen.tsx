@@ -1,8 +1,9 @@
 "use client";
 
-// The phone-call experience for voice callers: a status line, live timer,
-// glowing voice orb, real-time live transcript feed, mute/unmute, and end call button.
-// Mobile-first layout — designed for 320px+ screens.
+// The phone-call experience for voice callers:
+// 1. Idle: Clean centered Hero Card with breathing 3D Orb + Start Call button.
+// 2. Live: Dual-column workspace with active Orb, sound bars & integrated control dock.
+// 3. Ended: Symmetrical Call Summary Recap Card with conversation history & Call Again button.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -16,16 +17,23 @@ import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
 import { MIC_CAPTURE, useAgentStall } from "../../components/voice/useCallQuality";
 import { SignalPill } from "../../components/voice/SignalPill";
 import {
-  ChevronDown,
-  ChevronUp,
+  Check,
+  CheckCircle2,
+  Copy,
   MessageSquare,
   Mic,
   MicOff,
   Phone,
   PhoneOff,
+  RotateCcw,
+  Sparkles,
   User,
+  Volume2,
   WifiOff,
+  X,
 } from "lucide-react";
+
+import "../../styles/callscreen.css";
 
 type Phase = "idle" | "connecting" | "live" | "ended" | "error";
 
@@ -43,231 +51,23 @@ function formatDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-/* ─────────────────────────── styles (inline) ──────────────────────────── */
-const S = {
-  main: {
-    height: "100dvh",
-    maxHeight: "100dvh",
-    display: "flex",
-    flexDirection: "column" as const,
-    background: "var(--claude-bg)",
-    color: "var(--claude-text)",
-    fontFamily: "var(--font-sans, system-ui, sans-serif)",
-    userSelect: "none" as const,
-    overflow: "hidden",
-  },
-  header: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "12px 16px 0",
-    flexShrink: 0,
-  },
-  badge: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 5,
-    fontSize: 12,
-    fontWeight: 600,
-    padding: "4px 10px",
-    borderRadius: 9999,
-    border: "1px solid var(--claude-border)",
-    background: "var(--claude-surface)",
-    color: "var(--claude-text)",
-  },
-  timer: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 5,
-    fontSize: 12,
-    fontWeight: 600,
-    padding: "4px 10px",
-    borderRadius: 9999,
-    background: "var(--claude-surface)",
-    color: "var(--claude-accent)",
-    border: "1px solid var(--claude-border)",
-    fontVariantNumeric: "tabular-nums" as const,
-  },
-  center: (isDrawerOpen: boolean) => ({
-    flex: 1,
-    display: "flex",
-    flexDirection: "column" as const,
-    alignItems: "center",
-    justifyContent: isDrawerOpen ? "flex-start" : "center",
-    gap: isDrawerOpen ? 8 : 12,
-    padding: isDrawerOpen ? "4px 16px" : "8px 16px",
-    minHeight: 0,
-    overflow: "hidden",
-  }),
-  statusText: {
-    fontSize: 18,
-    fontWeight: 700,
-    letterSpacing: "-0.01em",
-    textAlign: "center" as const,
-    lineHeight: 1.2,
-    transition: "font-size 0.2s ease",
-  },
-  subText: {
-    fontSize: 12,
-    color: "var(--claude-muted)",
-    textAlign: "center" as const,
-    maxWidth: 260,
-    lineHeight: 1.5,
-  },
-  orbWrap: {
-    position: "relative" as const,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-    transition: "all 0.25s ease",
-  },
-  subtitle: {
-    width: "100%",
-    maxWidth: 280,
-    padding: "8px 14px",
-    borderRadius: 16,
-    border: "1px solid var(--claude-border)",
-    background: "var(--claude-surface)",
-    fontSize: 12,
-    lineHeight: 1.5,
-    textAlign: "center" as const,
-    flexShrink: 0,
-  },
-  transcriptWrap: {
-    width: "100%",
-    maxWidth: 400,
-    display: "flex",
-    flexDirection: "column" as const,
-    alignItems: "center",
-    flex: 1,
-    minHeight: 0,
-    overflow: "hidden",
-  },
-  transcriptToggle: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 5,
-    fontSize: 11,
-    fontWeight: 600,
-    padding: "4px 10px",
-    borderRadius: 9999,
-    border: "1px solid var(--claude-border)",
-    background: "var(--claude-surface)",
-    color: "var(--claude-text-2)",
-    cursor: "pointer",
-    flexShrink: 0,
-  },
-  transcriptList: {
-    width: "100%",
-    flex: 1,
-    minHeight: 0,
-    overflowY: "auto" as const,
-    borderRadius: 14,
-    border: "1px solid var(--claude-border)",
-    background: "var(--claude-surface)",
-    padding: "8px 10px",
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: 6,
-    marginTop: 6,
-    fontSize: 12,
-  },
-  msgBubble: (isUser: boolean) => ({
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: 2,
-    padding: "6px 10px",
-    borderRadius: 12,
-    background: isUser ? "var(--claude-accent-soft)" : "var(--claude-bg)",
-    border: isUser ? "none" : "1px solid var(--claude-border)",
-    marginLeft: isUser ? 24 : 0,
-    marginRight: isUser ? 0 : 24,
-  }),
-  msgMeta: {
-    display: "flex",
-    justifyContent: "space-between",
-    fontSize: 10,
-    fontWeight: 600,
-    color: "var(--claude-muted)",
-  },
-  footer: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 20,
-    padding: "12px 16px 24px",
-    flexShrink: 0,
-  },
-  ctrlBtn: (variant: "mute" | "muted" | "end") => ({
-    display: "flex",
-    flexDirection: "column" as const,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 3,
-    width: 56,
-    height: 56,
-    borderRadius: 9999,
-    border:
-      variant === "muted"
-        ? "1.5px solid var(--color-warning)"
-        : variant === "end"
-        ? "none"
-        : "1.5px solid var(--claude-border)",
-    background:
-      variant === "muted"
-        ? "var(--color-warning-soft)"
-        : variant === "end"
-        ? "#EF4444"
-        : "var(--claude-surface)",
-    color: variant === "muted" ? "#92400e" : variant === "end" ? "var(--claude-surface)" : "var(--claude-text)",
-    cursor: "pointer",
-    fontSize: 10,
-    fontWeight: 600,
-    transition: "transform 0.12s",
-  }),
-  startBtn: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    padding: "12px 32px",
-    borderRadius: 9999,
-    fontSize: 14,
-    fontWeight: 600,
-    color: "var(--claude-surface)",
-    background: "var(--claude-accent)",
-    border: "none",
-    cursor: "pointer",
-    transition: "opacity 0.15s",
-  },
-};
-
-/* ─────────────────────────── component ─────────────────────────────── */
-
 export function CallScreen({ name }: { name?: string }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState("");
   const [muted, setMuted] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [agentSpeaking, setAgentSpeaking] = useState(false);
-  // True from the end of a user turn until the assistant answers.
   const [waitingForAgent, setWaitingForAgent] = useState(false);
-  // The assistant greets first. Until it has, the screen must not say
-  // "Listening to you" — that invites the caller to start talking over the
-  // greeting, and a call that opens with both sides talking never recovers.
   const [agentHasSpoken, setAgentHasSpoken] = useState(false);
-  // Reported by LiveKit from real packet loss and jitter on this call. Shown
-  // for the same reason WhatsApp does: choppy audio caused by the caller's own
-  // network is indistinguishable from a broken assistant unless you say so.
   const [quality, setQuality] = useState<ConnectionQuality>(
     ConnectionQuality.Excellent,
   );
 
   // Live transcript state
   const [transcripts, setTranscripts] = useState<TranscriptMessage[]>([]);
-  const [showTranscript, setShowTranscript] = useState(false);
-  const [currentSubtitle, setCurrentSubtitle] = useState("");
+  const [showMobileDrawer, setShowMobileDrawer] = useState(false);
+  const [liveBooking, setLiveBooking] = useState<{ type: string; title: string; date?: string; time?: string } | null>(null);
+  const [copied, setCopied] = useState(false);
   const transcriptListRef = useRef<HTMLDivElement>(null);
 
   const roomRef = useRef<Room | null>(null);
@@ -288,74 +88,77 @@ export function CallScreen({ name }: { name?: string }) {
     return () => clearInterval(timer);
   }, [phase]);
 
-  // Auto scroll transcript container to bottom without scrolling window/body
+  // Auto scroll transcript container to bottom
   useEffect(() => {
-    if (showTranscript && transcriptListRef.current) {
+    if (transcriptListRef.current) {
       transcriptListRef.current.scrollTo({
         top: transcriptListRef.current.scrollHeight,
         behavior: "smooth",
       });
     }
-  }, [transcripts, showTranscript]);
+  }, [transcripts, showMobileDrawer]);
 
-  // Save session transcript to backend on call end
+  const copyTranscript = useCallback(() => {
+    if (transcripts.length === 0) return;
+    const text = transcripts
+      .map((t) => `[${t.time}] ${t.role === "user" ? name || "You" : "Assistant"}: ${t.text}`)
+      .join("\n\n");
+    void navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [transcripts, name]);
+
   const persistSession = useCallback(async () => {
-    const msgs = transcriptsRef.current
-      .filter((t) => t.text.trim())
-      .map((t) => ({
-        role: t.role,
-        content: t.text.trim(),
-      }));
-
-    if (msgs.length === 0) return;
-
-    const body = JSON.stringify({
-      duration_seconds: secondsRef.current,
-      messages: msgs,
-    });
-
-    // `keepalive` so the request survives the page going away. A plain fetch is
-    // cancelled when the document is torn down, which meant refreshing or
-    // closing the tab mid-call silently discarded the whole transcript — the
-    // call showed up in the owner's history with nothing in it.
+    const list = transcriptsRef.current;
+    if (list.length === 0) return;
     try {
-      await fetch("/api/v1/voice/record_session", {
+      const pathSegments = window.location.pathname.split("/");
+      const token = pathSegments[pathSegments.length - 1];
+      if (!token) return;
+
+      await fetch(`/api/v1/contacts/t/${token}/session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        keepalive: true,
-        body,
+        body: JSON.stringify({
+          channel: "voice",
+          messages: list.map((m) => ({
+            role: m.role,
+            content: m.text,
+            time: m.time,
+          })),
+          duration_seconds: secondsRef.current,
+        }),
       });
     } catch {
-      /* ignore */
+      /* ignore persist failure */
     }
   }, []);
 
-  /** Fire-and-forget save for the unload path, where nothing can be awaited.
-   *  sendBeacon is queued by the browser and delivered after the page is gone;
-   *  it carries same-origin cookies, which is what the session needs. */
   const persistBeacon = useCallback(() => {
-    const msgs = transcriptsRef.current
-      .filter((t) => t.text.trim())
-      .map((t) => ({ role: t.role, content: t.text.trim() }));
-    if (msgs.length === 0) return;
-
+    const list = transcriptsRef.current;
+    if (list.length === 0) return;
     try {
-      navigator.sendBeacon?.(
-        "/api/v1/voice/record_session",
-        new Blob(
-          [JSON.stringify({ duration_seconds: secondsRef.current, messages: msgs })],
-          { type: "application/json" }
-        )
-      );
+      const pathSegments = window.location.pathname.split("/");
+      const token = pathSegments[pathSegments.length - 1];
+      if (!token) return;
+
+      const body = JSON.stringify({
+        channel: "voice",
+        messages: list.map((m) => ({
+          role: m.role,
+          content: m.text,
+          time: m.time,
+        })),
+        duration_seconds: secondsRef.current,
+      });
+      navigator.sendBeacon?.(`/api/v1/contacts/t/${token}/session`, body);
     } catch {
-      /* nothing useful to do while the page is being destroyed */
+      /* ignore beacon failure */
     }
   }, []);
 
   const teardown = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
-    analyserRef.current?.cleanup().catch(() => {});
     analyserRef.current = null;
     audioElsRef.current.forEach((el) => el.remove());
     audioElsRef.current = [];
@@ -369,7 +172,6 @@ export function CallScreen({ name }: { name?: string }) {
     setError("");
     setSeconds(0);
     setTranscripts([]);
-    setCurrentSubtitle("");
     setPhase("connecting");
     setAgentHasSpoken(false);
     setQuality(ConnectionQuality.Excellent);
@@ -411,28 +213,22 @@ export function CallScreen({ name }: { name?: string }) {
         analyserRef.current = analyser;
       });
 
-      // Real-time live transcript handling from LiveKit Room
+      // Real-time live transcript handling
       room.on(RoomEvent.TranscriptionReceived, (segments, participant) => {
-        const isLocal = participant?.isLocal ?? false;
-        const role: "user" | "assistant" = isLocal ? "user" : "assistant";
-        const nowTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-
-        // Drives the "still thinking" watchdog. A finished user turn starts the
-        // clock; anything from the assistant stops it. Transcripts are used
-        // rather than audio because they arrive first — the caller should be
-        // told the reply is late before the silence has already felt broken.
-        if (isLocal) {
-          if (segments.some((s) => s.final && s.text)) setWaitingForAgent(true);
-        } else if (segments.some((s) => s.text)) {
-          setWaitingForAgent(false);
-        }
-
         for (const seg of segments) {
-          if (!seg.text) continue;
-          setCurrentSubtitle(seg.text);
+          const role = participant?.isLocal ? "user" : "assistant";
+          const nowTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+          if (role === "assistant") {
+            setAgentSpeaking(true);
+            setAgentHasSpoken(true);
+            setWaitingForAgent(false);
+          } else {
+            setWaitingForAgent(true);
+          }
 
           setTranscripts((prev) => {
-            const idx = prev.findIndex((p) => p.id === seg.id);
+            const idx = prev.findIndex((m) => m.id === seg.id);
             if (idx >= 0) {
               const copy = [...prev];
               copy[idx] = { ...copy[idx], text: seg.text, isFinal: seg.final };
@@ -446,7 +242,7 @@ export function CallScreen({ name }: { name?: string }) {
         }
       });
 
-      // Data packets (chat turns / assistant subtitles / end call signals)
+      // Data packets
       room.on(RoomEvent.DataReceived, (payload: Uint8Array) => {
         try {
           const str = new TextDecoder().decode(payload);
@@ -457,6 +253,15 @@ export function CallScreen({ name }: { name?: string }) {
             teardown();
             try { room.disconnect(); } catch {}
             return;
+          }
+          if (data.type === "booking_confirmed" || data.type === "booking_rescheduled" || data.type === "booking_cancelled") {
+            setLiveBooking({
+              type: data.type,
+              title: data.text || (data.type === "booking_confirmed" ? "Appointment Booked" : data.type === "booking_rescheduled" ? "Appointment Rescheduled" : "Appointment Cancelled"),
+              date: data.date,
+              time: data.time,
+            });
+            setTimeout(() => setLiveBooking(null), 8000);
           }
           if (data.text) {
             const role = data.role === "user" ? "user" : "assistant";
@@ -471,14 +276,13 @@ export function CallScreen({ name }: { name?: string }) {
                 isFinal: true,
               },
             ]);
-            setCurrentSubtitle(data.text);
           }
         } catch {
           /* ignore */
         }
       });
 
-      // When the remote agent leaves or disconnects, cleanly end the call
+      // Remote agent disconnected
       room.on(RoomEvent.ParticipantDisconnected, (participant) => {
         if (!participant.isLocal) {
           setPhase("ended");
@@ -487,9 +291,6 @@ export function CallScreen({ name }: { name?: string }) {
         }
       });
 
-      // Only the local participant's quality is actionable by the person
-      // holding the phone. The agent's side is our problem, not theirs, and
-      // showing it would just be a second bar they cannot act on.
       room.on(RoomEvent.ConnectionQualityChanged, (q, participant) => {
         if (participant?.isLocal) setQuality(q);
       });
@@ -504,27 +305,25 @@ export function CallScreen({ name }: { name?: string }) {
       });
 
       await room.connect(url, token);
-      // Stated explicitly rather than left to browser defaults. Echo
-      // cancellation matters most: without it, the assistant's own voice comes
-      // back through the speaker into the mic, gets transcribed as if the
-      // caller said it, and both confuses the reply and triggers false
-      // interruptions — heard as the agent talking over itself.
-      await room.localParticipant.setMicrophoneEnabled(true, {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      });
+      await room.localParticipant.setMicrophoneEnabled(true, MIC_CAPTURE);
       setPhase("live");
 
+      // Audio analysis visualizer tick
+      let lastSpokeAt = 0;
       const tick = () => {
-        const volume = analyserRef.current?.calculateVolume() ?? 0;
-        const level = Math.min(1, volume * 3.4);
-        if (orbRef.current) {
-          orbRef.current.style.transform = `scale(${1 + level * 0.22})`;
+        if (analyserRef.current && orbRef.current) {
+          const values = analyserRef.current.calculateVolume();
+          const scale = 1 + Math.min(values * 1.4, 0.38);
+          orbRef.current.style.transform = `scale(${scale.toFixed(3)})`;
+          if (values > 0.08) {
+            lastSpokeAt = performance.now();
+            setAgentSpeaking(true);
+            setAgentHasSpoken(true);
+            setWaitingForAgent(false);
+          } else if (performance.now() - lastSpokeAt > 350) {
+            setAgentSpeaking(false);
+          }
         }
-        const speaking = level > 0.05;
-        setAgentSpeaking(speaking);
-        if (speaking) setAgentHasSpoken(true);
         rafRef.current = requestAnimationFrame(tick);
       };
       rafRef.current = requestAnimationFrame(tick);
@@ -551,7 +350,7 @@ export function CallScreen({ name }: { name?: string }) {
 
   const status =
     phase === "connecting"
-      ? "Connecting…"
+      ? "Connecting Audio…"
       : phase === "live"
       ? muted
         ? "Microphone Muted"
@@ -559,8 +358,6 @@ export function CallScreen({ name }: { name?: string }) {
         ? "Assistant Speaking…"
         : agentHasSpoken
         ? "Listening to you…"
-        // Connected, but the greeting has not arrived yet. Naming what is
-        // about to happen turns an ambiguous silence into an expected one.
         : "Assistant is about to greet you…"
       : phase === "ended"
       ? "Call Ended"
@@ -568,33 +365,15 @@ export function CallScreen({ name }: { name?: string }) {
       ? "Couldn't connect"
       : "Ready to Talk";
 
-  // Orb size: smaller on mobile
-  // Guard an accidental refresh or tab close during a live call.
-  //
-  // Refreshing genuinely ends the call — the room connection drops and the
-  // worker closes the session on participant disconnect ("closing agent session
-  // due to participant disconnect" in its log) — so this is not a cosmetic
-  // warning. Cancelling the dialog leaves the call running untouched.
-  //
-  // The wording is the browser's, not ours: every major browser has ignored
-  // custom beforeunload text since ~2017, to stop pages writing scare messages
-  // into a native dialog. So this can ask "are you sure" and cannot say "your
-  // call is still going". The transcript is saved on the way out regardless,
-  // because the caller may well confirm.
   useEffect(() => {
     if (phase !== "live") return;
-
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       persistBeacon();
       event.preventDefault();
-      // Still assigned for older browsers that require it to show the dialog.
       event.returnValue = "";
       return "";
     };
-
     window.addEventListener("beforeunload", onBeforeUnload);
-    // pagehide covers what beforeunload misses on mobile Safari, where a tab
-    // can be discarded without beforeunload ever firing.
     window.addEventListener("pagehide", persistBeacon);
     return () => {
       window.removeEventListener("beforeunload", onBeforeUnload);
@@ -602,242 +381,319 @@ export function CallScreen({ name }: { name?: string }) {
     };
   }, [phase, persistBeacon]);
 
-  const isDrawerOpen = showTranscript && phase === "live";
-  const orbSize = phase === "live" ? (showTranscript ? 52 : 100) : 120;
-
-  // Two different failures, deliberately kept apart. The first is the WebRTC
-  // link; the second is the assistant going quiet, which the link cannot see
-  // — a slow LLM or a stalled worker leaves quality at Excellent while the
-  // caller hears nothing.
   const stallWarning = useAgentStall(phase === "live" && waitingForAgent && !agentSpeaking);
+  const timeWarning =
+    phase === "live" && seconds >= 840 && seconds < 900
+      ? { text: `1 min left — call ends at 15:00 (${formatDuration(900 - seconds)} remaining)`, detail: "" }
+      : phase === "live" && seconds >= 880
+      ? { text: `Ending in ${900 - seconds}s — wrap up`, detail: "" }
+      : null;
   const networkWarning =
     phase === "live" && quality === ConnectionQuality.Lost
       ? { text: "Reconnecting…", detail: "Your connection dropped." }
       : phase === "live" && quality === ConnectionQuality.Poor
-      ? {
-          text: "Weak network",
-          detail: "Audio may break up. Try moving closer to your router.",
-        }
-      // A dropped link is the more urgent thing to say, so it wins.
+      ? { text: "Weak network", detail: "Audio may break up. Try moving closer to your router." }
+      : timeWarning
+      ? timeWarning
       : stallWarning;
 
   return (
-    <main style={S.main}>
+    <main className="callscreen-root">
+      <div className="callscreen-bg-glow-1" />
+      <div className="callscreen-bg-glow-2" />
+
+      {/* Network or stall alert banner */}
       {networkWarning && (
         <div
           role="status"
           aria-live="polite"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 8,
-            padding: "8px 14px",
-            fontSize: 12,
-            fontWeight: 600,
-            color: "#7c2d12",
-            background: "#ffedd5",
-            borderBottom: "1px solid #fed7aa",
-          }}
+          className="flex items-center justify-center gap-2 py-2 px-4 text-xs font-semibold text-amber-900 bg-amber-200/90 border-b border-amber-300 backdrop-blur-md z-30 shrink-0"
         >
           <WifiOff size={14} aria-hidden="true" />
           <span>{networkWarning.text}</span>
-          <span style={{ fontWeight: 500, opacity: 0.85 }}>
-            {networkWarning.detail}
-          </span>
+          <span className="font-normal opacity-85">{networkWarning.detail}</span>
         </div>
       )}
 
-      {/* ── Top Bar ─────────────────────────────────────────── */}
-      <header style={S.header}>
-        {name ? (
-          <span style={S.badge}>
-            <User size={13} style={{ color: "var(--claude-accent)" }} />
-            {name}
-          </span>
-        ) : (
-          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--claude-muted)" }}>
-            Guest Call
-          </span>
-        )}
-
-        {phase === "live" && (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            {/* Connection strength sits beside the timer so both read in one
-                glance on a phone, and so the caller can tell "my network" from
-                "the assistant is stuck" without waiting for a warning. */}
-            <SignalPill quality={quality} isLive />
-            <span style={S.timer}>
-              <span
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: 9999,
-                  background: "var(--color-success)",
-                  animation: "pulse 1.5s ease-in-out infinite",
-                }}
-              />
-              {formatDuration(seconds)}
-            </span>
-          </span>
-        )}
-      </header>
-
-      {/* ── Center Content ──────────────────────────────────── */}
-      <div style={S.center(isDrawerOpen)}>
-        {/* Status text */}
-        <h1
-          style={{
-            ...S.statusText,
-            ...(isDrawerOpen ? { fontSize: 13, margin: 0, opacity: 0.85 } : {}),
-          }}
-        >
-          {status}
-        </h1>
-        {phase === "idle" && (
-          <p style={S.subText}>Tap below to connect your voice with the AI assistant.</p>
-        )}
-        {error && (
-          <p style={{ ...S.subText, color: "var(--color-danger)" }}>{error}</p>
-        )}
-
-        {/* Animated Voice Orb */}
-        <div style={S.orbWrap}>
-          <div
-            ref={orbRef}
-            className={`call-orb ${phase === "live" ? "is-live" : ""}`}
-            style={{ width: orbSize, height: orbSize }}
-            aria-hidden="true"
-          />
-          {agentSpeaking && (
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                borderRadius: 9999,
-                border: "2px solid rgba(99,102,241,0.3)",
-                animation: "ping 1s cubic-bezier(0,0,0.2,1) infinite",
-                pointerEvents: "none",
-                width: orbSize,
-                height: orbSize,
-              }}
-            />
-          )}
+      {/* ── Top Header Bar ────────────────────────────────────────── */}
+      <header className="callscreen-header">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-full bg-[var(--claude-accent-soft)] border border-[var(--claude-border)] flex items-center justify-center text-[var(--claude-accent)] shrink-0">
+            <User size={15} />
+          </div>
+          <div className="min-w-0">
+            <div className="text-xs font-bold text-[var(--claude-text)] truncate flex items-center gap-1.5">
+              <span className="truncate">{name || "Guest Caller"}</span>
+              <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-[var(--claude-accent-soft)] text-[var(--claude-accent)] border border-[var(--claude-border)] shrink-0">Live HD</span>
+            </div>
+            <p className="text-[10px] text-[var(--claude-muted)] m-0 truncate">AI Voice Assistant</p>
+          </div>
         </div>
 
-        {/* Live subtitle — only when transcript drawer is collapsed */}
-        {phase === "live" && currentSubtitle && !showTranscript && (
-          <div style={S.subtitle}>
-            <span
+        {phase === "live" ? (
+          <div className="flex items-center gap-2.5 shrink-0">
+            <SignalPill quality={quality} isLive />
+            <div className="flex items-center gap-1.5 py-1 px-2.5 rounded-full bg-[var(--claude-surface-2)] border border-[var(--claude-border)] text-xs font-mono font-bold text-[var(--claude-accent)] shadow-xs">
+              <span className="w-2 h-2 rounded-full bg-[var(--claude-accent)] animate-ping" />
+              <span>{formatDuration(seconds)}</span>
+            </div>
+          </div>
+        ) : phase === "ended" && seconds > 0 ? (
+          <div className="text-xs font-semibold text-[var(--claude-muted)] bg-[var(--claude-surface-2)] px-2.5 py-1 rounded-full border border-[var(--claude-border)] shrink-0">
+            Duration: {formatDuration(seconds)}
+          </div>
+        ) : null}
+      </header>
+
+      {/* ── Main Viewport Content ─────────────────────────────────── */}
+      <div className="callscreen-viewport-content">
+        
+        {/* ── STATE 1: IDLE / CONNECTING ──────────────────────────── */}
+        {(phase === "idle" || phase === "connecting" || phase === "error") && (
+          <div className="idle-card-container">
+            <div className="inline-flex items-center gap-2 py-1.5 px-4 rounded-full bg-[var(--claude-surface-2)] border border-[var(--claude-border)] text-xs font-semibold text-[var(--claude-text)] shadow-xs">
+              <Sparkles size={13} className="text-[var(--claude-accent)]" />
+              <span>{status}</span>
+            </div>
+
+            <div
+              className="voice-orb-wrapper"
+              onClick={phase === "idle" ? start : undefined}
+              title="Click to start call"
+            >
+              <div className="voice-orb-3d" />
+            </div>
+
+            <p className="text-xs text-[var(--claude-muted)] max-w-xs m-0 leading-relaxed">
+              Connect your microphone to speak naturally in real time with the assistant.
+            </p>
+
+            {error && (
+              <p className="text-xs text-rose-700 bg-rose-50 p-2.5 rounded-xl border border-rose-200 m-0 w-full">
+                {error}
+              </p>
+            )}
+
+            <button
+              type="button"
+              onClick={start}
+              disabled={phase === "connecting"}
+              className="w-full max-w-xs flex items-center justify-center gap-2.5 py-3 px-6 rounded-full text-white text-xs font-bold shadow-md transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
               style={{
-                display: "block",
-                fontSize: 10,
-                fontWeight: 700,
-                color: "var(--claude-accent)",
-                marginBottom: 2,
+                background: "var(--claude-accent, #4854A8)",
+                boxShadow: "0 6px 16px rgba(72, 84, 168, 0.3)",
               }}
             >
-              {agentSpeaking ? "Assistant:" : "You:"}
-            </span>
-            <p style={{ margin: 0, fontStyle: "italic", lineHeight: 1.45 }}>
-              {currentSubtitle.length > 120
-                ? currentSubtitle.slice(-120) + "…"
-                : currentSubtitle}
-            </p>
+              <Phone size={15} />
+              <span>{phase === "connecting" ? "Connecting Audio…" : "Start Voice Call"}</span>
+            </button>
           </div>
         )}
 
-        {/* Real-time Transcript Drawer */}
+        {/* ── STATE 2: ACTIVE LIVE CALL ───────────────────────────── */}
         {phase === "live" && (
-          <div style={S.transcriptWrap}>
-            <button
-              type="button"
-              onClick={() => setShowTranscript((v) => !v)}
-              style={S.transcriptToggle}
-            >
-              <MessageSquare size={12} style={{ color: "var(--claude-accent)" }} />
-              Transcript ({transcripts.length})
-              {showTranscript ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
-            </button>
+          <div className="live-workspace-grid">
+            
+            {/* Main Hero Card (Status + Orb + Sound Bars + Self-Contained Symmetrical Controls) */}
+            <section className="live-hero-card">
+              <div className="inline-flex items-center gap-2 py-1.5 px-4 rounded-full bg-[var(--claude-surface-2)] border border-[var(--claude-border)] text-xs font-semibold text-[var(--claude-text)] shadow-xs">
+                <Sparkles size={13} className="text-[var(--claude-accent)]" />
+                <span>{status}</span>
+              </div>
 
-            {showTranscript && (
-              <div ref={transcriptListRef} style={S.transcriptList}>
+              {liveBooking && (
+                <div className="flex items-center gap-2 py-1.5 px-3.5 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-bold shadow-xs">
+                  <span>✓</span>
+                  <span>{liveBooking.title}</span>
+                </div>
+              )}
+
+              {/* Center 3D Voice Orb */}
+              <div className="voice-orb-wrapper">
+                {agentSpeaking && (
+                  <>
+                    <div className="voice-wave-halo" />
+                    <div className="voice-wave-halo delayed" />
+                  </>
+                )}
+
+                <div
+                  ref={orbRef}
+                  className={`voice-orb-3d ${agentSpeaking ? "speaking" : ""} ${muted ? "muted" : ""}`}
+                />
+              </div>
+
+              {/* Waveform visualizer bars */}
+              <div className="voice-bars-container">
+                {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+                  <div
+                    key={i}
+                    className={`voice-bar ${agentSpeaking ? "active" : ""}`}
+                    style={{ animationDelay: `${i * 0.15}s` }}
+                  />
+                ))}
+              </div>
+
+              {/* Symmetrical Control Actions (Directly centered inside the card!) */}
+              <div className="live-card-controls-row">
+                <button
+                  type="button"
+                  onClick={toggleMute}
+                  className={`callscreen-pill-btn ${muted ? "is-muted" : ""}`}
+                  aria-pressed={muted}
+                  title={muted ? "Unmute Microphone" : "Mute Microphone"}
+                >
+                  {muted ? <MicOff size={16} /> : <Mic size={16} />}
+                  <span>{muted ? "Unmute" : "Mute"}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowMobileDrawer((v) => !v)}
+                  className={`callscreen-pill-btn md:hidden ${showMobileDrawer ? "is-chat-active" : ""}`}
+                  title="Toggle Transcript"
+                >
+                  <MessageSquare size={16} />
+                  <span>Transcript</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={end}
+                  className="callscreen-pill-btn is-end"
+                  title="Hang up call"
+                >
+                  <PhoneOff size={16} />
+                  <span>End Call</span>
+                </button>
+              </div>
+            </section>
+
+            {/* Live Transcript Card (Desktop side-by-side / Mobile bottom sheet) */}
+            <aside className={`live-transcript-card ${showMobileDrawer ? "mobile-drawer-open" : ""}`}>
+              {/* Mobile Drag Indicator */}
+              <div className="mobile-drawer-handle md:hidden" />
+
+              <div className="transcript-header-bar">
+                <div className="flex items-center gap-2">
+                  <MessageSquare size={14} className="text-[var(--claude-accent)]" />
+                  <span className="font-bold">Live Transcript</span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-[var(--claude-surface)] text-[var(--claude-muted)] border border-[var(--claude-border)]">
+                    {transcripts.length}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {transcripts.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={copyTranscript}
+                      className="flex items-center gap-1 text-[11px] font-semibold text-[var(--claude-accent)] hover:underline cursor-pointer bg-[var(--claude-surface)] px-2 py-1 rounded-md border border-[var(--claude-border)]"
+                      title="Copy transcript"
+                    >
+                      {copied ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+                      <span>{copied ? "Copied" : "Copy"}</span>
+                    </button>
+                  )}
+                  {showMobileDrawer && (
+                    <button
+                      type="button"
+                      onClick={() => setShowMobileDrawer(false)}
+                      className="p-1 rounded text-[var(--claude-muted)] hover:text-[var(--claude-text)] md:hidden cursor-pointer"
+                    >
+                      <X size={16} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div ref={transcriptListRef} className="transcript-message-stream">
                 {transcripts.length === 0 ? (
-                  <p
-                    style={{
-                      textAlign: "center",
-                      color: "var(--claude-muted)",
-                      padding: "16px 0",
-                      fontStyle: "italic",
-                      fontSize: 11,
-                    }}
-                  >
-                    Start speaking… your conversation will appear here.
-                  </p>
+                  <div className="h-full flex flex-col items-center justify-center text-center p-6 text-[var(--claude-muted)] text-xs">
+                    <Volume2 size={24} className="mb-2 opacity-40" />
+                    <p className="m-0">Speak naturally — your conversation will stream here in real time.</p>
+                  </div>
                 ) : (
                   transcripts.map((t) => (
-                    <div key={t.id} style={S.msgBubble(t.role === "user")}>
-                      <div style={S.msgMeta}>
+                    <div
+                      key={t.id}
+                      className={t.role === "user" ? "transcript-bubble-user" : "transcript-bubble-assistant"}
+                    >
+                      <div className="flex items-center justify-between text-[10px] opacity-75 mb-1 font-semibold">
                         <span>{t.role === "user" ? name || "You" : "Assistant"}</span>
                         <span>{t.time}</span>
                       </div>
-                      <p style={{ margin: 0, lineHeight: 1.45, color: "var(--claude-text)" }}>
+                      <p className="m-0 text-xs leading-relaxed">
                         {t.text}
+                        {!t.isFinal && <span className="opacity-60 animate-pulse"> ●</span>}
                       </p>
                     </div>
                   ))
                 )}
               </div>
-            )}
+            </aside>
+          </div>
+        )}
+
+        {/* ── STATE 3: CALL ENDED RECAP CARD ──────────────────────── */}
+        {phase === "ended" && (
+          <div className="ended-recap-card">
+            <div className="recap-header">
+              <div className="flex items-center gap-2 min-w-0">
+                <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                <span className="font-bold text-xs text-[var(--claude-text)] truncate">Conversation Summary</span>
+                <span className="text-[10px] font-mono text-[var(--claude-muted)] bg-[var(--claude-surface)] px-2 py-0.5 rounded-full border border-[var(--claude-border)] shrink-0">
+                  {transcripts.length} turns
+                </span>
+              </div>
+              {transcripts.length > 0 && (
+                <button
+                  type="button"
+                  onClick={copyTranscript}
+                  className="flex items-center gap-1 text-[11px] font-semibold text-[var(--claude-accent)] hover:underline cursor-pointer bg-[var(--claude-surface)] px-2.5 py-1 rounded-md border border-[var(--claude-border)] shrink-0"
+                >
+                  {copied ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+                  <span>{copied ? "Copied" : "Copy"}</span>
+                </button>
+              )}
+            </div>
+
+            <div className="recap-content-stream">
+              {transcripts.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-center p-8 text-[var(--claude-muted)] text-xs">
+                  <Volume2 size={24} className="mb-2 opacity-40" />
+                  <p className="m-0">No spoken speech recorded for this call.</p>
+                </div>
+              ) : (
+                transcripts.map((t) => (
+                  <div
+                    key={t.id}
+                    className={t.role === "user" ? "transcript-bubble-user" : "transcript-bubble-assistant"}
+                  >
+                    <div className="flex items-center justify-between text-[10px] opacity-75 mb-1 font-semibold">
+                      <span>{t.role === "user" ? name || "You" : "Assistant"}</span>
+                      <span>{t.time}</span>
+                    </div>
+                    <p className="m-0 text-xs leading-relaxed">{t.text}</p>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="recap-footer-bar">
+              <button
+                type="button"
+                onClick={start}
+                className="flex items-center justify-center gap-2 py-2.5 px-6 rounded-full text-white text-xs font-bold shadow-sm transition-all active:scale-95 cursor-pointer"
+                style={{ background: "var(--claude-accent, #4854A8)" }}
+              >
+                <RotateCcw size={14} />
+                <span>Call Again</span>
+              </button>
+            </div>
           </div>
         )}
       </div>
-
-      {/* ── Bottom Controls ─────────────────────────────────── */}
-      <footer style={S.footer}>
-        {phase === "live" ? (
-          <>
-            <button
-              type="button"
-              onClick={toggleMute}
-              style={S.ctrlBtn(muted ? "muted" : "mute")}
-              aria-pressed={muted}
-              title={muted ? "Unmute Microphone" : "Mute Microphone"}
-            >
-              {muted ? <MicOff size={20} /> : <Mic size={20} />}
-              <span>{muted ? "Unmute" : "Mute"}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={end}
-              style={S.ctrlBtn("end")}
-              title="Hang up call"
-            >
-              <PhoneOff size={22} />
-              <span>End</span>
-            </button>
-          </>
-        ) : (
-          <button
-            type="button"
-            onClick={start}
-            disabled={phase === "connecting"}
-            style={{
-              ...S.startBtn,
-              opacity: phase === "connecting" ? 0.5 : 1,
-              pointerEvents: phase === "connecting" ? "none" : "auto",
-            }}
-          >
-            <Phone size={16} />
-            {phase === "connecting"
-              ? "Connecting…"
-              : phase === "ended" || phase === "error"
-              ? "Call Again"
-              : "Start Voice Call"}
-          </button>
-        )}
-      </footer>
     </main>
   );
 }

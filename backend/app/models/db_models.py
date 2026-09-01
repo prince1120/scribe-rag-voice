@@ -34,6 +34,10 @@ class DocumentRecord(Base):
     # adds a price list and finds the assistant does not know about it has been
     # given a puzzle, not a setting. Turning it off is the deliberate act.
     agent_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Purpose separates creation-time knowledge vs live RAG docs: 'agent' = used to compile agent prompt at creation, 'rag' = live retrieval docs. Never mixed.
+    purpose: Mapped[str] = mapped_column(String(16), default="rag", server_default="rag")
+    # When a RAG fallback doc is created alongside an agent snapshot (site/PDF), link them so deleting the snapshot deletes its RAG.
+    source_snapshot_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
@@ -291,7 +295,10 @@ class AgentRecord(Base):
     # STT language, or "unknown" to auto-detect. Set per agent because a
     # business usually knows what its callers speak.
     language: Mapped[str] = mapped_column(String(16), default="unknown")
-    rag_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    rag_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Per-channel RAG — None falls back to rag_enabled (default False).
+    voice_rag_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    chat_rag_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     greeting: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
     # Whether our delivery rules (reply length, spoken-vs-typed form, no
@@ -309,3 +316,96 @@ class AgentRecord(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class AgentSnapshotRecord(Base):
+    """Past versions — one live at a time (agents), rest in history.
+
+    Lets owner create from site or upload + questionnaire, keep old agents,
+    switch active by copying a snapshot back. Source = site|upload|manual.
+    """
+    __tablename__ = "agent_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    snapshot_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    name: Mapped[str] = mapped_column(String(120), default="Assistant")
+    script: Mapped[str] = mapped_column(Text, default="")
+    voice_script: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    chat_script: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    voice_id: Mapped[str] = mapped_column(String(64), default="anushka")
+    language: Mapped[str] = mapped_column(String(16), default="unknown")
+    rag_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    greeting: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    source: Mapped[str] = mapped_column(String(16), default="manual")
+    source_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class ServiceRecord(Base):
+    __tablename__ = "services"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    service_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    duration_mins: Mapped[int] = mapped_column(Integer, default=30)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class AvailabilityRecord(Base):
+    __tablename__ = "availability"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    weekday: Mapped[int] = mapped_column(Integer)  # 0 Mon .. 6 Sun
+    start_time: Mapped[str] = mapped_column(String(8))  # HH:MM
+    end_time: Mapped[str] = mapped_column(String(8))
+    is_closed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class HolidayRecord(Base):
+    __tablename__ = "holidays"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    date: Mapped[str] = mapped_column(String(10), index=True)  # YYYY-MM-DD
+    reason: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+
+
+class BookingRecord(Base):
+    __tablename__ = "bookings"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    booking_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    service_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    contact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    title: Mapped[str] = mapped_column(String(200))
+    start_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    end_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(16), default="confirmed")
+    source: Mapped[str] = mapped_column(String(16), default="voice")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class NotificationRecord(Base):
+    __tablename__ = "notifications"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    notification_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    type: Mapped[str] = mapped_column(String(32), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    link_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    read: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class CallReportRecord(Base):
+    __tablename__ = "call_reports"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    conversation_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    action_items: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    booking_intent: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    sentiment: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

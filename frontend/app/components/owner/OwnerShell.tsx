@@ -19,8 +19,11 @@ import {
   Radio,
   ExternalLink,
   Sparkles,
+  Calendar,
+  Layers,
 } from "lucide-react";
 import { clearWorkspaceCache, useWorkspace } from "../../lib/workspaceCache";
+import { NotificationBell } from "./NotificationBell";
 
 interface NavItem {
   href: string;
@@ -38,6 +41,16 @@ const NAV: NavItem[] = [
     href: "/agent",
     label: "Assistant",
     icon: <Bot size={18} />,
+  },
+  {
+    href: "/agents",
+    label: "My Agents",
+    icon: <Layers size={18} />,
+  },
+  {
+    href: "/calendar",
+    label: "Calendar",
+    icon: <Calendar size={18} />,
   },
   {
     href: "/links",
@@ -237,9 +250,12 @@ export function OwnerShell({
             </span>
             <span className="owner-topbar-sub">Scribe Console</span>
           </div>
-          <div className={`owner-topbar-badge ${isLive ? "is-live" : ""}`} suppressHydrationWarning>
+          <div className="flex items-center gap-2">
+            <NotificationBell />
+            <div className={`owner-topbar-badge ${isLive ? "is-live" : ""}`} suppressHydrationWarning>
             <span className={`owner-rail-dot ${isLive ? "is-live" : ""}`} />
             <span>{isLive ? "Live" : "Draft"}</span>
+          </div>
           </div>
         </header>
 

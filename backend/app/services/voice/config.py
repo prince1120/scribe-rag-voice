@@ -112,12 +112,12 @@ class VoiceSettings(BaseSettings):
     # API_KEY when unset, matching the API server's own default.
     INTERNAL_API_KEY: str = ""
     # Lower than text chat's top_k on purpose: chunks are ~512 words each, so
-    # every extra chunk is real input-token cost. 3 (reranked, so still the
+    # every extra chunk is real input-token cost. 3 (hybrid ranked, so still the
     # most relevant ones) is plenty for a spoken answer.
     VOICE_RAG_TOP_K: int = 3
     # Each injected excerpt is capped to this many words before being added
     # to the turn — a spoken answer never needs a whole 512-word chunk, and
-    # the reranker already put the most relevant part first.
+    # hybrid search already puts the most relevant part first.
     VOICE_RAG_EXCERPT_MAX_WORDS: int = 220
     # Prior text-chat turns to seed a continuing voice call with. Capped so a
     # long-running text conversation doesn't get replayed in full into every
@@ -145,7 +145,9 @@ class VoiceSettings(BaseSettings):
     VOICE_TTS_PACE: float = 0.95
     VOICE_TTS_TEMPERATURE: float = 0.6
 
-    VOICE_MAX_CALL_SECONDS: int = 0
+    # Hard ceiling: no session longer than 15 minutes (900s). One live at a time
+    # still bills owner's quota, so this is the global backstop for cost.
+    VOICE_MAX_CALL_SECONDS: int = 900
     # Ends a call after this much silence with nobody speaking. This is the one
     # that catches a line left open: a caller who connects and walks away costs
     # exactly as much as one who is talking, and never hangs up. The watcher

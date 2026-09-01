@@ -110,7 +110,7 @@ def _is_empty_turn(text: str) -> bool:
 
 
 def _truncate_words(text: str, max_words: int) -> str:
-    """Caps an excerpt's input-token footprint. Chunks arrive reranker-sorted,
+    """Caps an excerpt's input-token footprint. Chunks arrive hybrid-search sorted,
     so the most relevant part of each is at the front — trimming the tail is
     a reasonable trade for a spoken answer, which was never going to recite
     a full 512-word chunk verbatim anyway."""
@@ -118,6 +118,54 @@ def _truncate_words(text: str, max_words: int) -> str:
     if len(words) <= max_words:
         return text
     return " ".join(words[:max_words]) + " …"
+
+
+# Explicit goodbye/end-of-conversation signals — when matched as whole
+# utterance (after stripping punctuation) the assistant should close warmly
+# and end the call rather than loop. Extended for Hindi/Hinglish.
+_GOODBYE_PHRASES = {
+    "bye", "goodbye", "see you", "see you later", "see ya", "take care",
+    "have a great day", "have a nice day", "have a good day", "have a good one",
+    "catch you later", "talk to you later", "later", "i'm good", "im good",
+    "all set", "that's all", "thats all", "that's it", "thats it", "that will be all",
+    "nothing else", "no more questions", "no thanks", "no thank you", "done", "finished",
+    "alvida", "shukriya", "dhanyavaad", "namaste bye", "ok bye", "okay bye",
+    "haan bas", "bas", "ho gaya", "khatam", "bye bye", "tata", "phir milenge",
+}
+
+
+def _is_goodbye_turn(text: str) -> bool:
+    normalized = re.sub(r"[^\w\s]", "", (text or "").strip().lower())
+    if not normalized:
+        return False
+
+    # Never treat queries with question/informational intents as goodbyes
+    question_triggers = (
+        "tell me", "what", "how", "why", "when", "where", "who", "which",
+        "can you", "could you", "explain", "price", "cost", "features",
+        "kya", "kaise", "kab", "kahan", "kitna", "batao", "bataiye", "bata do"
+    )
+    if any(q in normalized for q in question_triggers) or "?" in (text or ""):
+        return False
+
+    # Check exact phrase set
+    if normalized in _GOODBYE_PHRASES:
+        return True
+
+    # Check whole-word farewell matches
+    farewell_patterns = (
+        r"\bbye\b", r"\bgoodbye\b", r"\bsee you\b", r"\bsee ya\b",
+        r"\btake care\b", r"\bhave a nice day\b", r"\bhave a great day\b",
+        r"\balvida\b", r"\bphir milenge\b", r"\bthats all\b", r"\bthat is all\b",
+        r"\bnothing else\b", r"\bno more questions\b", r"\bhang up\b", r"\bend call\b",
+        r"\bitna hi\b", r"\bbas itna\b", r"\bkhatam\b", r"\bho gaya\b"
+    )
+    if any(re.search(p, normalized) for p in farewell_patterns):
+        # Must be a concise ending utterance (under 8 words)
+        if len(normalized.split()) <= 8:
+            return True
+
+    return False
 
 
 def _should_search(query: str) -> bool:
@@ -160,15 +208,33 @@ class VoiceAssistant(Agent):
         self._tenant_id = tenant_id
         self._filler_task: Optional[asyncio.Task] = None
         self._last_user_lang: Optional[str] = None
+        self._goodbye_pending: bool = False
 
     def _detect_andStore_language(self, text: str) -> str:
-        # Use Sarvam auto-detect via text fallback; STT language code not
-        # plumbed through ChatMessage, so infer from text with hi-IN fallback.
         lang = normalize_tts_lang(None, text_hint=text)
-        # Also handle explicit STT language hint if frontend ever sends it
-        # via detected code in future; for now text inference covers hinglish.
         self._last_user_lang = lang
+        self._last_user_query = text or ""  # for booking validation and goodbye
         return lang
+
+    def _schedule_auto_goodbye_end(self):
+        # Fallback if LLM says goodbye text but doesn't call end_call tool (observed: "Thanks for calling — goodbye!" without hangup)
+        if getattr(self, "_ending", False) or getattr(self, "_goodbye_scheduled", False):
+            return
+        self._goodbye_scheduled = True  # type: ignore[attr-defined]
+
+        async def _do():
+            # wait for TTS of goodbye to finish
+            await asyncio.sleep(2.0)
+            # give LLM a chance to call end_call tool first
+            await asyncio.sleep(1.5)
+            if getattr(self, "_ending", False):
+                return
+            try:
+                await self.end_call()
+            except Exception:
+                pass
+
+        asyncio.create_task(_do())
 
     def _mirror_tts_language(self, lang: str) -> None:
         # Sarvam bulbul:v3 supports update_options per utterance (see
@@ -200,6 +266,215 @@ class VoiceAssistant(Agent):
 
     def _start_thinking_filler(self) -> None:
         start_thinking_filler(self, self._settings.VOICE_THINKING_FILLER_DELAY)
+
+    @llm.function_tool(description="Check available time slots for a service on a given date. Date format: YYYY-MM-DD. Returns a list of free slots.")
+    async def check_availability(self, service: str, date: str) -> str:
+        from app.services.calendar_service import free_slots
+        try:
+            slots = await free_slots(self._tenant_id, service, date)
+            if not slots:
+                return f"No free slots available for {service} on {date}. The business may be closed or fully booked on that day."
+            sample = ", ".join(slots[:5])
+            total = len(slots)
+            return f"Found {total} free slots for {service} on {date}: {sample}."
+        except Exception as e:
+            return f"Could not check slots: {e}"
+
+    @llm.function_tool(description="Book a calendar appointment for a service. Call ONLY after user confirms date and time. Params: service (service name or ID), date (YYYY-MM-DD), time (HH:MM), reason (optional note).")
+    async def book_appointment(self, service: str, date: str, time: str, reason: str = "") -> str:
+        from datetime import datetime, timezone
+        from app.services.calendar_service import create_booking, free_slots, resolve_service
+        try:
+            svc = await resolve_service(self._tenant_id, service)
+            sid = svc.service_id if svc else service
+            sname = svc.name if svc else service
+
+            # Verify availability before confirming
+            slots = await free_slots(self._tenant_id, sid, date)
+            if time not in slots:
+                avail_sample = ", ".join(slots[:3]) if slots else "none"
+                return f"The slot at {time} on {date} is not available. Free slots: {avail_sample}. Please suggest another time to the caller."
+
+            dt = datetime.fromisoformat(f"{date}T{time}:00").replace(tzinfo=timezone.utc)
+            contact_id = getattr(self, "_contact_id", None)
+            rec = await create_booking(
+                tenant_id=self._tenant_id,
+                service_id_or_name=sid,
+                start_ts=dt,
+                title=f"{sname}: {reason}" if reason else f"{sname} appointment",
+                contact_id=contact_id,
+                source="voice",
+            )
+
+            # Publish real-time event to caller UI
+            room = getattr(self.session, "room", None)
+            if room and hasattr(room, "local_participant") and room.local_participant:
+                try:
+                    import json
+                    await room.local_participant.publish_data(
+                        json.dumps({
+                            "type": "booking_confirmed",
+                            "booking_id": rec.booking_id,
+                            "service": sname,
+                            "date": date,
+                            "time": time,
+                            "text": f"Booked {sname} on {date} at {time}",
+                        }).encode()
+                    )
+                except Exception:
+                    pass
+
+            lang = self._last_user_lang or "en-IN"
+            if lang.startswith("hi"):
+                return f"Ho gaya! {sname} {date} ko {time} baje book ho gaya hai. Booking ID {rec.booking_id} hai."
+            return f"Successfully booked {sname} on {date} at {time}. Confirmation ID is {rec.booking_id}."
+        except ValueError as e:
+            return f"Could not complete booking: {e}"
+        except Exception as e:
+            return f"Calendar error: {e}"
+
+    @llm.function_tool(description="Reschedule an existing appointment to a new date (YYYY-MM-DD) and time (HH:MM).")
+    async def reschedule_appointment(self, booking_id: str, date: str, time: str) -> str:
+        from app.services.calendar_service import reschedule_booking
+        try:
+            rec = await reschedule_booking(
+                tenant_id=self._tenant_id,
+                booking_id=booking_id.strip(),
+                new_date_str=date.strip(),
+                new_time_str=time.strip(),
+            )
+            # Publish real-time event
+            room = getattr(self.session, "room", None)
+            if room and hasattr(room, "local_participant") and room.local_participant:
+                try:
+                    import json
+                    await room.local_participant.publish_data(
+                        json.dumps({
+                            "type": "booking_rescheduled",
+                            "booking_id": rec.booking_id,
+                            "date": date,
+                            "time": time,
+                            "text": f"Rescheduled booking to {date} at {time}",
+                        }).encode()
+                    )
+                except Exception:
+                    pass
+
+            lang = self._last_user_lang or "en-IN"
+            if lang.startswith("hi"):
+                return f"Aapka appointment reschedule ho gaya hai: {date} ko {time} baje."
+            return f"Your appointment has been successfully rescheduled to {date} at {time}."
+        except ValueError as e:
+            return f"Rescheduling failed: {e}"
+        except Exception as e:
+            return f"Calendar error: {e}"
+
+    @llm.function_tool(description="Cancel an existing appointment. Params: booking_id, reason (optional).")
+    async def cancel_appointment(self, booking_id: str, reason: str = "") -> str:
+        from app.services.calendar_service import cancel_booking
+        try:
+            rec = await cancel_booking(
+                tenant_id=self._tenant_id,
+                booking_id=booking_id.strip(),
+                reason=reason.strip(),
+            )
+            # Publish real-time event
+            room = getattr(self.session, "room", None)
+            if room and hasattr(room, "local_participant") and room.local_participant:
+                try:
+                    import json
+                    await room.local_participant.publish_data(
+                        json.dumps({
+                            "type": "booking_cancelled",
+                            "booking_id": rec.booking_id,
+                            "text": "Appointment cancelled",
+                        }).encode()
+                    )
+                except Exception:
+                    pass
+
+            lang = self._last_user_lang or "en-IN"
+            if lang.startswith("hi"):
+                return "Aapka appointment cancel kar diya gaya hai."
+            return "Your appointment has been successfully cancelled."
+        except ValueError as e:
+            return f"Cancellation failed: {e}"
+        except Exception as e:
+            return f"Calendar error: {e}"
+
+    @llm.function_tool(description="List appointments or bookings for the current caller or for a specific date (YYYY-MM-DD).")
+    async def list_my_bookings(self, date: str = "") -> str:
+        from app.services.calendar_service import list_bookings
+        try:
+            contact_id = getattr(self, "_contact_id", None)
+            bookings = await list_bookings(
+                tenant_id=self._tenant_id,
+                contact_id=contact_id,
+                from_date=date if date else None,
+                to_date=date if date else None,
+                status="confirmed",
+                limit=5,
+            )
+            if not bookings:
+                return "No upcoming appointments found."
+            items = []
+            for b in bookings:
+                dt_str = b.start_ts.strftime("%A, %B %d at %I:%M %p") if b.start_ts else "Scheduled"
+                items.append(f"{b.title} on {dt_str} (ID: {b.booking_id})")
+            return "Found appointments: " + "; ".join(items)
+        except Exception as e:
+            return f"Could not retrieve bookings: {e}"
+
+    def _get_room(self):
+        return (
+            getattr(self, "room", None)
+            or getattr(getattr(self, "session", None), "_room", None)
+            or getattr(getattr(self, "session", None), "room", None)
+            or getattr(getattr(getattr(self, "session", None), "room_io", None), "room", None)
+        )
+
+    async def _disconnect_call(self):
+        if getattr(self, "_disconnected", False):
+            return
+        self._disconnected = True
+        logger.info("Executing graceful call disconnect...")
+        room = self._get_room()
+        if room:
+            if hasattr(room, "local_participant") and room.local_participant:
+                try:
+                    await room.local_participant.publish_data(b'{"type":"call_ended","reason":"goodbye"}')
+                    logger.info("Published call_ended data packet to client.")
+                except Exception:
+                    pass
+            await asyncio.sleep(0.3)
+            try:
+                if hasattr(room, "disconnect"):
+                    await room.disconnect()
+                    logger.info("Room disconnected cleanly.")
+            except Exception:
+                pass
+        try:
+            if hasattr(self.session, "aclose"):
+                await self.session.aclose()
+        except Exception:
+            pass
+
+    @llm.function_tool(description="End the voice call ONLY when the caller explicitly says goodbye, farewell, or asks to end the call (e.g. 'bye', 'goodbye', 'talk to you later', 'hang up now'). NEVER call this during normal conversation, questions, or after answering questions.")
+    async def end_call(self):
+        """LLM-triggered graceful hangup. Schedules disconnect after reply is spoken."""
+        if getattr(self, "_ending", False):
+            return "Call is already ending."
+        self._ending = True  # type: ignore[attr-defined]
+        asyncio.create_task(self._auto_hangup_after_delay(2.0))
+        return "Call will end after closing statement."
+
+    async def _auto_hangup_after_delay(self, delay: float = 3.5):
+        """Asynchronous safety net: disconnects call after the agent has had time to speak its closing goodbye."""
+        try:
+            await asyncio.sleep(delay)
+            await self._disconnect_call()
+        except Exception:
+            pass
 
     async def on_user_turn_completed(
         self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
@@ -262,6 +537,24 @@ class VoiceAssistant(Agent):
                 content="[LANG: user is speaking English. If they switch to Hindi/Hinglish next, mirror that language immediately.]",
             )
 
+        # Goodbye / end-of-conversation: tell LLM to close warmly and call end_call tool.
+        # Keep heuristic tight (whole-utterance only) to avoid cutting mid-conversation.
+        if _is_goodbye_turn(query or ""):
+            logger.info("Goodbye intent detected (%r) — will end call after reply", (query or "")[:50])
+            self._goodbye_pending = True
+            turn_ctx.add_message(
+                role="system",
+                content=(
+                    "The user has indicated the conversation is over (goodbye / shukriya / that's all). "
+                    "Give a warm 1-sentence closing in their language (use 'aap' for Hindi) and then CALL the end_call tool. "
+                    "Do not ask a follow-up question."
+                ),
+            )
+            # Still allow LLM to generate the goodbye; schedule graceful auto-hangup after speaking
+            self._start_thinking_filler()
+            asyncio.create_task(self._auto_hangup_after_delay(4.0))
+            return
+
         # Fires for every agent, RAG or not. Started here and left to run: this
         # hook returns before the LLM is invoked, so the task is still pending
         # while generation happens, which is exactly the window being covered.
@@ -295,10 +588,12 @@ class VoiceAssistant(Agent):
         max_words = self._settings.VOICE_RAG_EXCERPT_MAX_WORDS
         chunks = [_truncate_words(c, max_words) for c in chunks]
         excerpts = "\n\n".join(f"[{i + 1}] {c}" for i, c in enumerate(chunks))
+        # Prompt is primary; excerpts are fallback only if prompt lacks answer (RAG OFF by default, ON = fallback)
         turn_ctx.add_message(
             role="system",
             content=(
-                "Relevant excerpts from the user's documents for this "
-                f"question:\n\n{excerpts}"
+                "Fallback knowledge base excerpts — use ONLY if the answer is not already in your system prompt KNOWLEDGE above. "
+                "If prompt covers it, answer from prompt and ignore excerpts. If not, use excerpts to supplement:\n\n"
+                f"{excerpts}"
             ),
         )

@@ -43,7 +43,6 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 512
     CHUNK_OVERLAP: int = 50
     RETRIEVAL_TOP_K: int = 10
-    RERANK_TOP_N: int = 5
     MAX_TOP_K: int = 50
 
     # Demo mode (visitors who paste their own Groq key via X-User-Groq-Key)

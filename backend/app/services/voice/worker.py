@@ -257,14 +257,16 @@ async def entrypoint(ctx: JobContext) -> None:
 
     # Start first so the session's room audio output is wired up — session.say()
     # below would otherwise race against start() and silently drop the greeting.
+    assistant = VoiceAssistant(
+        params.settings,
+        instructions=params.instructions,
+        rag_enabled=params.rag_enabled,
+        tenant_id=params.tenant_id,
+        chat_ctx=chat_ctx,
+    )
+    assistant.room = ctx.room
     await session.start(
-        agent=VoiceAssistant(
-            params.settings,
-            instructions=params.instructions,
-            rag_enabled=params.rag_enabled,
-            tenant_id=params.tenant_id,
-            chat_ctx=chat_ctx,
-        ),
+        agent=assistant,
         room=ctx.room,
     )
 

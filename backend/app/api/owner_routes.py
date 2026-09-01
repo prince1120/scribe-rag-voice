@@ -32,10 +32,12 @@ class ChooseModeRequest(BaseModel):
 
 class AgentConfigRequest(BaseModel):
     name: Optional[str] = Field(default=None, max_length=120)
-    script: Optional[str] = Field(default=None, max_length=8000)
+    script: Optional[str] = Field(default=None, max_length=20000)
     voice_id: Optional[str] = Field(default=None, max_length=64)
     rag_enabled: Optional[bool] = None
-    greeting: Optional[str] = Field(default=None, max_length=500)
+    voice_rag_enabled: Optional[bool] = None
+    chat_rag_enabled: Optional[bool] = None
+    greeting: Optional[str] = Field(default=None, max_length=800)
     # STT language, or "unknown" to auto-detect. Was accepted by the service
     # layer and stored on the model but never declared here, so an owner's
     # choice was dropped between the console and the database.
@@ -46,8 +48,8 @@ class AgentConfigRequest(BaseModel):
 
     # Per-channel overrides. Null means "use the shared setting" — the console
     # sends only what the owner edited, so absent must not mean cleared.
-    voice_script: Optional[str] = Field(default=None, max_length=8000)
-    chat_script: Optional[str] = Field(default=None, max_length=8000)
+    voice_script: Optional[str] = Field(default=None, max_length=20000)
+    chat_script: Optional[str] = Field(default=None, max_length=20000)
     voice_model: Optional[str] = Field(default=None, max_length=120)
     chat_model: Optional[str] = Field(default=None, max_length=120)
     voice_base_url: Optional[str] = Field(default=None, max_length=500)
@@ -401,6 +403,8 @@ async def save_agent(
             voice_id=body.voice_id,
             language=body.language,
             rag_enabled=body.rag_enabled,
+            voice_rag_enabled=body.voice_rag_enabled,
+            chat_rag_enabled=body.chat_rag_enabled,
             greeting=body.greeting,
             style_rules_enabled=body.style_rules_enabled,
             # The allowed set is owned by the voice config, not duplicated here,
@@ -423,6 +427,380 @@ async def delete_agent(identity: Identity = Depends(get_identity)):
     """Delete and reset the agent back to empty draft defaults."""
     _require_workspace_owner(identity)
     return await owner_service.delete_agent(identity.tenant_id)
+
+
+# ---- Multi-agent: site or upload + questionnaire, one live at a time ----
+
+class SiteAgentRequest(BaseModel):
+    url: Optional[str] = Field(default=None, max_length=500)
+    name: Optional[str] = Field(default=None, max_length=120)
+    business: Optional[str] = Field(default=None, max_length=200)
+    goal: Optional[str] = Field(default=None, max_length=500)
+    tone: Optional[str] = Field(default=None, max_length=100)
+    language: Optional[str] = Field(default=None, max_length=16)
+    channel: Optional[str] = Field(default=None, max_length=10)  # both|voice|chat
+    voice_script: Optional[str] = Field(default=None, max_length=20000)
+    chat_script: Optional[str] = Field(default=None, max_length=20000)
+    greeting: Optional[str] = Field(default=None, max_length=800)
+
+
+@router.post("/agents/generate-preview")
+async def generate_agent_preview(body: SiteAgentRequest, identity: Identity = Depends(get_identity)):
+    """Extract content from site/docs and generate high-quality Voice & Chat prompts for owner review."""
+    _require_workspace_owner(identity)
+    from app.services.site_ingest import fetch_site_pages, build_prompt_with_mistral
+    url = (body.url or "").strip()
+    pages: list[dict] = []
+    if url:
+        try:
+            pages = await fetch_site_pages(url)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e)[:400])
+    else:
+        try:
+            docs = await repositories.list_documents(identity.tenant_id, purpose="agent")
+            if docs:
+                from app.api.routes import vector_store as _vs
+                from fastapi.concurrency import run_in_threadpool as _rt
+                pages = []
+                for d in docs[:3]:
+                    try:
+                        chunks = await _rt(_vs.get_document_chunks, d.document_id, identity.tenant_id)
+                        text = "\n\n".join(c.get("content", "") for c in chunks)[:4000] if chunks else d.filename
+                        if not text.strip():
+                            text = d.filename
+                        pages.append({"title": d.filename, "text": text, "url": ""})
+                    except Exception:
+                        pages.append({"title": d.filename, "text": d.filename, "url": ""})
+        except Exception:
+            pass
+
+    prompt = await build_prompt_with_mistral(pages, {"name": body.name, "business": body.business, "goal": body.goal, "tone": body.tone})
+    ch = (body.channel or "both").strip().lower()
+    vs = prompt["voice_script"] if ch in ("voice", "both") else ""
+    cs = prompt["chat_script"] if ch in ("chat", "both") else ""
+    return {
+        "voice_script": vs,
+        "chat_script": cs,
+        "greeting": prompt.get("greeting", ""),
+        "business": body.business or (pages[0]["title"] if pages else "Assistant"),
+        "pages_found": len(pages),
+    }
+
+
+@router.post("/agents/from-site")
+async def create_from_site(body: SiteAgentRequest, identity: Identity = Depends(get_identity)):
+    """Create a draft agent from a site link or PDF docs."""
+    _require_workspace_owner(identity)
+    from app.services.site_ingest import fetch_site_pages, build_prompt_with_mistral
+    import uuid
+    url = (body.url or "").strip()
+    pages: list[dict] = []
+    source = "manual"
+    source_url = None
+    snapshot_id = uuid.uuid4().hex[:12]
+    if url:
+        try:
+            pages = await fetch_site_pages(url)
+            source = "site"
+            source_url = url
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e)[:400])
+    else:
+        source = "upload"
+        try:
+            docs = await repositories.list_documents(identity.tenant_id, purpose="agent")
+            if docs and not pages:
+                from app.api.routes import vector_store as _vs
+                from fastapi.concurrency import run_in_threadpool as _rt
+                pages = []
+                for d in docs[:3]:
+                    try:
+                        chunks = await _rt(_vs.get_document_chunks, d.document_id, identity.tenant_id)
+                        text = "\n\n".join(c.get("content", "") for c in chunks)[:4000] if chunks else d.filename
+                        if not text.strip():
+                            text = d.filename
+                        pages.append({"title": d.filename, "text": text, "url": ""})
+                    except Exception:
+                        pages.append({"title": d.filename, "text": d.filename, "url": ""})
+        except Exception:
+            pass
+
+    # If scripts were reviewed & edited in preview modal, prioritize them
+    if (body.voice_script and len(body.voice_script.strip()) > 20) or (body.chat_script and len(body.chat_script.strip()) > 20):
+        prompt = {
+            "voice_script": body.voice_script or "",
+            "chat_script": body.chat_script or "",
+            "greeting": body.greeting or f"Hello! Thanks for calling {body.business or 'our business'}. How can I help you today?",
+        }
+    else:
+        prompt = await build_prompt_with_mistral(pages, {"name": body.name, "business": body.business, "goal": body.goal, "tone": body.tone})
+
+    ch = (body.channel or "both").strip().lower()
+    vs = (body.voice_script if body.voice_script is not None else prompt.get("voice_script")) if ch in ("voice", "both") else None
+    cs = (body.chat_script if body.chat_script is not None else prompt.get("chat_script")) if ch in ("chat", "both") else None
+    if body.voice_script == "" or ch == "chat":
+        vs = None
+    if body.chat_script == "" or ch == "voice":
+        cs = None
+
+    fallback_script = ((cs if ch == "chat" else vs if ch == "voice" else (cs or vs or "")) or "")[:5000]
+    from app.services import owner_service as _svc
+    agent_display_name = (body.name or body.business or "Assistant").strip()[:120] or "Assistant"
+    cfg = await _svc.save_agent_config(
+        identity.tenant_id,
+        name=agent_display_name,
+        voice_id=None,
+        language=body.language or "unknown",
+        script=fallback_script,
+        voice_script=vs,
+        chat_script=cs,
+        greeting=body.greeting or prompt.get("greeting"),
+        allowed_voices=SUPPORTED_TTS_VOICE_IDS,
+    )
+    # also snapshot for history (use pre-allocated snapshot_id so fallback doc can link)
+    try:
+        from app.database import async_session
+        from app.models.db_models import AgentSnapshotRecord
+        async with async_session() as session:
+            session.add(AgentSnapshotRecord(
+                snapshot_id=snapshot_id,
+                tenant_id=identity.tenant_id,
+                name=cfg.get("name", "Assistant"),
+                script=cfg.get("script", ""),
+                voice_script=cfg.get("voice_script"),
+                chat_script=cfg.get("chat_script"),
+                voice_id=cfg.get("voice_id", "anushka"),
+                language=cfg.get("language", "unknown"),
+                greeting=cfg.get("greeting"),
+                source=source,
+                source_url=source_url,
+            ))
+            await session.commit()
+    except Exception:
+        logger.warning("Failed to save snapshot %s", snapshot_id, exc_info=True)
+    # ONE consolidated fallback RAG doc per agent (full verbatim, not per-page). Linked to snapshot for cascade delete.
+    # RAG is OFF by default — this doc is fallback only when owner enables voice_rag/chat_rag.
+    if pages:
+        try:
+            from app.api.routes import _ingest_file as _ingest_site_file
+            if source == "site":
+                combined = "\n\n---\n\n".join([f"# {p.get('title', '')}\nSource: {p.get('url', '')}\n\n{p.get('text', '')}" for p in pages])
+                # cap ~80k chars for embedding (still detailed for fallback)
+                if len(combined) > 80000:
+                    combined = combined[:80000]
+                md = f"# Fallback knowledge for {snapshot_id} — {source_url or 'upload'}\n\n{combined}"
+                doc_id = uuid.uuid4().hex
+                safe = f"fallback-{snapshot_id}.md"
+                await _ingest_site_file(md.encode("utf-8"), doc_id, safe, identity.tenant_id, len(md.encode("utf-8")), purpose="rag", source_snapshot_id=snapshot_id)
+            else:
+                # PDF/upload fallback: combine retrieved agent doc texts
+                combined = "\n\n---\n\n".join([f"# {p.get('title', '')}\n\n{p.get('text', '')}" for p in pages])
+                if len(combined) > 80000:
+                    combined = combined[:80000]
+                md = f"# Fallback knowledge for {snapshot_id} — upload\n\n{combined}"
+                doc_id = uuid.uuid4().hex
+                safe = f"fallback-{snapshot_id}.md"
+                await _ingest_site_file(md.encode("utf-8"), doc_id, safe, identity.tenant_id, len(md.encode("utf-8")), purpose="rag", source_snapshot_id=snapshot_id)
+        except Exception:
+            logger.warning("Failed to create fallback RAG doc for %s", snapshot_id, exc_info=True)
+    return cfg
+
+
+@router.get("/agents")
+async def list_agents(identity: Identity = Depends(get_identity)):
+    """All past agents (snapshots) + active. One live at a time — activate any."""
+    _require_workspace_owner(identity)
+    from app.database import async_session
+    from app.models.db_models import AgentSnapshotRecord
+    from sqlalchemy import select
+    async with async_session() as session:
+        result = await session.execute(
+            select(AgentSnapshotRecord).where(AgentSnapshotRecord.tenant_id == identity.tenant_id).order_by(AgentSnapshotRecord.created_at.desc())
+        )
+        rows = list(result.scalars().all())
+    active = await repositories.get_agent(identity.tenant_id)
+    
+    def _is_active(r) -> bool:
+        if not active:
+            return False
+        if active.name and r.name and active.name == r.name:
+            if active.voice_script and r.voice_script and active.voice_script == r.voice_script:
+                return True
+            if active.script and r.script and active.script == r.script:
+                return True
+        return False
+
+    return {
+        "active_agent": {
+            "name": active.name if active else "Assistant",
+            "status": active.status if active else "draft",
+            "voice_id": active.voice_id if active else "anushka",
+            "language": active.language if active else "unknown",
+        } if active else None,
+        "snapshots": [
+            {
+                "snapshot_id": r.snapshot_id,
+                "name": r.name,
+                "source": r.source,
+                "source_url": r.source_url,
+                "language": r.language,
+                "voice_id": r.voice_id,
+                "greeting": r.greeting,
+                "is_active": _is_active(r),
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "script": r.script or "",
+                "voice_script": r.voice_script or "",
+                "chat_script": r.chat_script or "",
+            }
+            for r in rows[:50]
+        ],
+    }
+
+
+@router.post("/agents/{snapshot_id}/activate")
+async def activate_snapshot(snapshot_id: str, identity: Identity = Depends(get_identity)):
+    """Make a past snapshot live again."""
+    _require_workspace_owner(identity)
+    from app.database import async_session
+    from app.models.db_models import AgentSnapshotRecord
+    from sqlalchemy import select
+    async with async_session() as session:
+        result = await session.execute(select(AgentSnapshotRecord).where(AgentSnapshotRecord.snapshot_id == snapshot_id, AgentSnapshotRecord.tenant_id == identity.tenant_id))
+        snap = result.scalar_one_or_none()
+        if not snap:
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+        # copy to active
+        await owner_service.save_agent_config(
+            identity.tenant_id,
+            name=snap.name,
+            script=snap.script,
+            voice_id=snap.voice_id,
+            language=snap.language,
+            greeting=snap.greeting,
+            voice_script=snap.voice_script,
+            chat_script=snap.chat_script,
+            allowed_voices=SUPPORTED_TTS_VOICE_IDS,
+        )
+    return {"status": "activated", "snapshot_id": snapshot_id}
+
+
+@router.delete("/agents/{snapshot_id}")
+async def delete_snapshot(snapshot_id: str, identity: Identity = Depends(get_identity)):
+    """Delete a past agent snapshot and its linked fallback RAG doc + vectors. Active stays."""
+    _require_workspace_owner(identity)
+    from app.database import async_session
+    from app.models.db_models import AgentSnapshotRecord
+    from sqlalchemy import select, delete
+    async with async_session() as session:
+        result = await session.execute(select(AgentSnapshotRecord).where(AgentSnapshotRecord.snapshot_id == snapshot_id, AgentSnapshotRecord.tenant_id == identity.tenant_id))
+        snap = result.scalar_one_or_none()
+        if not snap:
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+        await session.execute(delete(AgentSnapshotRecord).where(AgentSnapshotRecord.snapshot_id == snapshot_id))
+        await session.commit()
+    # Cascade delete linked fallback RAG doc(s) + vectors/storage (no orphaned many docs)
+    try:
+        from app.api.routes import vector_store as _vs
+        from app.services.storage import storage as _storage, build_key
+        from fastapi.concurrency import run_in_threadpool
+        linked = await repositories.list_documents_by_snapshot(identity.tenant_id, snapshot_id)
+        for doc in linked:
+            try:
+                await run_in_threadpool(_vs.delete_by_document, doc.document_id, identity.tenant_id)
+            except Exception:
+                pass
+            try:
+                await _storage.delete(build_key(doc.document_id, doc.filename))
+            except Exception:
+                pass
+            try:
+                await repositories.delete_document_record(doc.document_id, identity.tenant_id)
+            except Exception:
+                pass
+        if linked:
+            from app.api.routes import _invalidate_document_selection
+            _invalidate_document_selection(identity.tenant_id)
+    except Exception:
+        logger.warning("Failed to cascade delete RAG for snapshot %s", snapshot_id, exc_info=True)
+    return {"status": "deleted"}
+
+class SnapshotPatchRequest(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=120)
+    script: Optional[str] = Field(default=None, max_length=8000)
+    voice_script: Optional[str] = Field(default=None, max_length=8000)
+    chat_script: Optional[str] = Field(default=None, max_length=8000)
+    greeting: Optional[str] = Field(default=None, max_length=500)
+
+@router.patch("/agents/{snapshot_id}")
+async def edit_snapshot(snapshot_id: str, body: SnapshotPatchRequest, identity: Identity = Depends(get_identity)):
+    """Edit a past snapshot's prompt/name."""
+    _require_workspace_owner(identity)
+    from app.database import async_session
+    from app.models.db_models import AgentSnapshotRecord
+    from sqlalchemy import select
+    async with async_session() as session:
+        result = await session.execute(select(AgentSnapshotRecord).where(AgentSnapshotRecord.snapshot_id == snapshot_id, AgentSnapshotRecord.tenant_id == identity.tenant_id))
+        snap = result.scalar_one_or_none()
+        if not snap:
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+        if body.name is not None:
+            snap.name = body.name.strip()[:120] or snap.name
+        if body.script is not None:
+            snap.script = body.script
+        if body.voice_script is not None:
+            snap.voice_script = body.voice_script
+        if body.chat_script is not None:
+            snap.chat_script = body.chat_script
+        if body.greeting is not None:
+            snap.greeting = body.greeting
+        await session.commit()
+        await session.refresh(snap)
+        return {"snapshot_id": snap.snapshot_id, "name": snap.name}
+
+
+@router.post("/agents/{snapshot_id}/duplicate")
+async def duplicate_snapshot(snapshot_id: str, identity: Identity = Depends(get_identity)):
+    """Duplicate/clone an existing agent snapshot."""
+    _require_workspace_owner(identity)
+    import uuid
+    from app.database import async_session
+    from app.models.db_models import AgentSnapshotRecord
+    from sqlalchemy import select
+    async with async_session() as session:
+        result = await session.execute(
+            select(AgentSnapshotRecord).where(
+                AgentSnapshotRecord.snapshot_id == snapshot_id,
+                AgentSnapshotRecord.tenant_id == identity.tenant_id
+            )
+        )
+        snap = result.scalar_one_or_none()
+        if not snap:
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+        
+        new_id = uuid.uuid4().hex[:12]
+        new_snap = AgentSnapshotRecord(
+            snapshot_id=new_id,
+            tenant_id=identity.tenant_id,
+            name=f"{snap.name} (Copy)"[:120],
+            script=snap.script,
+            voice_script=snap.voice_script,
+            chat_script=snap.chat_script,
+            voice_id=snap.voice_id,
+            language=snap.language,
+            greeting=snap.greeting,
+            source="duplicate",
+            source_url=snap.source_url,
+        )
+        session.add(new_snap)
+        await session.commit()
+        await session.refresh(new_snap)
+        return {
+            "snapshot_id": new_snap.snapshot_id,
+            "name": new_snap.name,
+            "source": new_snap.source,
+            "created_at": new_snap.created_at.isoformat() if new_snap.created_at else None,
+        }
 
 
 

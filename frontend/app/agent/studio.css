@@ -1,0 +1,29 @@
+/* Studio — voice + text unified, phone-responsive */
+@media (max-width: 640px) {
+  .owner-content { padding: 12px !important; }
+  .owner-content main[style*="max-width: 56rem"] { padding-bottom: 88px !important; }
+  /* Studio cards stack full width */
+  [style*="56rem"] { max-width: 100% !important; }
+  .agent-page-grid { grid-template-columns: 1fr !important; }
+  .agent-voices-grid { grid-template-columns: 1fr !important; }
+  /* Bottom bar stacks, buttons full width */
+  .studio-bottom-bar { flex-direction: column; align-items: stretch !important; }
+  .studio-bottom-bar > div { width: 100%; }
+  .studio-bottom-bar button { width: 100%; justify-content: center; }
+  /* Channel tabs full width on phone */
+  .studio-tabs { width: 100%; }
+  .studio-tabs button { flex: 1; justify-content: center; }
+  /* Prompt area smaller on phone */
+  textarea[style*="promptArea"] { font-size: 14px !important; }
+}
+
+/* Studio two-pane preview (desktop: editor left, test right sticky) */
+.studio-layout { display: grid; grid-template-columns: 1fr 360px; gap: 16px; align-items: start; }
+@media (max-width: 1024px) { .studio-layout { grid-template-columns: 1fr; } }
+.studio-preview { position: sticky; top: 16px; }
+@media (max-width: 1024px) { .studio-preview { position: static; } }
+
+/* CallScreen phone polish */
+@media (max-width: 375px) {
+  .call-orb { transform: scale(0.85); }
+}

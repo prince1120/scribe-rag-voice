@@ -377,7 +377,7 @@ export function ChatPanel(props: ChatPanelProps) {
             {isLoading && !streaming && (
               <div className="flex items-center gap-2 py-4 text-[13px]" style={{ color: "var(--claude-muted)" }}>
                 <span className="w-2 h-2 rounded-full animate-pulse" style={{ background: "var(--claude-accent)" }} />
-                Thinking…
+                Checking knowledge base — answering immediately…
               </div>
             )}
           </div>

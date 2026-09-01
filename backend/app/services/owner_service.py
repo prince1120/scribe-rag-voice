@@ -203,6 +203,13 @@ async def get_agent_config(tenant_id: str) -> dict:
             "status": DRAFT,
             "configured": False,
         }
+    # per-channel RAG: None -> Both OFF (prompt-first, RAG is fallback only when owner enables)
+    voice_rag = getattr(record, "voice_rag_enabled", None)
+    chat_rag = getattr(record, "chat_rag_enabled", None)
+    if voice_rag is None:
+        voice_rag = False
+    if chat_rag is None:
+        chat_rag = False
     return {
         "voice_script": record.voice_script,
         "chat_script": record.chat_script,
@@ -222,6 +229,8 @@ async def get_agent_config(tenant_id: str) -> dict:
         "voice_id": record.voice_id,
         "language": record.language,
         "rag_enabled": record.rag_enabled,
+        "voice_rag_enabled": voice_rag,
+        "chat_rag_enabled": chat_rag,
         "greeting": record.greeting,
         "style_rules_enabled": bool(getattr(record, "style_rules_enabled", True)),
         "configured": True,
@@ -234,6 +243,7 @@ async def save_agent_config(
     language: Optional[str] = None,
     rag_enabled: Optional[bool] = None, greeting: Optional[str] = None,
     style_rules_enabled: Optional[bool] = None,
+    voice_rag_enabled: Optional[bool] = None, chat_rag_enabled: Optional[bool] = None,
     allowed_voices: Optional[frozenset[str]] = None,
     **channel_fields,
 ) -> dict:
@@ -268,6 +278,8 @@ async def save_agent_config(
         voice_id=voice_id,
         language=language,
         rag_enabled=rag_enabled,
+        voice_rag_enabled=voice_rag_enabled,
+        chat_rag_enabled=chat_rag_enabled,
         greeting=greeting.strip() if greeting is not None else None,
         style_rules_enabled=style_rules_enabled,
         **channel_fields,
@@ -290,6 +302,8 @@ async def save_agent_config(
         "voice_id": record.voice_id,
         "language": record.language,
         "rag_enabled": record.rag_enabled,
+        "voice_rag_enabled": record.voice_rag_enabled,
+        "chat_rag_enabled": record.chat_rag_enabled,
         "greeting": record.greeting,
         "style_rules_enabled": bool(getattr(record, "style_rules_enabled", True)),
         "configured": True,
@@ -357,34 +371,17 @@ def build_agent_prompt(
     *, script: str, agent_name: str, business_name: Optional[str] = None,
     timezone_name: str = "Asia/Kolkata",
     channel: str = "voice", style_rules: bool = True,
+    calendar_summary: Optional[str] = None,
 ) -> str:
     """Assemble what the agent actually receives.
 
     The owner's script leads, because it is theirs and everything else is
-    scaffolding. Identity and the clock follow so a script that forgets to
-    mention either still produces a coherent assistant.
-
-    Delivery rules come last, and only when `style_rules` is on. They are last
-    rather than first for the same reason the script is first: the owner sets
-    the character, we set the format, and format should not be what the model
-    reads as its primary instruction. An owner who wants a deliberately verbose
-    or differently-formatted agent turns the toggle off and owns the result.
+    scaffolding. Identity, live calendar context, and the clock follow so a
+    script that forgets to mention either still produces a coherent assistant.
     """
     body = script.strip() or DEFAULT_SCRIPT
     parts = [body]
 
-    # Only when the owner hasn't already said who the assistant is.
-    #
-    # This block used to be unconditional, which meant a script that opened
-    # "You are PizzaScribe, a friendly pizza ordering assistant" was followed by
-    # "WHO YOU ARE: You are Shiro, the assistant for Shiro art and craft. Answer
-    # as that assistant, never as a general-purpose AI." Two identities, ours
-    # last and phrased as a command — so the model introduced itself as Shiro
-    # selling art supplies to a caller who had reached a pizza line.
-    #
-    # The owner's script is the character; this is a fallback for scripts that
-    # never establish one, which is what the docstring above always intended.
-    # Skipping it also costs nothing: the common case gets a shorter prompt.
     if not _states_an_identity(body):
         identity = f"\n\nWHO YOU ARE\nYou are {agent_name}"
         if business_name:
@@ -393,6 +390,9 @@ def build_agent_prompt(
         parts.append(identity)
 
     parts.append(current_context_line(timezone_name))
+
+    if calendar_summary and calendar_summary.strip():
+        parts.append(f"\n\nCALENDAR SERVICES & BOOKING:\n{calendar_summary.strip()}")
 
     if style_rules:
         parts.append(prompt_rules.DELIVERY_RULES.get(channel, prompt_rules.VOICE_DELIVERY))
@@ -607,14 +607,14 @@ def channel_settings(agent, channel: str) -> dict:
 
     prefix = "voice" if channel == "voice" else "chat"
 
-    # Stripped before the fallback, not after: a field the owner cleared to
-    # whitespace is an unset override, and treating it as set would leave that
-    # channel with no prompt at all.
-    # The per-channel prompt is the prompt. `script` remains as a fallback for
-    # agents saved before the channels were split, so nobody loses an assistant
-    # they had already written.
-    override = (getattr(agent, f"{prefix}_script", None) or "").strip()
-    script = override or (agent.script or "")
+    # The per-channel prompt is the prompt. `script` remains as a fallback only for
+    # legacy agents saved before the channels were split (where both voice_script and chat_script were None).
+    v_override = getattr(agent, "voice_script", None)
+    c_override = getattr(agent, "chat_script", None)
+    if v_override is not None or c_override is not None:
+        script = (getattr(agent, f"{prefix}_script", None) or "").strip()
+    else:
+        script = (agent.script or "").strip()
     return {
         "script": (script or "").strip() or None,
         "model": getattr(agent, f"{prefix}_model", None),

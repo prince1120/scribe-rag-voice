@@ -117,6 +117,10 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("documents", "file_size", "INTEGER DEFAULT 0"),
     ("documents", "chunk_count", "INTEGER DEFAULT 0"),
     ("documents", "status", "VARCHAR(32) DEFAULT 'processed'"),
+    ("documents", "purpose", "VARCHAR(16) DEFAULT 'rag'"),
+    ("documents", "source_snapshot_id", "VARCHAR(36)"),
+    ("agents", "voice_rag_enabled", "BOOLEAN"),
+    ("agents", "chat_rag_enabled", "BOOLEAN"),
 ]
 
 

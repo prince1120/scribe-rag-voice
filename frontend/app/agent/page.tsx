@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Cpu,
   FileText,
+  Globe,
   Languages,
   Loader2,
   MessageSquare,
@@ -26,8 +27,10 @@ import {
   Zap,
 } from "lucide-react";
 
+import "./studio.css";
 import { ownerFetch } from "../lib/ownerFetch";
 import { AgentDocuments } from "./AgentDocuments";
+import { SiteAgentModal } from "./SiteAgentModal";
 import { AgentTest } from "./AgentTest";
 import { ChannelModelPicker, type ModelOption } from "./ChannelModelPicker";
 import { GuidedSetup } from "./GuidedSetup";
@@ -54,8 +57,10 @@ interface AgentConfig {
   voice_id: string;
   language?: string;
   rag_enabled: boolean;
+  voice_rag_enabled?: boolean | null;
+  chat_rag_enabled?: boolean | null;
   greeting: string | null;
-  // Whether our delivery rules (reply length, spoken form, no markdown) are
+  // Whether our delivery rules (reply length, spoken-vs-typed form, no markdown) are
   // appended to the owner's script. Shared across both channels.
   style_rules_enabled: boolean;
   configured: boolean;
@@ -138,6 +143,11 @@ export default function AgentPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [previewing, setPreviewing] = useState("");
   const [error, setError] = useState("");
+  const [showSiteModal, setShowSiteModal] = useState(false);
+  const [channelToDisable, setChannelToDisable] = useState<"voice" | "chat" | null>(null);
+  const [toast, setToast] = useState<{ msg: string; type: "success" | "info" | "error" } | null>(null);
+  const [initialConfig, setInitialConfig] = useState<AgentConfig | null>(null);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
 
   // Custom provider states
   const [isVoiceCustom, setIsVoiceCustom] = useState(false);
@@ -154,10 +164,36 @@ export default function AgentPage() {
     }
   }, []);
 
+  const showToast = useCallback((msg: string, type: "success" | "info" | "error" = "success") => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  const hasUnsaved = (() => {
+    if (!config || !initialConfig) return false;
+    return JSON.stringify({ voice: config.voice_script, chat: config.chat_script, name: config.name, greeting: config.greeting, voice_id: config.voice_id, language: config.language }) !== JSON.stringify({ voice: initialConfig.voice_script, chat: initialConfig.chat_script, name: initialConfig.name, greeting: initialConfig.greeting, voice_id: initialConfig.voice_id, language: initialConfig.language });
+  })();
+
+  const refreshAgent = useCallback(async () => {
+    try {
+      const [agentRes] = await Promise.all([ownerFetch("/api/v1/workspace/agent")]);
+      if (agentRes.ok) {
+        const cfg = await agentRes.json();
+        setConfig(cfg);
+        setInitialConfig(cfg);
+        setWorkspaceCache({ agentConfig: cfg, status: cfg.status });
+        if (cfg.voice_base_url || cfg.voice_api_key) setIsVoiceCustom(true);
+        if (cfg.chat_base_url || cfg.chat_api_key) setIsChatCustom(true);
+      }
+      await loadChannels();
+    } catch {}
+  }, [loadChannels]);
+
   useEffect(() => {
     const cached = getWorkspaceCache();
     if (cached.agentConfig) {
       setConfig(cached.agentConfig);
+      setInitialConfig(cached.agentConfig);
       setLoading(false);
       if (cached.agentConfig.voice_base_url || cached.agentConfig.voice_api_key) setIsVoiceCustom(true);
       if (cached.agentConfig.chat_base_url || cached.agentConfig.chat_api_key) setIsChatCustom(true);
@@ -178,6 +214,7 @@ export default function AgentPage() {
         if (agentRes.ok) {
           const cfg = await agentRes.json();
           setConfig(cfg);
+          setInitialConfig(cfg);
           setWorkspaceCache({ agentConfig: cfg, status: cfg.status });
           if (cfg.voice_base_url || cfg.voice_api_key) setIsVoiceCustom(true);
           if (cfg.chat_base_url || cfg.chat_api_key) setIsChatCustom(true);
@@ -229,6 +266,8 @@ export default function AgentPage() {
         voice_id: config.voice_id,
         language: config.language,
         rag_enabled: config.rag_enabled,
+        voice_rag_enabled: config.voice_rag_enabled ?? false,
+        chat_rag_enabled: config.chat_rag_enabled ?? false,
         style_rules_enabled: config.style_rules_enabled !== false,
         greeting: config.greeting || undefined,
       };
@@ -256,13 +295,19 @@ export default function AgentPage() {
       }
       const updated = await response.json();
       setConfig(updated);
+      setInitialConfig(updated);
+      setWorkspaceCache({ agentConfig: updated, status: updated.status });
       setVoiceKeyInput("");
       setChatKeyInput("");
       setSaved(true);
+      setLastSavedAt(new Date().toLocaleTimeString());
       await loadChannels();
+      showToast(hasUnsaved ? "Changes saved ✓" : "Assistant saved ✓", "success");
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save assistant.");
+      const msg = err instanceof Error ? err.message : "Could not save assistant.";
+      setError(msg);
+      showToast(msg, "error");
     } finally {
       setSaving(false);
     }
@@ -281,8 +326,13 @@ export default function AgentPage() {
       }
       const data = await response.json();
       setConfig((prev) => (prev ? { ...prev, status: data.status } : prev));
+      setWorkspaceCache({ status: data.status } as any);
+      showToast(live ? "Agent deployed live ✓ — links now active" : "Agent taken offline — links paused", live ? "success" : "info");
+      await loadChannels();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not update status.");
+      const msg = err instanceof Error ? err.message : "Could not update status.";
+      setError(msg);
+      showToast(msg, "error");
     } finally {
       setDeploying(false);
     }
@@ -455,13 +505,33 @@ export default function AgentPage() {
   return (
     <OwnerShell businessName={businessName} status={config.status}>
       <main style={S.page}>
+        {/* Toast */}
+        {toast && (
+          <div style={{ position: "fixed", top: 16, right: 16, zIndex: 80, padding: "10px 14px", borderRadius: 10, fontSize: 13, fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", background: toast.type === "success" ? "var(--color-success)" : toast.type === "error" ? "#dc2626" : "var(--claude-text)", color: "#fff" }}>
+            {toast.msg}
+          </div>
+        )}
         {/* Header & Live Status Banner */}
         <header style={S.header}>
-          <div>
-            <h1 style={S.title}>Your AI Assistant</h1>
-            <p style={S.subtitle}>
-              Configure conversational prompts, speech persona, and live answering behavior.
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <h1 style={{ ...S.title, display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ display: "inline-flex", width: 28, height: 28, borderRadius: 8, background: "var(--claude-accent)", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 14 }}>◐</span>
+              Agent Creation Studio
+              {hasUnsaved && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 999, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}>Unsaved changes</span>}
+              {saved && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 999, background: "var(--color-success-soft)", color: "var(--color-success)" }}>Saved ✓ {lastSavedAt ? `· ${lastSavedAt}` : ""}</span>}
+            </h1>
+            <p style={{ ...S.subtitle, marginTop: 4 }}>
+              Create voice OR chat separately. Prompt-first (fast), fallback RAG optional. Every change shows save/deploy status clearly.
             </p>
+            <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 999, background: channels?.voice ? "var(--color-success-soft)" : "var(--claude-surface-2)", color: channels?.voice ? "var(--color-success)" : "var(--claude-muted)", border: `1px solid ${channels?.voice ? "var(--color-success)" : "var(--claude-border)"}` }}>
+                <Mic size={10} style={{ display: "inline", marginRight: 4 }} />Voice: {channels?.voice ? (isLive ? "Live ✓" : "Ready") : ((config.voice_script||"").trim() ? "Draft" : "Not created")}
+              </span>
+              <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 999, background: channels?.chat ? "var(--color-success-soft)" : "var(--claude-surface-2)", color: channels?.chat ? "var(--color-success)" : "var(--claude-muted)", border: `1px solid ${channels?.chat ? "var(--color-success)" : "var(--claude-border)"}` }}>
+                <MessageSquare size={10} style={{ display: "inline", marginRight: 4 }} />Chat: {channels?.chat ? (isLive ? "Live ✓" : "Ready") : ((config.chat_script||"").trim() ? "Draft" : "Not created")}
+              </span>
+              <span style={{ fontSize: 10, color: "var(--claude-muted)", alignSelf: "center" }}>{isLive ? "Links active" : "Deploy to go live"}</span>
+            </div>
           </div>
 
           {/* Live / Draft Status Card */}
@@ -482,10 +552,10 @@ export default function AgentPage() {
               />
               <div>
                 <span style={{ fontSize: 13, fontWeight: 700, color: isLive ? "var(--color-success)" : "var(--claude-text-2)" }}>
-                  {isLive ? "Assistant is Live" : "Draft Mode (Offline)"}
+                  {isLive ? "Deployed Live ✓" : "Draft (Offline)"}
                 </span>
                 <p style={{ margin: "2px 0 0", fontSize: 11, color: isLive ? "#166534" : "var(--claude-text-2)" }}>
-                  {isLive ? "Answering customer calls & chats" : "Links won't connect until deployed"}
+                  {isLive ? "Customer links active" : "Save then deploy to publish"}
                 </p>
               </div>
             </div>
@@ -495,10 +565,10 @@ export default function AgentPage() {
                 type="button"
                 onClick={save}
                 disabled={saving}
-                style={S.headerSaveBtn}
+                style={{ ...S.headerSaveBtn, opacity: hasUnsaved ? 1 : 0.85, borderColor: hasUnsaved ? "var(--claude-accent)" : "var(--claude-border)" }}
               >
                 <Save size={14} />
-                <span>{saving ? "Saving…" : saved ? "Saved!" : "Save Changes"}</span>
+                <span>{saving ? "Saving…" : saved ? "Saved ✓" : hasUnsaved ? "Save changes *" : "Save"}</span>
               </button>
 
               <button
@@ -519,6 +589,20 @@ export default function AgentPage() {
         </header>
 
         {error && <div style={S.errorBanner}>{error}</div>}
+
+        {/* ── New: Site or Docs → Questionnaire → Agent (one live, gallery separate) ─ */}
+        <div style={{ ...S.card, background: "var(--claude-surface)", borderColor: "var(--claude-border)" }}>
+          <div style={S.cardHeader}>
+            <div style={{ ...S.iconWrap, background: "var(--claude-accent-soft)", color: "var(--claude-accent)" }}><Sparkles size={18} /></div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <h2 style={S.cardTitle}>Create from site or PDF — detailed prompt</h2>
+              <p style={S.cardSub}>Site or PDF → detailed voice (3500) + chat prompts with all important info (prompt-first, not verbatim dump) → one fallback knowledge doc per agent (RAG OFF by default, auto-deleted when agent deleted). Test voice+text then deploy. My Agents →</p>
+            </div>
+            <button type="button" onClick={() => setShowSiteModal(true)} className="hidden sm:inline-flex h-9 px-4 rounded-lg text-[12px] font-bold gap-1.5 items-center" style={{ background: "var(--claude-accent)", color: "#fff" }}><Globe size={14} /> New from site</button>
+          </div>
+          <button type="button" onClick={() => setShowSiteModal(true)} className="sm:hidden w-full h-10 rounded-xl text-[13px] font-bold flex items-center justify-center gap-2" style={{ background: "var(--claude-accent)", color: "#fff" }}><Globe size={16} /> New assistant from site or docs</button>
+          <a href="/agents" className="mt-3 inline-flex items-center gap-1.5 text-[12px] font-semibold underline" style={{ color: "var(--claude-accent)" }}>View all agents gallery → My Agents</a>
+        </div>
 
         {/* ── Guided Quick Setup — make high-class agent in 30s (Phase 3b) ─ */}
         <div style={{ ...S.card, borderColor: "var(--claude-border)", background: "var(--claude-surface)" }}>
@@ -688,8 +772,8 @@ export default function AgentPage() {
           </div>
         </div>
 
-        {/* ── Channel Selector Tabs ───────────────────────────── */}
-        <div style={S.channelTabs}>
+        {/* ── Channel Selector Tabs — unified studio, voice + text ─ */}
+        <div style={S.channelTabs} className="studio-tabs">
           {(["voice", "chat"] as const).map((ch) => {
             const ready = ch === "voice" ? channels?.voice : channels?.chat;
             const active = tab === ch;
@@ -726,10 +810,37 @@ export default function AgentPage() {
             <div style={{ ...S.iconWrap, background: isVoice ? "var(--color-danger-soft)" : "var(--claude-accent-soft)", color: isVoice ? "var(--color-danger)" : "var(--claude-accent)" }}>
               {isVoice ? <Mic size={18} /> : <MessageSquare size={18} />}
             </div>
-            <div>
-              <h2 style={S.cardTitle}>
-                {isVoice ? "Voice Call Prompt & Script" : "Text Chat Prompt & Guidelines"}
-              </h2>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                <h2 style={S.cardTitle}>
+                  {isVoice ? "Voice Call Prompt & Script" : "Text Chat Prompt & Guidelines"}
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (prompt.trim()) {
+                      setChannelToDisable(isVoice ? "voice" : "chat");
+                    } else {
+                      const tmpl = defaultTemplate(config?.name || ws.businessName || "");
+                      setPrompt(isVoice ? tmpl.voice_script : tmpl.chat_script);
+                      showToast(`${isVoice ? "Voice" : "Chat"} channel template loaded. Save to apply.`, "info");
+                    }
+                  }}
+                  className="ds-pressable"
+                  style={{
+                    padding: "3px 10px",
+                    borderRadius: 9999,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    border: `1px solid ${prompt.trim() ? "var(--color-success)" : "var(--claude-border)"}`,
+                    background: prompt.trim() ? "var(--color-success-soft)" : "var(--claude-surface-2)",
+                    color: prompt.trim() ? "var(--color-success)" : "var(--claude-muted)",
+                  }}
+                >
+                  {prompt.trim() ? `● ${isVoice ? "Voice" : "Chat"} Channel Active` : `○ ${isVoice ? "Voice" : "Chat"} Disabled (Click to enable)`}
+                </button>
+              </div>
               <p style={S.cardSub}>
                 {isVoice
                   ? "Spoken aloud over audio. Keep responses concise, friendly, and natural."
@@ -789,20 +900,20 @@ color: "var(--claude-text-2)",
 
           <div>
             <textarea
-              style={S.promptArea}
+              style={{ ...S.promptArea, minHeight: 160 }}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              rows={8}
-              maxLength={8000}
+              rows={12}
+              maxLength={20000}
               placeholder={
                 isVoice
-                  ? "You are a customer assistant for our business. Answer inquiries politely and concisely…"
-                  : "You answer customer questions based on our store policies and documents…"
+                  ? "You are a customer assistant for our business. Answer inquiries politely and concisely… (up to 15000 chars, all site details included)"
+                  : "You answer customer questions based on our store policies and documents… (up to 15000 chars)"
               }
             />
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 11, color: "var(--claude-muted)" }}>
-              <span>Pro Tip: Specify required information (e.g. caller name, reason for visit).</span>
-              <span>{prompt.length} / 8000 characters</span>
+              <span>Pro Tip: Specify required information (e.g. caller name, reason for visit). Voice includes all site details.</span>
+              <span>{prompt.length} / 20000 characters</span>
             </div>
           </div>
 
@@ -939,20 +1050,44 @@ color: "var(--claude-text-2)",
                 </div>
               </div>
 
-              {/* RAG on Voice Toggle */}
+              {/* Voice Fallback RAG Toggle */}
+              <div className="grid gap-2">
+                <label style={S.toggleBox}>
+                  <input
+                    type="checkbox"
+                    checked={config.voice_rag_enabled ?? false}
+                    onChange={(e) => update({ voice_rag_enabled: e.target.checked })}
+                    style={{ width: 16, height: 16, accentColor: "var(--claude-accent)", cursor: "pointer" }}
+                  />
+                  <div>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "var(--claude-text)", display: "block" }}>
+                      Voice Knowledge Base Fallback
+                    </span>
+                    <span style={{ fontSize: 11, color: "var(--claude-muted)" }}>
+                      OFF = prompt-only (ultra fast, 0ms retrieval latency). ON = answers from prompt first, and checks knowledge base only when prompt lacks information.
+                    </span>
+                  </div>
+                </label>
+              </div>
+            </div>
+          )}
+
+          {/* Chat Fallback RAG Toggle (shown on chat tab) */}
+          {!isVoice && (
+            <div className="grid gap-2 mt-3 pt-3" style={{ borderTop: "1px solid var(--claude-surface-2)" }}>
               <label style={S.toggleBox}>
                 <input
                   type="checkbox"
-                  checked={config.rag_enabled}
-                  onChange={(e) => update({ rag_enabled: e.target.checked })}
-style={{ width: 16, height: 16, accentColor: "var(--claude-accent)", cursor: "pointer" }}
+                  checked={config.chat_rag_enabled ?? false}
+                  onChange={(e) => update({ chat_rag_enabled: e.target.checked })}
+                  style={{ width: 16, height: 16, accentColor: "var(--claude-accent)", cursor: "pointer" }}
                 />
                 <div>
-<span style={{ fontSize: 13, fontWeight: 600, color: "var(--claude-text)", display: "block" }}>
-                    Enable Document Knowledge Search on Voice Calls
+                  <span style={{ fontSize: 13, fontWeight: 600, color: "var(--claude-text)", display: "block" }}>
+                    Chat Knowledge Base Fallback & Citations
                   </span>
                   <span style={{ fontSize: 11, color: "var(--claude-muted)" }}>
-                    Look up answers from uploaded documents during live phone calls.
+                    OFF = prompt-only instant response. ON = supplements answers with document citations from your uploaded knowledge base.
                   </span>
                 </div>
               </label>
@@ -1024,8 +1159,16 @@ style={{ width: 16, height: 16, accentColor: "var(--claude-accent)", cursor: "po
           }
         />
 
-        {/* ── Card 4: Knowledge Documents ─────────────────────── */}
-        <AgentDocuments />
+        {/* ── Card 4: Knowledge Documents (RAG fallback) — always visible, fallback OFF by default (prompt-first) */}
+        <div style={{ ...S.card, background: "var(--claude-bg)" }}>
+          <div className="flex items-center gap-2 text-[12px] font-bold" style={{ color: "var(--claude-text-2)" }}>
+            <FileText size={14} /> Knowledge Base (RAG fallback) — optional
+          </div>
+          <p className="text-[11px] leading-4 -mt-2" style={{ color: "var(--claude-muted)" }}>
+            Prompt is primary for both Voice & Chat (fast, no stall). When "Fallback" above is ON, these docs supplement only if prompt lacks answer. Creation fallback doc (one per agent) is auto-managed — delete agent deletes its fallback doc.
+          </p>
+          <AgentDocuments purpose="rag" />
+        </div>
 
         {/* ── Card 5: Danger Zone / Reset ─────────────────────── */}
         <div style={{ ...S.card, borderColor: "var(--color-danger-soft)", background: "var(--color-danger-soft)" }}>
@@ -1070,8 +1213,8 @@ style={{ width: 16, height: 16, accentColor: "var(--claude-accent)", cursor: "po
           </div>
         </div>
 
-        {/* ── Bottom Main Action Bar ─────────────────────────── */}
-        <div style={S.bottomActionBar}>
+        {/* ── Bottom Main Action Bar — responsive studio publish ─ */}
+        <div style={S.bottomActionBar} className="studio-bottom-bar">
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <button
               type="button"
@@ -1111,6 +1254,58 @@ style={{ width: 16, height: 16, accentColor: "var(--claude-accent)", cursor: "po
             </span>
           )}
         </div>
+        {showSiteModal && <SiteAgentModal onClose={() => setShowSiteModal(false)} onCreated={async () => { setShowSiteModal(false); showToast("Agent created — prompt + fallback doc ready ✓", "success"); await refreshAgent(); }} />}
+        
+        {/* Styled Channel Disable Confirmation Modal */}
+        {channelToDisable && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in duration-150">
+            <div className="bg-white rounded-2xl w-full max-w-sm p-6 border border-gray-200 shadow-2xl flex flex-col gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0 border border-amber-200">
+                  <AlertTriangle size={20} />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-gray-900">
+                    Disable {channelToDisable === "voice" ? "Voice Calls" : "Text Chat"} Channel?
+                  </h4>
+                  <p className="text-[11px] text-gray-500 mt-0.5">
+                    {channelToDisable === "voice"
+                      ? "Clears the voice call script and disables audio phone connections."
+                      : "Clears the text prompt and disables web chat links."}
+                  </p>
+                </div>
+              </div>
+              <p className="text-xs text-gray-600 leading-relaxed bg-gray-50 p-3 rounded-xl border border-gray-100">
+                Are you sure you want to turn off the <strong>{channelToDisable === "voice" ? "Voice" : "Chat"}</strong> channel for <strong>{config?.name || "this assistant"}</strong>? Click Save after confirming to make this live.
+              </p>
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setChannelToDisable(null)}
+                  className="h-9 px-4 rounded-xl border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (channelToDisable === "voice") {
+                      update({ voice_script: "" });
+                    } else {
+                      update({ chat_script: "" });
+                    }
+                    const chName = channelToDisable === "voice" ? "Voice" : "Chat";
+                    setChannelToDisable(null);
+                    showToast(`${chName} channel disabled. Click 'Save Assistant Changes' to apply.`, "info");
+                  }}
+                  className="h-9 px-4 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 cursor-pointer shadow-xs transition-colors"
+                >
+                  Yes, Disable Channel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </OwnerShell>
   );
@@ -1122,9 +1317,11 @@ const S: Record<string, React.CSSProperties> = {
   page: {
     display: "flex",
     flexDirection: "column",
-    gap: 20,
+    gap: 16,
     maxWidth: "56rem",
-    paddingBottom: 80,
+    width: "100%",
+    padding: "0 0 80px",
+    boxSizing: "border-box",
   },
   header: {
     display: "flex",

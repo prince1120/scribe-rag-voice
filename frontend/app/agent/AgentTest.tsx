@@ -205,7 +205,7 @@ export function AgentTest({
         ) : (
           turns.map((turn, i) => (
             <div key={i} className={`agent-test-turn is-${turn.role}`}>
-              {turn.content || (turn.role === "assistant" && sending ? "…" : "")}
+              {turn.content || (turn.role === "assistant" && sending ? "Checking knowledge base — answering immediately…" : "")}
             </div>
           ))
         )}

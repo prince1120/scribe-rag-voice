@@ -122,7 +122,8 @@ class RAGPipeline:
         """
         lead = ""
         if agent_prompt and agent_prompt.strip():
-            lead = agent_prompt.strip() + "\n\n" + build_hierarchy_header()
+            # Prompt-first, RAG fallback: lead is primary knowledge, context is fallback
+            lead = agent_prompt.strip() + "\n\n[KNOWLEDGE PRIORITY: Answer from the above SYSTEM PROMPT knowledge first. The Context below is FALLBACK — use it only if the prompt does not cover the question.]\n\n" + build_hierarchy_header()
         else:
             lead = build_hierarchy_header()
 

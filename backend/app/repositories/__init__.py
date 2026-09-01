@@ -25,23 +25,44 @@ def _utcnow() -> datetime:
 
 async def save_document(
     document_id: str, tenant_id: str, filename: str, file_size: int, chunk_count: int,
-    status: str = "processed",
+    status: str = "processed", purpose: str = "rag", source_snapshot_id: Optional[str] = None,
 ) -> None:
     async with async_session() as session:
         session.add(DocumentRecord(
             document_id=document_id, tenant_id=tenant_id, filename=filename,
-            file_size=file_size, chunk_count=chunk_count, status=status,
+            file_size=file_size, chunk_count=chunk_count, status=status, purpose=purpose,
+            source_snapshot_id=source_snapshot_id,
         ))
         await session.commit()
 
 
-async def list_documents(tenant_id: str) -> List[DocumentRecord]:
+async def list_documents(tenant_id: str, purpose: str | None = None) -> List[DocumentRecord]:
+    """List documents scoped to the active agent and global uploads — excludes other snapshots' fallback docs."""
+    from app.models.db_models import AgentSnapshotRecord
     async with async_session() as session:
-        result = await session.execute(
-            select(DocumentRecord)
-            .where(DocumentRecord.tenant_id == tenant_id)
-            .order_by(DocumentRecord.created_at.desc())
+        snap_res = await session.execute(
+            select(AgentSnapshotRecord.snapshot_id)
+            .where(AgentSnapshotRecord.tenant_id == tenant_id)
+            .order_by(AgentSnapshotRecord.created_at.desc())
+            .limit(1)
         )
+        active_snap = snap_res.scalar_one_or_none()
+
+        q = select(DocumentRecord).where(DocumentRecord.tenant_id == tenant_id)
+        if purpose in ("agent", "rag"):
+            q = q.where(DocumentRecord.purpose == purpose)
+
+        if active_snap:
+            q = q.where(
+                or_(
+                    DocumentRecord.source_snapshot_id == active_snap,
+                    DocumentRecord.source_snapshot_id.is_(None),
+                )
+            )
+        else:
+            q = q.where(DocumentRecord.source_snapshot_id.is_(None))
+
+        result = await session.execute(q.order_by(DocumentRecord.created_at.desc()))
         return list(result.scalars().all())
 
 
@@ -59,19 +80,35 @@ async def get_document_record(document_id: str, tenant_id: str) -> Optional[Docu
 async def list_enabled_document_ids(tenant_id: str) -> List[str]:
     """The documents this tenant's assistant is allowed to answer from.
 
-    Read on every chat and voice turn, and it is the enforcement point for
-    document selection — so it returns ids rather than rows, and the caller
-    turns them into a vector-store filter. Selecting nothing means the assistant
-    answers from its prompt alone, which is a legitimate configuration and must
-    not be confused with "no filter".
+    Strictly scoped to the active agent's own fallback document and manual uploads.
+    Other past agent snapshots' documents are strictly excluded.
     """
+    from app.models.db_models import AgentSnapshotRecord
     async with async_session() as session:
-        result = await session.execute(
-            select(DocumentRecord.document_id).where(
-                DocumentRecord.tenant_id == tenant_id,
-                DocumentRecord.agent_enabled.is_(True),
-            )
+        snap_res = await session.execute(
+            select(AgentSnapshotRecord.snapshot_id)
+            .where(AgentSnapshotRecord.tenant_id == tenant_id)
+            .order_by(AgentSnapshotRecord.created_at.desc())
+            .limit(1)
         )
+        active_snap = snap_res.scalar_one_or_none()
+
+        q = select(DocumentRecord.document_id).where(
+            DocumentRecord.tenant_id == tenant_id,
+            DocumentRecord.agent_enabled.is_(True),
+            DocumentRecord.purpose == "rag",
+        )
+        if active_snap:
+            q = q.where(
+                or_(
+                    DocumentRecord.source_snapshot_id == active_snap,
+                    DocumentRecord.source_snapshot_id.is_(None),
+                )
+            )
+        else:
+            q = q.where(DocumentRecord.source_snapshot_id.is_(None))
+
+        result = await session.execute(q)
         return list(result.scalars().all())
 
 
@@ -123,6 +160,34 @@ async def delete_document_record(document_id: str, tenant_id: str) -> None:
         if record:
             await session.delete(record)
             await session.commit()
+
+
+async def list_documents_by_snapshot(tenant_id: str, snapshot_id: str) -> List[DocumentRecord]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(DocumentRecord).where(
+                DocumentRecord.tenant_id == tenant_id,
+                DocumentRecord.source_snapshot_id == snapshot_id,
+            )
+        )
+        return list(result.scalars().all())
+
+
+async def delete_documents_by_snapshot(tenant_id: str, snapshot_id: str) -> List[str]:
+    """Delete all RAG fallback docs linked to a snapshot. Returns deleted document_ids."""
+    docs = await list_documents_by_snapshot(tenant_id, snapshot_id)
+    if not docs:
+        return []
+    ids = [d.document_id for d in docs]
+    async with async_session() as session:
+        await session.execute(
+            delete(DocumentRecord).where(
+                DocumentRecord.tenant_id == tenant_id,
+                DocumentRecord.source_snapshot_id == snapshot_id,
+            )
+        )
+        await session.commit()
+    return ids
 
 
 async def list_expired_documents(

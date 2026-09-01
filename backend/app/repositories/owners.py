@@ -343,9 +343,14 @@ async def list_deployed_agents() -> List[dict]:
                 continue
 
             has_documents = owner.tenant_id in tenants_with_documents
-
-            has_voice = bool((agent.voice_script or agent.script or "").strip())
-            has_chat = bool((agent.chat_script or agent.script or "").strip()) and has_documents
+            v_override = getattr(agent, "voice_script", None)
+            c_override = getattr(agent, "chat_script", None)
+            if v_override is not None or c_override is not None:
+                has_voice = bool((v_override or "").strip())
+                has_chat = bool((c_override or "").strip()) and has_documents
+            else:
+                has_voice = bool((agent.script or "").strip())
+                has_chat = bool((agent.script or "").strip()) and has_documents
 
             # Must have at least one active, working channel (voice or chat)
             if not (has_voice or has_chat):

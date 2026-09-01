@@ -24,9 +24,11 @@ interface Doc {
 export function AgentDocuments({
   max = 3,
   onCountChange,
+  purpose = "rag",
 }: {
   max?: number;
   onCountChange?: (count: number) => void;
+  purpose?: "rag" | "agent";
 }) {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,7 +39,7 @@ export function AgentDocuments({
 
   const load = useCallback(async () => {
     try {
-      const response = await ownerFetch("/api/v1/documents");
+      const response = await ownerFetch(`/api/v1/documents?purpose=${purpose}`);
       if (!response.ok) throw new Error();
       const data: Doc[] = await response.json();
       setDocs(data);
@@ -47,7 +49,7 @@ export function AgentDocuments({
     } finally {
       setLoading(false);
     }
-  }, [onCountChange]);
+  }, [onCountChange, purpose]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -68,7 +70,7 @@ export function AgentDocuments({
         for (const file of Array.from(files).slice(0, max - docs.length)) {
           const form = new FormData();
           form.append("file", file);
-          const response = await ownerFetch("/api/v1/documents/upload", {
+          const response = await ownerFetch(`/api/v1/documents/upload?purpose=${purpose}`, {
             method: "POST",
             body: form,
           });
@@ -119,29 +121,35 @@ export function AgentDocuments({
     }
   }
 
-  async function remove(documentId: string, filename: string) {
-    if (!window.confirm(`Remove ${filename} from your assistant?`)) return;
+  const [deleteDocTarget, setDeleteDocTarget] = useState<{ id: string; name: string } | null>(null);
+
+  async function removeConfirmed() {
+    if (!deleteDocTarget) return;
     try {
-      await ownerFetch(`/api/v1/documents/${encodeURIComponent(documentId)}`, {
+      await ownerFetch(`/api/v1/documents/${encodeURIComponent(deleteDocTarget.id)}`, {
         method: "DELETE",
       });
+      setDeleteDocTarget(null);
       await load();
     } catch {
       setError("Could not remove that document.");
+      setDeleteDocTarget(null);
     }
   }
 
   const full = docs.length >= max;
 
+  const label = purpose === "agent" ? "Creation Documents" : "Knowledge Documents (RAG)";
+  const hint = purpose === "agent"
+    ? "Files used once to create this agent's prompt — not used for live RAG. Upload here to build new agent; editing RAG docs below won't affect creation."
+    : "What your assistant knows live — FAQ, price list, policy. Keep short and specific. Untick to keep but leave out of answers.";
   return (
     <section className="agent-section">
       <span className="agent-label">
-        Documents <span className="agent-optional">{docs.length} of {max}</span>
+        {label} <span className="agent-optional">{docs.length} of {max}</span>
       </span>
       <p className="agent-hint">
-        What your assistant knows — an FAQ, price list, or policy sheet. Keep
-        them short and specific; a few focused pages answer better than a
-        manual. Untick one to keep it uploaded but leave it out of answers.
+        {hint}
       </p>
 
       {!full && (
@@ -209,7 +217,7 @@ export function AgentDocuments({
                 <button
                   type="button"
                   className="agent-doc-remove ds-pressable ds-tap"
-                  onClick={() => remove(doc.document_id, doc.filename)}
+                  onClick={() => setDeleteDocTarget({ id: doc.document_id, name: doc.filename })}
                   aria-label={`Remove ${doc.filename}`}
                 >
                   Remove
@@ -222,6 +230,33 @@ export function AgentDocuments({
               Every document is switched off, so your assistant will answer from
               its prompt alone.
             </p>
+          )}
+
+          {deleteDocTarget && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
+              <div className="bg-white rounded-2xl w-full max-w-xs p-5 border shadow-2xl flex flex-col gap-3">
+                <h4 className="text-xs font-bold text-gray-900">Remove Document?</h4>
+                <p className="text-[11px] text-gray-500">
+                  Are you sure you want to remove <span className="font-semibold text-gray-800">{deleteDocTarget.name}</span> from your knowledge base?
+                </p>
+                <div className="flex items-center justify-end gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setDeleteDocTarget(null)}
+                    className="h-8 px-3 rounded-lg border text-xs text-gray-600 hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void removeConfirmed()}
+                    className="h-8 px-3 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-700"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
         </>
       )}

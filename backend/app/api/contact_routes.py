@@ -487,3 +487,28 @@ async def open_link(request: Request, response: Response, body: OpenLinkRequest)
         "contact_id": record.contact_id,
         "mode": record.mode,
     }
+
+
+class SaveSessionTranscriptRequest(BaseModel):
+    channel: str = "voice"
+    messages: list[dict] = []
+    duration_seconds: int = 0
+
+
+@router.post("/t/{token}/session")
+async def save_contact_session_transcript(token: str, body: SaveSessionTranscriptRequest):
+    """Save call transcript turns and duration to the contact's session when a call ends."""
+    record = await repositories.get_contact_by_token_hash(
+        contacts.hash_token(token)
+    )
+    if record is None:
+        raise HTTPException(status_code=404, detail="Contact not found")
+
+    await repositories.record_voice_transcript(
+        tenant_id=record.owner_tenant_id,
+        contact_id=record.contact_id,
+        messages=body.messages,
+        duration_seconds=body.duration_seconds,
+    )
+    return {"status": "saved"}
+
