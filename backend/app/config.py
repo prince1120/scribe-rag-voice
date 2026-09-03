@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     LIVEKIT_API_SECRET: str = ""
     SARVAM_API_KEY: str = ""
     MISTRAL_API_KEY: str = ""
+    # Best model for prompt generation — large is ~3x better than small at grounding & not hallucinating.
+    # Override via MISTRAL_MODEL in .env if you need to pin a version (e.g. mistral-large-2407).
+    MISTRAL_MODEL: str = "mistral-large-latest"
     # Where the API server can reach the voice worker's built-in health HTTP
     # server (livekit-agents starts one automatically — see WorkerOptions.port
     # in worker.py). Used by GET /voice/health so the frontend can tell "voice

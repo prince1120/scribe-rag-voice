@@ -438,31 +438,72 @@ class SiteAgentRequest(BaseModel):
     goal: Optional[str] = Field(default=None, max_length=500)
     tone: Optional[str] = Field(default=None, max_length=100)
     language: Optional[str] = Field(default=None, max_length=16)
-    channel: Optional[str] = Field(default=None, max_length=10)  # both|voice|chat
+    channel: Optional[str] = Field(default=None, max_length=10, pattern="^(both|voice|chat)$")
     voice_script: Optional[str] = Field(default=None, max_length=20000)
     chat_script: Optional[str] = Field(default=None, max_length=20000)
     greeting: Optional[str] = Field(default=None, max_length=800)
 
 
-@router.post("/agents/generate-preview")
-async def generate_agent_preview(body: SiteAgentRequest, identity: Identity = Depends(get_identity)):
-    """Extract content from site/docs and generate high-quality Voice & Chat prompts for owner review."""
-    _require_workspace_owner(identity)
-    from app.services.site_ingest import fetch_site_pages, build_prompt_with_mistral
-    url = (body.url or "").strip()
+def _resolve_channel_prompt(
+    edited: Optional[str],
+    generated: Optional[str],
+    channel_active: bool,
+) -> Optional[str]:
+    """Single helper for preview→save parity."""
+    if not channel_active:
+        return None
+    if edited is not None:
+        stripped = edited.strip()
+        if stripped == "":
+            return None  # explicit clear (chat-only deletes voice etc.)
+        if len(stripped) > 0:
+            return stripped[:20000]
+    return (generated or "").strip()[:20000] if generated else None
+
+
+async def _collect_pages_for_agent(identity: Identity, url: str) -> tuple[list[dict], str, Optional[str]]:
+    """Fetch site pages and/or creation docs, merged and deduped. Returns (pages, source, source_url)."""
+    from app.services.site_ingest import fetch_site_pages
+
     pages: list[dict] = []
+    source = "manual"
+    source_url = None
     if url:
-        try:
-            pages = await fetch_site_pages(url)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e)[:400])
-    else:
+        pages = await fetch_site_pages(url)
+        source = "site"
+        source_url = url
+        # Also merge creation docs if present — owner used AND, don't ignore docs
         try:
             docs = await repositories.list_documents(identity.tenant_id, purpose="agent")
             if docs:
                 from app.api.routes import vector_store as _vs
                 from fastapi.concurrency import run_in_threadpool as _rt
-                pages = []
+                extra: list[dict] = []
+                for d in docs[:3]:
+                    # avoid duplicating a page that is already the site URL
+                    try:
+                        chunks = await _rt(_vs.get_document_chunks, d.document_id, identity.tenant_id)
+                        text = "\n\n".join(c.get("content", "") for c in chunks)[:4000] if chunks else d.filename
+                        if not text.strip():
+                            text = d.filename
+                        extra.append({"title": d.filename, "text": text, "url": ""})
+                    except Exception:
+                        extra.append({"title": d.filename, "text": d.filename, "url": ""})
+                if extra:
+                    # Dedupe merged list
+                    from app.services.site_ingest import _dedupe_pages as _dedup
+                    pages = _dedup(pages + extra)
+                    if source == "site":
+                        source = "site+upload"
+        except Exception:
+            pass
+    else:
+        source = "upload"
+        try:
+            docs = await repositories.list_documents(identity.tenant_id, purpose="agent")
+            if docs:
+                from app.api.routes import vector_store as _vs
+                from fastapi.concurrency import run_in_threadpool as _rt
                 for d in docs[:3]:
                     try:
                         chunks = await _rt(_vs.get_document_chunks, d.document_id, identity.tenant_id)
@@ -474,11 +515,34 @@ async def generate_agent_preview(body: SiteAgentRequest, identity: Identity = De
                         pages.append({"title": d.filename, "text": d.filename, "url": ""})
         except Exception:
             pass
+    return pages, source, source_url
 
-    prompt = await build_prompt_with_mistral(pages, {"name": body.name, "business": body.business, "goal": body.goal, "tone": body.tone})
+
+@router.post("/agents/generate-preview")
+@limiter.limit("10/minute")
+async def generate_agent_preview(request: Request, body: SiteAgentRequest, identity: Identity = Depends(get_identity)):
+    """Extract content from site/docs and generate high-quality Voice & Chat prompts for owner review."""
+    _require_workspace_owner(identity)
+    from app.services.site_ingest import build_prompt_with_mistral
+    url = (body.url or "").strip()
+    try:
+        pages, _, _ = await _collect_pages_for_agent(identity, url)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)[:400])
+
+    if url and len(pages) == 0:
+        raise HTTPException(status_code=400, detail="No readable content found at that URL — check the link or upload a PDF instead.")
+
+    try:
+        prompt = await build_prompt_with_mistral(pages, {"name": body.name, "business": body.business, "goal": body.goal, "tone": body.tone})
+    except Exception as e:
+        logger.warning("generate-preview LLM failed: %s", e)
+        raise HTTPException(status_code=502, detail="AI is temporarily unavailable — try again in a moment.")
+
     ch = (body.channel or "both").strip().lower()
-    vs = prompt["voice_script"] if ch in ("voice", "both") else ""
-    cs = prompt["chat_script"] if ch in ("chat", "both") else ""
+    vs = _resolve_channel_prompt(None, prompt.get("voice_script"), ch in ("voice", "both")) or ""
+    cs = _resolve_channel_prompt(None, prompt.get("chat_script"), ch in ("chat", "both")) or ""
+    # Demo-data warning: if pages had no price signal but prompt still invented one, frontend can warn
     return {
         "voice_script": vs,
         "chat_script": cs,
@@ -489,62 +553,53 @@ async def generate_agent_preview(body: SiteAgentRequest, identity: Identity = De
 
 
 @router.post("/agents/from-site")
-async def create_from_site(body: SiteAgentRequest, identity: Identity = Depends(get_identity)):
+@limiter.limit("10/minute")
+async def create_from_site(request: Request, body: SiteAgentRequest, identity: Identity = Depends(get_identity)):
     """Create a draft agent from a site link or PDF docs."""
     _require_workspace_owner(identity)
-    from app.services.site_ingest import fetch_site_pages, build_prompt_with_mistral
+    from app.services.site_ingest import build_prompt_with_mistral
     import uuid
+    import re as _re
     url = (body.url or "").strip()
-    pages: list[dict] = []
-    source = "manual"
-    source_url = None
     snapshot_id = uuid.uuid4().hex[:12]
-    if url:
-        try:
-            pages = await fetch_site_pages(url)
-            source = "site"
-            source_url = url
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e)[:400])
-    else:
-        source = "upload"
-        try:
-            docs = await repositories.list_documents(identity.tenant_id, purpose="agent")
-            if docs and not pages:
-                from app.api.routes import vector_store as _vs
-                from fastapi.concurrency import run_in_threadpool as _rt
-                pages = []
-                for d in docs[:3]:
-                    try:
-                        chunks = await _rt(_vs.get_document_chunks, d.document_id, identity.tenant_id)
-                        text = "\n\n".join(c.get("content", "") for c in chunks)[:4000] if chunks else d.filename
-                        if not text.strip():
-                            text = d.filename
-                        pages.append({"title": d.filename, "text": text, "url": ""})
-                    except Exception:
-                        pages.append({"title": d.filename, "text": d.filename, "url": ""})
-        except Exception:
-            pass
+    try:
+        pages, source, source_url = await _collect_pages_for_agent(identity, url)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)[:400])
+    if url and len(pages) == 0:
+        raise HTTPException(status_code=400, detail="No readable content found at that URL — check the link or upload a PDF instead.")
 
-    # If scripts were reviewed & edited in preview modal, prioritize them
-    if (body.voice_script and len(body.voice_script.strip()) > 20) or (body.chat_script and len(body.chat_script.strip()) > 20):
+    # Decide whether owner edited preview scripts — use shared resolver, not 20-char gate
+    has_edited_voice = body.voice_script is not None and body.voice_script.strip() != ""
+    has_edited_chat = body.chat_script is not None and body.chat_script.strip() != ""
+    if has_edited_voice or has_edited_chat:
+        # Use edited scripts verbatim after light sanitization (preview was already LLM-grounded)
+        # Strip markdown for voice that slipped through preview textarea
+        vs_edited = body.voice_script
+        if vs_edited and ("**" in vs_edited or "##" in vs_edited):
+            vs_edited = _re.sub(r"\*\*(.*?)\*\*", r"\1", vs_edited)
+            vs_edited = _re.sub(r"^#{1,6}\s*", "", vs_edited, flags=_re.M)
         prompt = {
-            "voice_script": body.voice_script or "",
+            "voice_script": vs_edited or "",
             "chat_script": body.chat_script or "",
             "greeting": body.greeting or f"Hello! Thanks for calling {body.business or 'our business'}. How can I help you today?",
         }
     else:
-        prompt = await build_prompt_with_mistral(pages, {"name": body.name, "business": body.business, "goal": body.goal, "tone": body.tone})
+        try:
+            prompt = await build_prompt_with_mistral(pages, {"name": body.name, "business": body.business, "goal": body.goal, "tone": body.tone})
+        except Exception as e:
+            logger.warning("from-site LLM failed, using rule builder: %s", e)
+            from app.services.site_ingest import build_prompt_from_site
+            prompt = build_prompt_from_site(pages, {"name": body.name, "business": body.business, "goal": body.goal, "tone": body.tone})
 
     ch = (body.channel or "both").strip().lower()
-    vs = (body.voice_script if body.voice_script is not None else prompt.get("voice_script")) if ch in ("voice", "both") else None
-    cs = (body.chat_script if body.chat_script is not None else prompt.get("chat_script")) if ch in ("chat", "both") else None
-    if body.voice_script == "" or ch == "chat":
-        vs = None
-    if body.chat_script == "" or ch == "voice":
-        cs = None
+    vs = _resolve_channel_prompt(body.voice_script, prompt.get("voice_script"), ch in ("voice", "both"))
+    cs = _resolve_channel_prompt(body.chat_script, prompt.get("chat_script"), ch in ("chat", "both"))
 
-    fallback_script = ((cs if ch == "chat" else vs if ch == "voice" else (cs or vs or "")) or "")[:5000]
+    # Legacy 'script' column — keep it as a safe-truncated combined view, not a hard 5000 cut mid-bullet
+    from app.services.site_ingest import _truncate_safe as _tsafe
+    fallback_raw = (cs if ch == "chat" else vs if ch == "voice" else (cs or vs or "")) or ""
+    fallback_script = _tsafe(fallback_raw, 9000)
     from app.services import owner_service as _svc
     agent_display_name = (body.name or body.business or "Assistant").strip()[:120] or "Assistant"
     cfg = await _svc.save_agent_config(

@@ -285,26 +285,26 @@ async def save_agent_config(
         **channel_fields,
     )
     return {
-        "voice_script": record.voice_script,
-        "chat_script": record.chat_script,
-        "voice_model": record.voice_model,
-        "chat_model": record.chat_model,
-        "voice_base_url": record.voice_base_url,
-        "chat_base_url": record.chat_base_url,
-        "voice_api_key": _mask_enc(record.voice_api_key_enc),
-        "chat_api_key": _mask_enc(record.chat_api_key_enc),
-        "voice_temperature": record.voice_temperature,
-        "voice_max_tokens": record.voice_max_tokens,
-        "chat_temperature": record.chat_temperature,
-        "chat_max_tokens": record.chat_max_tokens,
-        "name": record.name,
-        "script": record.script,
-        "voice_id": record.voice_id,
-        "language": record.language,
-        "rag_enabled": record.rag_enabled,
-        "voice_rag_enabled": record.voice_rag_enabled,
-        "chat_rag_enabled": record.chat_rag_enabled,
-        "greeting": record.greeting,
+        "voice_script": getattr(record, "voice_script", None),
+        "chat_script": getattr(record, "chat_script", None),
+        "voice_model": getattr(record, "voice_model", None),
+        "chat_model": getattr(record, "chat_model", None),
+        "voice_base_url": getattr(record, "voice_base_url", None),
+        "chat_base_url": getattr(record, "chat_base_url", None),
+        "voice_api_key": _mask_enc(getattr(record, "voice_api_key_enc", None)),
+        "chat_api_key": _mask_enc(getattr(record, "chat_api_key_enc", None)),
+        "voice_temperature": getattr(record, "voice_temperature", None),
+        "voice_max_tokens": getattr(record, "voice_max_tokens", None),
+        "chat_temperature": getattr(record, "chat_temperature", None),
+        "chat_max_tokens": getattr(record, "chat_max_tokens", None),
+        "name": getattr(record, "name", "Assistant"),
+        "script": getattr(record, "script", "") or DEFAULT_SCRIPT,
+        "voice_id": getattr(record, "voice_id", "anushka"),
+        "language": getattr(record, "language", "unknown"),
+        "rag_enabled": getattr(record, "rag_enabled", True),
+        "voice_rag_enabled": getattr(record, "voice_rag_enabled", False),
+        "chat_rag_enabled": getattr(record, "chat_rag_enabled", False),
+        "greeting": getattr(record, "greeting", None),
         "style_rules_enabled": bool(getattr(record, "style_rules_enabled", True)),
         "configured": True,
     }
@@ -598,23 +598,27 @@ def channel_settings(agent, channel: str) -> dict:
 
     Voice and chat are different jobs — a spoken answer must be short and
     cannot use markdown, a typed one can be structured and long — so each may
-    override the shared script, model, temperature, and token ceiling. Anything
-    the owner left unset falls back: first to the shared script, then to the
-    server default, rather than to a number this function invented.
+    override the shared settings. Anything the owner left unset falls back: first
+    to the shared script, then to the server default, rather than to a number
+    this function invented.
     """
     if agent is None:
         return {}
 
     prefix = "voice" if channel == "voice" else "chat"
 
-    # The per-channel prompt is the prompt. `script` remains as a fallback only for
-    # legacy agents saved before the channels were split (where both voice_script and chat_script were None).
-    v_override = getattr(agent, "voice_script", None)
-    c_override = getattr(agent, "chat_script", None)
-    if v_override is not None or c_override is not None:
-        script = (getattr(agent, f"{prefix}_script", None) or "").strip()
+    # Per-channel prompt wins when non-empty.
+    # "" (empty string) is explicit disable — user pressed "Disable Channel".
+    # None / "   " (whitespace) is "not set" → fallback to shared legacy script.
+    raw = getattr(agent, f"{prefix}_script", None)
+    if raw == "":
+        # Explicitly cleared → channel disabled, do not fallback
+        script = ""
+    elif isinstance(raw, str) and raw.strip() != "":
+        script = raw.strip()
     else:
-        script = (agent.script or "").strip()
+        # None or whitespace-only → fallback to shared legacy script
+        script = (getattr(agent, "script", "") or "").strip()
     return {
         "script": (script or "").strip() or None,
         "model": getattr(agent, f"{prefix}_model", None),

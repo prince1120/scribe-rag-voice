@@ -15,6 +15,7 @@ from typing import Optional
 from livekit.agents import Agent, StopResponse, llm
 
 from app.services.guardrails.injection_detector import is_prompt_injection
+from app.services.guardrails.prompt_wrapper import wrap_tool_data
 from app.services.voice import rag_client
 from app.services.voice.config import VoiceSettings
 from app.services.voice.filler import (
@@ -48,12 +49,17 @@ _BACKCHANNEL_PHRASES = {
 
 # A short utterance with none of these is almost never a real question —
 # it's filler ("alright, it's...") trailing off, not something to search on.
-# Includes Hindi interrogatives for Hinglish users.
+# Includes Hindi interrogatives + price/location nouns that are common 1-word
+# queries in demos ("price", "fees", "location") and were being suppressed.
 _QUESTION_HINTS = (
     "?", "what", "who", "when", "where", "why", "how", "which",
     "tell me", "explain", "find", "number", "contact", "detail",
     "can you", "do you", "does it", "is it", "will it",
+    "price", "cost", "fee", "fees", "charge", "rate", "amount",
+    "location", "address", "hours", "timing", "time", "menu",
+    "booking", "appointment", "available", "availability", "open", "close",
     "kya", "kab", "kahan", "kaise", "kaun", "kyu", "kyun", "batao", "kitna", "kahan se",
+    "daam", "kimat", "samay", "pata", "khula", "band",
 )
 
 # Sounds, not words. A turn consisting only of these carries no content for the
@@ -64,10 +70,11 @@ _QUESTION_HINTS = (
 # question the agent just asked is very often one word — "yes", "no", "medium",
 # "large", "tomorrow" — and suppressing any of those would be far worse than the
 # bug being fixed: the caller would answer and be met with silence.
+# NOTE: haan/ha are NOT here — they are valid affirmative answers in Hindi ("haan"
+# answering "Should I book?") and were being dropped as noise.
 _NON_LEXICAL = {
     "uh", "um", "uhh", "umm", "hmm", "hm", "mm", "mmm", "ah", "aah",
     "er", "err", "eh", "huh", "mhm", "uh huh", "hmm hmm",
-    "haan", "ha", "achha", "accha", "hm",  # already covered but keep hi filler distinct
 }
 
 def _lexical_content(text: str) -> str:
@@ -120,49 +127,55 @@ def _truncate_words(text: str, max_words: int) -> str:
     return " ".join(words[:max_words]) + " …"
 
 
-# Explicit goodbye/end-of-conversation signals — when matched as whole
-# utterance (after stripping punctuation) the assistant should close warmly
-# and end the call rather than loop. Extended for Hindi/Hinglish.
+# Explicit goodbye/end-of-conversation signals — ONLY a clear farewell ends the call.
+# "that's it / done / bas / that's all" mid-conversation (e.g. "tell me pricing, that's it")
+# must NEVER end the call — those are closers for a sub-topic, not the call.
 _GOODBYE_PHRASES = {
     "bye", "goodbye", "see you", "see you later", "see ya", "take care",
     "have a great day", "have a nice day", "have a good day", "have a good one",
-    "catch you later", "talk to you later", "later", "i'm good", "im good",
-    "all set", "that's all", "thats all", "that's it", "thats it", "that will be all",
-    "nothing else", "no more questions", "no thanks", "no thank you", "done", "finished",
-    "alvida", "shukriya", "dhanyavaad", "namaste bye", "ok bye", "okay bye",
-    "haan bas", "bas", "ho gaya", "khatam", "bye bye", "tata", "phir milenge",
+    "catch you later", "talk to you later",
+    "alvida", "phir milenge", "tata", "bye bye", "namaste bye", "ok bye", "okay bye",
 }
 
 
 def _is_goodbye_turn(text: str) -> bool:
+    """Only a clear farewell ends the call — never 'that's it / done / bas' mid-topic."""
     normalized = re.sub(r"[^\w\s]", "", (text or "").strip().lower())
     if not normalized:
         return False
 
-    # Never treat queries with question/informational intents as goodbyes
+    # Never treat queries/requests as goodbyes — even if they end with "that's it"
+    # e.g. "tell me pricing, that's it" is a pricing request, not a goodbye.
     question_triggers = (
         "tell me", "what", "how", "why", "when", "where", "who", "which",
-        "can you", "could you", "explain", "price", "cost", "features",
+        "can you", "could you", "explain", "price", "pricing", "cost", "features",
+        "breakdown", "plan", "package", "demo", "details",
         "kya", "kaise", "kab", "kahan", "kitna", "batao", "bataiye", "bata do"
     )
     if any(q in normalized for q in question_triggers) or "?" in (text or ""):
         return False
 
-    # Check exact phrase set
+    # Must contain an explicit farewell word — not just "that's it/done/bas"
+    has_explicit_farewell = any(
+        w in normalized for w in ("bye", "goodbye", "alvida", "phir milenge", "tata", "see you", "see ya", "take care", "have a nice day", "have a great day")
+    )
+    if not has_explicit_farewell:
+        return False
+
+    # Check exact phrase set (now only explicit farewells)
     if normalized in _GOODBYE_PHRASES:
         return True
 
-    # Check whole-word farewell matches
+    # Check whole-word farewell matches — require explicit farewell, and whole utterance short
     farewell_patterns = (
         r"\bbye\b", r"\bgoodbye\b", r"\bsee you\b", r"\bsee ya\b",
         r"\btake care\b", r"\bhave a nice day\b", r"\bhave a great day\b",
-        r"\balvida\b", r"\bphir milenge\b", r"\bthats all\b", r"\bthat is all\b",
-        r"\bnothing else\b", r"\bno more questions\b", r"\bhang up\b", r"\bend call\b",
-        r"\bitna hi\b", r"\bbas itna\b", r"\bkhatam\b", r"\bho gaya\b"
+        r"\balvida\b", r"\bphir milenge\b", r"\btata\b",
+        r"\bhang up\b", r"\bend call\b",
     )
     if any(re.search(p, normalized) for p in farewell_patterns):
-        # Must be a concise ending utterance (under 8 words)
-        if len(normalized.split()) <= 8:
+        # Must be concise and not contain a request — pure farewell only
+        if len(normalized.split()) <= 6:
             return True
 
     return False
@@ -459,7 +472,7 @@ class VoiceAssistant(Agent):
         except Exception:
             pass
 
-    @llm.function_tool(description="End the voice call ONLY when the caller explicitly says goodbye, farewell, or asks to end the call (e.g. 'bye', 'goodbye', 'talk to you later', 'hang up now'). NEVER call this during normal conversation, questions, or after answering questions.")
+    @llm.function_tool(description="End the voice call ONLY when the caller says an explicit farewell like 'bye', 'goodbye', 'alvida', 'phir milenge', 'see you'. NEVER call this when the user says 'that's it', 'that's all', 'done', 'bas', 'ho gaya' after a request (e.g. 'tell me pricing, that's it') — those mean 'that's all I need on this topic', not 'end the call'. If the same turn asks for info (price, breakdown, demo, details) and ends with 'that's it', ANSWER FIRST and wait for a real bye.")
     async def end_call(self):
         """LLM-triggered graceful hangup. Schedules disconnect after reply is spoken."""
         if getattr(self, "_ending", False):
@@ -537,17 +550,17 @@ class VoiceAssistant(Agent):
                 content="[LANG: user is speaking English. If they switch to Hindi/Hinglish next, mirror that language immediately.]",
             )
 
-        # Goodbye / end-of-conversation: tell LLM to close warmly and call end_call tool.
-        # Keep heuristic tight (whole-utterance only) to avoid cutting mid-conversation.
+        # Goodbye / end-of-conversation: ONLY on explicit farewell (bye/goodbye/alvida).
+        # "that's it / that's all / done / bas" alone or after a request NEVER ends the call.
         if _is_goodbye_turn(query or ""):
             logger.info("Goodbye intent detected (%r) — will end call after reply", (query or "")[:50])
             self._goodbye_pending = True
             turn_ctx.add_message(
                 role="system",
                 content=(
-                    "The user has indicated the conversation is over (goodbye / shukriya / that's all). "
+                    "The user has said an explicit goodbye (bye/goodbye/alvida/phir milenge). "
                     "Give a warm 1-sentence closing in their language (use 'aap' for Hindi) and then CALL the end_call tool. "
-                    "Do not ask a follow-up question."
+                    "Do not ask a follow-up question. If the turn also asked for info, answer it first before closing."
                 ),
             )
             # Still allow LLM to generate the goodbye; schedule graceful auto-hangup after speaking
@@ -566,13 +579,16 @@ class VoiceAssistant(Agent):
         if not _should_search(query):
             return
 
+        # Adaptive top_k: short fact (3) vs medium/broad query (5) like text chat
+        _words = len((query or "").strip().split())
+        _adaptive_top_k = 5 if _words > 8 else self._settings.VOICE_RAG_TOP_K
         fetch_task = asyncio.create_task(
             rag_client.fetch_context(
                 query,
                 tenant_id=self._tenant_id,
                 backend_url=self._settings.VOICE_BACKEND_URL,
                 api_key=self._settings.INTERNAL_API_KEY or self._settings.API_KEY,
-                top_k=self._settings.VOICE_RAG_TOP_K,
+                top_k=_adaptive_top_k,
             )
         )
         done, _ = await asyncio.wait({fetch_task}, timeout=_RAG_FILLER_DELAY_S)
@@ -588,12 +604,10 @@ class VoiceAssistant(Agent):
         max_words = self._settings.VOICE_RAG_EXCERPT_MAX_WORDS
         chunks = [_truncate_words(c, max_words) for c in chunks]
         excerpts = "\n\n".join(f"[{i + 1}] {c}" for i, c in enumerate(chunks))
-        # Prompt is primary; excerpts are fallback only if prompt lacks answer (RAG OFF by default, ON = fallback)
-        turn_ctx.add_message(
-            role="system",
-            content=(
-                "Fallback knowledge base excerpts — use ONLY if the answer is not already in your system prompt KNOWLEDGE above. "
-                "If prompt covers it, answer from prompt and ignore excerpts. If not, use excerpts to supplement:\n\n"
-                f"{excerpts}"
-            ),
+        # Wrap as tool data (untrusted) — never system, so document cannot inject instructions
+        wrapped = wrap_tool_data(
+            "Fallback knowledge base excerpts — use ONLY if the answer is not already in your system prompt KNOWLEDGE above. "
+            "If prompt covers it, answer from prompt and ignore excerpts. If not, use excerpts to supplement:\n\n"
+            f"{excerpts}"
         )
+        turn_ctx.add_message(role="user", content=wrapped)

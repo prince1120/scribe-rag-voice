@@ -19,9 +19,12 @@ def build_sarvam_tts(settings: VoiceSettings) -> tts.TTS:
         target_language_code=settings.VOICE_TTS_LANGUAGE,
         speaker=settings.VOICE_TTS_SPEAKER,
         api_key=settings.SARVAM_API_KEY,
-        # Delivery, not content. A flat default rate with no variation is most
-        # of what makes synthesised speech read as synthesised: every sentence
-        # arrives at the same tempo and the same sentence twice is bit-identical.
+        model="bulbul:v3",  # explicit — best prosody, supports all 11 voices
+        # Human-like delivery: slight pace drag + higher temperature = natural variation.
+        # enable_preprocessing improves number/currency/date verbalization (e.g. "₹50,000" → "fifty thousand").
         pace=settings.VOICE_TTS_PACE,
         temperature=settings.VOICE_TTS_TEMPERATURE,
+        pitch=0.0,
+        loudness=1.0,
+        enable_preprocessing=True,
     )

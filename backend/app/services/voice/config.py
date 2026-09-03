@@ -138,12 +138,12 @@ class VoiceSettings(BaseSettings):
     # reply would be preceded by a pointless "okay". 0 disables it.
     VOICE_THINKING_FILLER_DELAY: float = 0.5
 
-    # Sarvam speech shaping. pace 1.0 is the model's default rate; a touch under
-    # reads as considered rather than hurried, and gives a listener room to
-    # follow an unfamiliar accent. temperature varies the delivery between
-    # utterances, so the same sentence twice does not sound like a recording.
-    VOICE_TTS_PACE: float = 0.95
-    VOICE_TTS_TEMPERATURE: float = 0.6
+    # Sarvam speech shaping. Tuned for human-like prosody, not flat TTS:
+    # - pace 0.92: slightly slower than 1.0 default — more natural, less hurried, room for Indian accent
+    # - temperature 0.75: higher than 0.6 default — more pitch/energy variation so repeats don't sound bit-identical
+    # If still robotic, try a different speaker (anushka/priya often sound warmer than shubh) and keep language mirroring on.
+    VOICE_TTS_PACE: float = 0.92
+    VOICE_TTS_TEMPERATURE: float = 0.75
 
     # Hard ceiling: no session longer than 15 minutes (900s). One live at a time
     # still bills owner's quota, so this is the global backstop for cost.

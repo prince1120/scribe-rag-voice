@@ -249,6 +249,15 @@ def _invalidate_document_selection(tenant_id: str) -> None:
     from app.services import cache
 
     cache.config_cache.invalidate(("docs", tenant_id))
+    # Editing a document must also bust the 5-minute answer cache, otherwise the
+    # old answer keeps being served for the same normalized question.
+    try:
+        prefix = f"{tenant_id}:"
+        for k in list(_answer_cache.keys()):
+            if k.startswith(prefix):
+                _answer_cache.pop(k, None)
+    except Exception:
+        pass
 
 
 async def selected_document_ids(
@@ -598,6 +607,9 @@ async def query_documents(
 
         results = []
         retrieval_ms = 0
+        allowed_documents: List[str] = []
+        # Default when RAG is off — matches the small-query branch so cache keys stay stable
+        final_top_k = _query_aware_top_k(body.query, body.top_k, bool(x_user_groq_key), bool(body.attached_images))
 
         # RAG Fallback: only execute retrieval if chat_rag_enabled is ON
         if overrides.get("chat_rag_enabled"):
@@ -626,15 +638,18 @@ async def query_documents(
                 await _resolve_image_paths(results)
             except NoDocumentsSelected:
                 results = []
+                allowed_documents = []
 
             retrieval_ms = int((time.time() - _t) * 1000)
 
         # Answer cache: repeat FAQs (exact normalized) save full retrieval+LLM cost, 5m TTL
         import hashlib as _hl
         _norm_q = " ".join((body.query or "").lower().split())
+        _model_hash = _hl.sha1((overrides.get("model") or body.model or "").encode()).hexdigest()[:6]
+        _temp_hash = str(overrides.get("temperature") if overrides.get("temperature") is not None else (body.temperature if body.temperature is not None else 0.1))
         _agent_hash = _hl.sha1((overrides.get("agent_prompt") or "").encode()).hexdigest()[:12]
         _doc_hash = _hl.sha1(",".join(sorted(allowed_documents or [])).encode()).hexdigest()[:8]
-        _cache_key = f"{tenant_id}:{_norm_q}:{final_top_k}:{_agent_hash}:{_doc_hash}:{body.conversation_id or ''}"
+        _cache_key = f"{tenant_id}:{_norm_q}:{final_top_k}:{_model_hash}:{_temp_hash}:{_agent_hash}:{_doc_hash}:{body.conversation_id or ''}"
         _cached = _answer_cache_get(_cache_key)
         if _cached and not body.attached_images and not conversation_history:
             answer, citations_cached = _cached
@@ -1249,6 +1264,7 @@ async def update_document_content(
         await run_in_threadpool(vector_store.upsert_points, points)
 
         await repositories.update_document(document_id, tenant_id, len(chunks), file_size)
+        _invalidate_document_selection(tenant_id)
 
         return DocumentUploadResponse(
             document_id=document_id,

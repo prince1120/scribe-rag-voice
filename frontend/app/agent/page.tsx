@@ -775,7 +775,11 @@ export default function AgentPage() {
         {/* ── Channel Selector Tabs — unified studio, voice + text ─ */}
         <div style={S.channelTabs} className="studio-tabs">
           {(["voice", "chat"] as const).map((ch) => {
-            const ready = ch === "voice" ? channels?.voice : channels?.chat;
+            // Dot reflects local prompt immediately — fixing "disabled but still green" confusion.
+            // Backend channels (which also check documents) is used for the header badges below, not the tab dot.
+            const ready = ch === "voice"
+              ? (config.voice_script || "").trim() !== ""
+              : (config.chat_script || "").trim() !== "";
             const active = tab === ch;
             return (
               <button
