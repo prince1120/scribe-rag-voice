@@ -23,8 +23,29 @@ ALLOWED_SCHEMES = {"https", "http"}
 
 def _clean_text(html: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "nav", "footer", "header", "noscript"]):
+    # Keep header/footer/nav for contact info — they often hold phone/email/address which are critical for the prompt.
+    # Only remove true noise: scripts, styles, and noscript fallbacks.
+    for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
+    contact_snippets: list[str] = []
+    # Extract phone numbers and emails from tel: and mailto: links
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if href.lower().startswith("tel:"):
+            num = href[4:].strip()
+            if num:
+                contact_snippets.append(f"Phone: {num}")
+        elif href.lower().startswith("mailto:"):
+            em = href[7:].split("?")[0].strip()
+            if em:
+                contact_snippets.append(f"Email: {em}")
+    # Phone numbers (international + local) and emails from raw html
+    for m in re.finditer(r"(\+?\d{1,3}[\s\-\(\)]*)?\d{3}[\s\-\(\)]*\d{3}[\s\-\(\)]*\d{4}|\+\d{10,15}|\b\d{10}\b", html):
+        s = m.group(0).strip()
+        if 7 <= len(re.sub(r"\D", "", s)) <= 15:
+            contact_snippets.append(s)
+    for m in re.finditer(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", html):
+        contact_snippets.append(m.group(0).strip())
     # Remove common banner/popup noise that pollutes the source
     for tag in soup.find_all(True):
         cls = " ".join(tag.get("class", [])).lower() if tag.get("class") else ""
@@ -55,6 +76,21 @@ def _clean_text(html: str) -> str:
         lines.append(s)
     text = "\n".join(lines)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    # Never drop contact info: append any phone/email seen in raw html but missing from cleaned text
+    if contact_snippets:
+        uniq_contacts: list[str] = []
+        seen: set[str] = set()
+        low_text = text.lower()
+        for c in contact_snippets:
+            norm = re.sub(r"\s+", " ", c).strip().lower()
+            if norm not in seen and norm not in low_text:
+                seen.add(norm)
+                uniq_contacts.append(c.strip())
+                if len(uniq_contacts) >= 8:
+                    break
+        if uniq_contacts:
+            text = text.rstrip() + "\n\nCONTACT INFO:\n" + "\n".join(f"- {c}" for c in uniq_contacts)
+
     # Sentence-boundary truncation rather than mid-word cut
     if len(text) > 20000:
         cut = text[:20000]
@@ -192,7 +228,7 @@ def _has_price_signal(text: str) -> bool:
 
 
 def _has_contact_signal(text: str) -> bool:
-    return bool(re.search(r"(@|phone|tel:|contact|email|\+91|\+1 |address|location)", text, re.I))
+    return bool(re.search(r"(@|phone|tel:|contact|email|\+91|\+1|address|location|\b\d{10}\b|\+\d{10,15})", text, re.I))
 
 
 def _truncate_safe(text: str, limit: int) -> str:
@@ -217,21 +253,29 @@ def _extract_bullet_summary(uniq: List[dict], max_chars: int = 7000) -> str:
     if not uniq:
         return "Core business details and FAQs as provided by owner."
     bullets = []
+    # Always prioritize extracting contact info first so phone/email are never lost
+    for p in uniq:
+        text = p.get("text", "")
+        if "CONTACT INFO:" in text:
+            c_part = text.split("CONTACT INFO:", 1)[1].strip()
+            for ln in c_part.split("\n"):
+                ln = ln.strip()
+                if ln and (ln.startswith("-") or any(char.isdigit() for char in ln) or "@" in ln):
+                    bullet_line = f"- [Contact] {ln.lstrip('- ')}"
+                    if bullet_line not in bullets:
+                        bullets.append(bullet_line)
     for p in uniq[:20]:
         title = p["title"].strip()
         text = p["text"].strip()
         # Clean into sentences and pick informative ones
         sentences = re.split(r"(?<=[.!?])\s+", text)
-        # Take first 2-3 meaningful sentences per page (avoid cookie/nav leftovers already cleaned)
         kept = []
         for s in sentences:
             s = s.strip().replace("\n", " ")
-            if len(s) < 20:
-                continue
-            if len(s.split()) < 4:
+            if len(s) < 20 or len(s.split()) < 4:
                 continue
             kept.append(s)
-            if len(kept) >= 3:
+            if len(kept) >= 6:
                 break
         if not kept:
             # Fallback: first 250 chars at sentence boundary
@@ -338,8 +382,10 @@ async def build_prompt_with_mistral(pages: List[dict], answers: Optional[dict] =
 
         # Full multi-page content extraction — rank longer pages first so pricing/FAQ not evicted by nav-heavy homepage
         uniq_sorted = sorted(uniq, key=lambda p: len(p.get("text", "")), reverse=True)
+        # Allocate content per page dynamically so single-page or small sites don't get truncated at 1500 chars
+        max_per_page = 6500 if len(uniq_sorted) <= 2 else (3500 if len(uniq_sorted) <= 5 else 2200)
         site_text = "\n\n".join([
-            f"=== PAGE: {p['title']} ({p.get('url', '')}) ===\n{p['text'][:1500].strip()}"
+            f"=== PAGE: {p['title']} ({p.get('url', '')}) ===\n{p['text'][:max_per_page].strip()}"
             for p in uniq_sorted[:20]
         ])[:18000]
         # Truncate at sentence boundary
@@ -392,7 +438,7 @@ PRICING & PLANS:
 Include pricing ONLY if source contains a price (₹, $, INR, plan, tier, fee) — each tier as a bullet. If none, OMIT this header entirely.
 
 CONTACT & SUPPORT:
-Include phone numbers, emails, locations ONLY if present — each as a bullet. If none, OMIT.
+CRITICAL: If any phone number, email address, physical location, or contact method exists anywhere in the source content, you MUST include it under CONTACT & SUPPORT. List each phone number as a bullet point with both standard format and written-out words for spoken clarity. The assistant MUST know the phone number and be able to give it to callers immediately when asked. If none in source, OMIT.
 
 COMMON FAQS & POLICIES:
 Provide answers ONLY to questions found in the text — each as a bullet (- Q: ... / A: ...).

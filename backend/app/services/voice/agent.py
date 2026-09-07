@@ -264,6 +264,9 @@ class VoiceAssistant(Agent):
     async def tts_node(self, text, model_settings):
         """Last stop before synthesis — everything spoken passes through here,
         whichever LLM produced it. Mirrors TTS language to last detected user language."""
+        from app.services.voice.filler import cancel_thinking_filler
+        cancel_thinking_filler(self)
+
         # Lazily ensure TTS language already set (in case on_user_turn_completed
         # hasn't run yet for greeting path)
         if self._last_user_lang:
@@ -485,6 +488,18 @@ class VoiceAssistant(Agent):
         """Asynchronous safety net: disconnects call after the agent has had time to speak its closing goodbye."""
         try:
             await asyncio.sleep(delay)
+            # Await active speech completion so the farewell is never truncated mid-word
+            for _ in range(25):
+                speech = getattr(self.session, "current_speech", None)
+                if speech is not None:
+                    try:
+                        await speech
+                    except Exception:
+                        pass
+                    break
+                await asyncio.sleep(0.3)
+            # Brief buffer to let the final WebRTC packet flush across the network
+            await asyncio.sleep(0.8)
             await self._disconnect_call()
         except Exception:
             pass
@@ -536,19 +551,19 @@ class VoiceAssistant(Agent):
         # instruction and synthesis both match. Fallback hi-IN per owner pref.
         detected = self._detect_andStore_language(query or "")
         self._mirror_tts_language(detected)
-        # Inject explicit language directive for this turn so LLM follows even
-        # when STT transcript is romanized Hinglish.
-        if detected != "en-IN":
-            turn_ctx.add_message(
-                role="system",
-                content=f"[LANG: user is speaking {detected}. Reply in {detected} matching user's script (Devanagari if they used Devanagari, Roman if they used Roman). Use respectful 'aap' form for Hindi.]",
-            )
-        else:
-            # English still gets code-switch hint for possible Hinglish next turn
-            turn_ctx.add_message(
-                role="system",
-                content="[LANG: user is speaking English. If they switch to Hindi/Hinglish next, mirror that language immediately.]",
-            )
+        # Only inject turn directive when language actually changes to preserve speculative preemptive generation!
+        if detected != getattr(self, "_last_applied_lang", None):
+            self._last_applied_lang = detected
+            if detected != "en-IN":
+                turn_ctx.add_message(
+                    role="system",
+                    content=f"[LANG: user is speaking {detected}. Reply in {detected} matching user's script (Devanagari if they used Devanagari, Roman if they used Roman). Use respectful 'aap' form for Hindi.]",
+                )
+            else:
+                turn_ctx.add_message(
+                    role="system",
+                    content="[LANG: user is speaking English. If they switch to Hindi/Hinglish next, mirror that language immediately.]",
+                )
 
         # Goodbye / end-of-conversation: ONLY on explicit farewell (bye/goodbye/alvida).
         # "that's it / that's all / done / bas" alone or after a request NEVER ends the call.

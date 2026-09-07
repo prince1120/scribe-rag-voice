@@ -2,6 +2,7 @@
 /* Design tokens and styles */
 @import "./styles/design-system.css";
 @import "./styles/chat.css";
+@import "./styles/callscreen.css";
 @import "./styles/owner.css";
 @import "./styles/responsive-polish.css";
 
@@ -37,6 +38,9 @@
   --claude-orange-soft: var(--claude-accent-soft);
 }
 
+html {
+  scroll-behavior: smooth;
+}
 html, body {
   background: var(--claude-bg);
   color: var(--claude-text);
@@ -45,9 +49,9 @@ html, body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   /* Safety net: an unanchored absolutely-positioned element or a fixed-width
-     child anywhere in the app can otherwise widen the document and trigger
-     a page-level horizontal scrollbar. Individual scrollable rows (chip
-     lists, tables, code blocks) opt back in with their own overflow-x-auto. */
+      child anywhere in the app can otherwise widen the document and trigger
+      a page-level horizontal scrollbar. Individual scrollable rows (chip
+      lists, tables, code blocks) opt back in with their own overflow-x-auto. */
   overflow-x: hidden;
 }
 
@@ -368,3 +372,117 @@ input[type="range"].custom-range-slider::-moz-range-thumb:hover {
 
 .gate-button:hover:not(:disabled) { background: var(--claude-accent-hover); }
 .gate-button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* =========================================================================
+     High-End Big Tech & Editorial Aesthetics (taste-skill + high-end-visual)
+     ========================================================================= */
+
+  /* Editorial Serif Display with tight kerning & high editorial contrast */
+  .font-editorial {
+    font-family: "Newsreader", "Iowan Old Style", "Apple Garamond", "Baskerville", "Times New Roman", "Droid Serif", serif;
+    letter-spacing: -0.025em;
+    font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+  }
+
+  /* Editorial subtle inline phrase highlight */
+  .editorial-highlight {
+    color: var(--claude-muted);
+    text-decoration: underline;
+    text-decoration-color: var(--claude-border-strong);
+    text-underline-offset: 6px;
+    text-decoration-thickness: 1.5px;
+    transition: color 0.25s ease, text-decoration-color 0.25s ease;
+  }
+  .editorial-highlight:hover {
+    color: var(--claude-accent);
+    text-decoration-color: var(--claude-accent);
+  }
+
+  /* Double-Bezel (Doppelrand) Architecture: Outer chassis + concentric inner core */
+  .double-bezel-outer {
+    background: #FAF8F2;
+    border: 1px solid var(--claude-border-strong);
+    padding: 0.5rem;
+    border-radius: 1.75rem;
+    box-shadow: 0 4px 20px -2px rgba(44, 43, 40, 0.05), 0 2px 6px -1px rgba(44, 43, 40, 0.03);
+    transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1), box-shadow 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  .double-bezel-inner {
+    background: var(--claude-surface);
+    border: 1px solid var(--claude-border);
+    border-radius: calc(1.75rem - 0.5rem);
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.9);
+  }
+
+  /* Floating Island Capsule Navbar */
+  .floating-island-nav {
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    background: rgba(250, 249, 245, 0.88);
+    border: 1px solid rgba(221, 217, 204, 0.9);
+    box-shadow: 0 8px 32px -4px rgba(44, 43, 40, 0.06), 0 2px 8px -2px rgba(44, 43, 40, 0.04);
+  }
+
+  /* Nested "Button-in-Button" icon tension */
+  .btn-nested {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    transition: transform 0.2s cubic-bezier(0.32, 0.72, 0, 1), background-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .btn-nested:hover .btn-nested-icon {
+    transform: translate(2px, -2px) scale(1.08);
+  }
+  .btn-nested:active {
+    transform: scale(0.98);
+  }
+  .btn-nested-icon {
+    transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  /* Live audio frequency waveform simulation bars */
+  @keyframes audioWaveBar {
+    0%, 100% { height: 6px; opacity: 0.5; }
+    50%      { height: 26px; opacity: 1; }
+  }
+  .wave-bar {
+    width: 3px;
+    border-radius: 9999px;
+    background: var(--claude-accent);
+    transform-origin: bottom;
+    animation: audioWaveBar 1.2s ease-in-out infinite;
+  }
+  .wave-bar:nth-child(1) { animation-delay: 0.05s; height: 10px; }
+  .wave-bar:nth-child(2) { animation-delay: 0.25s; height: 18px; }
+  .wave-bar:nth-child(3) { animation-delay: 0.1s;  height: 24px; }
+  .wave-bar:nth-child(4) { animation-delay: 0.4s;  height: 14px; }
+  .wave-bar:nth-child(5) { animation-delay: 0.15s; height: 22px; }
+  .wave-bar:nth-child(6) { animation-delay: 0.35s; height: 16px; }
+  .wave-bar:nth-child(7) { animation-delay: 0.08s; height: 26px; }
+  .wave-bar:nth-child(8) { animation-delay: 0.28s; height: 12px; }
+
+  /* Kinetic sound pulses */
+  @keyframes soundPulseRing {
+    0% { transform: scale(0.95); opacity: 0.8; }
+    50% { transform: scale(1.15); opacity: 0.3; }
+    100% { transform: scale(0.95); opacity: 0.8; }
+  }
+  .sound-pulse-ring {
+    animation: soundPulseRing 2.6s ease-in-out infinite;
+  }
+
+  /* Reveal on load / scroll transitions */
+  @keyframes editorialFadeUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .editorial-fade-up {
+    animation: editorialFadeUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }

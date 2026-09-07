@@ -498,6 +498,38 @@ export function VoiceCallModal({
         }
       );
 
+      // Real-time server signals (call termination, appointment booking events)
+      room.on(RoomEvent.DataReceived, (payload: Uint8Array) => {
+        try {
+          const str = new TextDecoder().decode(payload);
+          const data = JSON.parse(str);
+          if (data.type === "call_ended" || data.type === "end_call") {
+            teardown();
+            setState("idle");
+            return;
+          }
+          if (
+            data.type === "booking_confirmed" ||
+            data.type === "booking_rescheduled" ||
+            data.type === "booking_cancelled"
+          ) {
+            const title =
+              data.text ||
+              (data.type === "booking_confirmed"
+                ? "Appointment Booked"
+                : data.type === "booking_rescheduled"
+                ? "Appointment Rescheduled"
+                : "Appointment Cancelled");
+            notify(
+              `${title} ${data.date ? `for ${data.date}` : ""} ${data.time ? `at ${data.time}` : ""}`.trim(),
+              "info"
+            );
+          }
+        } catch {
+          /* ignore non-json data */
+        }
+      });
+
       room.on(RoomEvent.Disconnected, () => {
         // If the agent never responded and we didn't hang up on purpose, the
         // session likely failed server-side (bad key / service down). Name

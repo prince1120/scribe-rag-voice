@@ -97,10 +97,6 @@ def resolve_identity(
         except SessionError:
             pass
 
-    # In dev mode (no passcode configured), the local user is the owner
-    if not settings.APP_ACCESS_PASSCODE:
-        is_owner = True
-
     # 2. Check the contact session cookie if present
     if contact_cookie:
         try:
@@ -115,7 +111,18 @@ def resolve_identity(
         except SessionError:
             pass
 
-    # 3. If groq_key is provided directly by header, it operates as personal BYOK mode
+    # A verified session (owner or contact) always determines workspace tenancy.
+    # Request headers pay for the call when provided, but never re-route the session.
+    if is_owner or contact_id:
+        return Identity(
+            tenant_id=owner_tenant or OWNER_TENANT_ID,
+            is_owner=is_owner,
+            groq_key=groq_key or None,
+            sarvam_key=sarvam_key or None,
+            contact_id=contact_id,
+        )
+
+    # 3. If groq_key is provided directly by header without a session, it operates as personal BYOK mode
     if groq_key:
         return Identity(
             tenant_id=derive_tenant_id(groq_key, sarvam_key, client_id),
@@ -125,19 +132,18 @@ def resolve_identity(
             contact_id=None,
         )
 
-    if is_owner or contact_id:
-        return Identity(
-            tenant_id=owner_tenant or OWNER_TENANT_ID,
-            is_owner=is_owner,
-            contact_id=contact_id,
-        )
-
     # No passcode configured means local development: nobody could have logged
     # in, so requiring a session would make the app unusable. Production is
     # protected by refusing to start without SESSION_SECRET once a passcode is
     # set (see config.py) and by the startup warning in main.py.
     if not settings.APP_ACCESS_PASSCODE:
-        return Identity(tenant_id=OWNER_TENANT_ID, is_owner=True)
+        return Identity(
+            tenant_id=OWNER_TENANT_ID,
+            is_owner=True,
+            groq_key=groq_key or None,
+            sarvam_key=sarvam_key or None,
+            contact_id=None,
+        )
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

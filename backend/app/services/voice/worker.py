@@ -313,7 +313,12 @@ async def entrypoint(ctx: JobContext) -> None:
     ctx.add_shutdown_callback(_persist_transcript_on_worker)
     ctx.room.on("disconnected", lambda *_: asyncio.create_task(_persist_transcript_on_worker()))
 
-    _enforce_call_ceilings(session, params, ctx.room)
+    ceilings_task = _enforce_call_ceilings(session, params, ctx.room)
+    async def _cancel_ceilings(*_):
+        if ceilings_task and not ceilings_task.done():
+            ceilings_task.cancel()
+    ctx.add_shutdown_callback(_cancel_ceilings)
+    ctx.room.on("disconnected", lambda *_: asyncio.create_task(_cancel_ceilings()))
 
     if params.settings.VOICE_GREET_ON_CONNECT:
         greeting_text = params.settings.VOICE_GREETING_TEXT or "Hello! How can I help you today?"
@@ -340,7 +345,7 @@ async def entrypoint(ctx: JobContext) -> None:
             logger.warning("Error playing greeting: %s", e)
 
 
-def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> None:
+def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> Optional[asyncio.Task]:
     """End a call that has run too long, or gone quiet and stayed quiet.
 
     A call bills the owner's provider keys for as long as it is open, so an
@@ -348,15 +353,15 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> None
     caller who never hangs up and a caller who connects and walks away. Neither
     is caught by any per-turn limit, because neither involves any turns.
 
-    If 10s of continuous silence occurs after speech finishes, the agent
-    speaks a check-in reminder. If no answer is received in the next 10s, it
+    If 45s of continuous silence occurs after speech finishes, the agent
+    speaks a check-in reminder. If no answer is received in the next 8s, it
     speaks a closing message, sends an end_call signal to the client, and
     gracefully disconnects the room.
     """
     max_seconds = params.settings.VOICE_MAX_CALL_SECONDS
     idle_seconds = params.settings.VOICE_IDLE_TIMEOUT_SECONDS
     if max_seconds <= 0 and idle_seconds <= 0:
-        return
+        return None
 
     room = room_or_name if hasattr(room_or_name, "name") else None
     room_name = getattr(room_or_name, "name", str(room_or_name))
@@ -378,11 +383,24 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> None
     except Exception:
         pass
 
+    def _caller_still_present() -> bool:
+        if room is None:
+            return False
+        if hasattr(room, "isconnected") and not room.isconnected():
+            return False
+        if hasattr(room, "remote_participants") and len(room.remote_participants) == 0:
+            return False
+        return True
+
     async def _watch() -> None:
         started = time.monotonic()
         nudged = False
         while True:
             await asyncio.sleep(0.5)
+            if not _caller_still_present():
+                logger.debug("[LIMIT %s] Caller left or room disconnected — stopping idle watcher", room_name)
+                return
+
             # If the assistant or user is currently speaking, keep resetting the idle timer
             if getattr(session, "current_speech", None) is not None:
                 last_activity = time.monotonic()
@@ -397,7 +415,9 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> None
 
             if idle_seconds > 0 and now - last_activity >= idle_seconds:
                 if not nudged:
-                    # 1. First stage: check in after 10s of continuous silence
+                    if not _caller_still_present():
+                        return
+                    # 1. First stage: check in after idle_seconds of continuous silence
                     nudged = True
                     logger.info(
                         "[LIMIT %s] %ds silent — asking if caller is there",
@@ -426,13 +446,15 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> None
                     answered = False
                     while time.monotonic() < deadline:
                         await asyncio.sleep(0.3)
+                        if not _caller_still_present():
+                            return
                         # If user started speaking or any activity registered
                         if getattr(session, "current_speech", None) is not None or last_activity > nudge_finished_at:
                             answered = True
                             break
 
                     if answered:
-                        # User spoke within 8s! Reset state completely so future 10s silences trigger again
+                        # User spoke within 8s! Reset state completely so future silences trigger again
                         logger.info("[LIMIT %s] Caller responded after nudge — resetting idle timer", room_name)
                         nudged = False
                         last_activity = time.monotonic()
@@ -444,6 +466,9 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> None
                         room_name,
                     )
                 break
+
+        if not _caller_still_present():
+            return
 
         try:
             # Spoken before hanging up
@@ -486,6 +511,7 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> None
     # job rather than outliving it.
     ctx_tasks.add(task)
     task.add_done_callback(ctx_tasks.discard)
+    return task
 
 
 def prewarm(proc) -> None:

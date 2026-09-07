@@ -11,7 +11,7 @@ Both this class and `app.config.Settings` read the same `.env` file — that's
 intentional, not duplication-by-accident: each process declares only the
 subset of keys it actually needs.
 """
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.services import prompt_rules
 
@@ -70,27 +70,15 @@ class VoiceSettings(BaseSettings):
     # the filler phrases, which are chosen in code from a fixed list the model
     # never sees.
     VOICE_LLM_TEMPERATURE: float = 0.3
-    # ~320 tokens is roughly 25 seconds of speech. That is the ceiling for a
-    # reply that ran long, not the target — the delivery rules ask for one to
-    # three sentences, and a turn that hits this number has already ignored
-    # them.
-    VOICE_LLM_MAX_TOKENS: int = 320
-    # The hard ceiling on whatever the caller or the owner asked for. Chat's
-    # slider goes to 4000; a spoken reply that long is unlistenable and
-    # expensive, so it is clamped rather than trusted.
-    #
-    # Two ceilings, because the owner's delivery-rules toggle decides who is
-    # responsible for length. With the rules on we asked for one to three
-    # sentences, so the backstop sits close to that — a cap only does work once
-    # the prompt has already failed, and the models fast enough for voice are
-    # exactly the ones that ignore a length instruction. ~200 tokens is about
-    # fifteen seconds, already a long conversational turn.
-    #
-    # With the rules off the owner has taken length into their own prompt, and
-    # clamping them to our number would make the toggle a lie. They still get a
-    # ceiling — this is a phone call — just a far looser one.
-    VOICE_LLM_STYLED_MAX_TOKENS_CAP: int = 200
-    VOICE_LLM_MAX_TOKENS_CAP: int = 450
+    # ~500 tokens is ~35-40 seconds of speech — plenty for a complete grounded answer with phone/email
+    # without mid-sentence cut. Delivery rules still ask for 1-3 sentences, but we no longer
+    # truncate an answer that needs to deliver contact details or experience.
+    VOICE_LLM_MAX_TOKENS: int = 500
+    # Styled cap lifted from 200 → 350 so a verified answer (e.g. "Amit has more than
+    # four years... in Android development. Phone is +91...") can complete in one turn.
+    # 350 is ~25s, still conversational, but not cutting at "experience".
+    VOICE_LLM_STYLED_MAX_TOKENS_CAP: int = 350
+    VOICE_LLM_MAX_TOKENS_CAP: int = 700
 
     # Generic OpenAI-compatible LLM (any provider: Mistral, OpenRouter, a
     # self-hosted server, ...). Set per-session from the token request's
@@ -152,7 +140,8 @@ class VoiceSettings(BaseSettings):
     # that catches a line left open: a caller who connects and walks away costs
     # exactly as much as one who is talking, and never hangs up. The watcher
     # asks "are you there?" at this mark and ends 10s later if still nothing.
-    VOICE_IDLE_TIMEOUT_SECONDS: int = 10
+    VOICE_IDLE_TIMEOUT_SECONDS: int = 45
+    LIMITS_ENABLED: bool = True
 
     # ---- Latency / turn-taking tuning ---------------------------------
     # These make the agent feel like a real voice assistant: it responds
@@ -160,31 +149,23 @@ class VoiceSettings(BaseSettings):
     # cleanly. All are overridable via .env.
 
     # Silence (s) after you stop before the agent takes its turn.
-    # Tuned to ~250ms-300ms for snappy STT finalization and minimal turnaround delay.
-    VOICE_ENDPOINTING_MIN_DELAY: float = 0.25
-    # The hard stop for an *ambiguous* ending. With semantic turn detection on
-    # (see below) this slack can be tighter because an incomplete thought keeps
-    # listening semantically — lowered 0.75 -> 0.60 for faster Hindi verb-final
-    # handling. Falls back to 0.75 worth when semantic is off/missing.
-    VOICE_ENDPOINTING_MAX_DELAY: float = 0.60
+    # Tuned to ~350ms for snappy STT finalization and natural human breathing pauses.
+    VOICE_ENDPOINTING_MIN_DELAY: float = 0.35
+    # The hard stop for an ambiguous ending.
+    VOICE_ENDPOINTING_MAX_DELAY: float = 0.85
     # "dynamic" adapts the wait to the caller's rhythm, or "fixed" enforces exact min_delay.
     VOICE_ENDPOINTING_MODE: str = "dynamic"
 
-    # Use a local semantic end-of-turn model to decide whether the caller
-    # finished a *thought*, rather than inferring it from silence alone.
-    # True for every language (MultilingualModel covers hi-IN/en-IN + all
-    # SUPPORTED_STT_LANGUAGES) — Hindi verb-final "करना चाहता हूँ" and Hinglish
-    # "ki..." pauses no longer split turns. Falls back to timer if model/files
-    # missing, so safe to enable. Requires `pip install livekit-plugins-turn-detector`
-    # and `python -m app.services.voice.worker download-files` (~2.26GB).
-    VOICE_SEMANTIC_TURN_DETECTION: bool = True
+    # Semantic turn detector: disabled by default on CPU for ultra-low latency (~1.4s response time).
+    # Can be enabled via .env if a dedicated GPU or fast inference environment is present.
+    VOICE_SEMANTIC_TURN_DETECTION: bool = False
     VOICE_PREEMPTIVE_TTS: bool = False
 
     VOICE_INTERRUPTION_MODE: str = "vad"
     VOICE_INTERRUPTION_MIN_WORDS: int = 0
     VOICE_INTERRUPTION_MIN_DURATION: float = 0.25
     VOICE_RESUME_FALSE_INTERRUPTION: bool = True
-    VOICE_VAD_MIN_SILENCE: float = 0.25
+    VOICE_VAD_MIN_SILENCE: float = 0.30
     # Greet the user out loud the moment the call connects, like a real
     # voice agent — avoids the awkward "is this working?" silence.
     VOICE_GREET_ON_CONNECT: bool = True
@@ -208,17 +189,18 @@ class VoiceSettings(BaseSettings):
         "naturally using the full conversation so far."
     )
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-        # The worker's .env is shared with the API server's, which declares
-        # many keys this class doesn't need (Qdrant, Redis, CORS, ...) —
-        # ignore rather than reject them, unlike app.config.Settings which
-        # owns that file and should stay strict.
-        extra = "ignore"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        extra="ignore",
+    )
 
 
 voice_settings = VoiceSettings()
+
+if not voice_settings.LIMITS_ENABLED:
+    voice_settings.VOICE_MAX_CALL_SECONDS = 0
+    voice_settings.VOICE_IDLE_TIMEOUT_SECONDS = 0
 
 
 # Voices the installed Sarvam plugin (bulbul:v3) actually accepts — the token

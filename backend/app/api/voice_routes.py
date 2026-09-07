@@ -422,9 +422,9 @@ async def create_voice_token(
         # Voice, greeting and language are configuration the owner set and the
         # caller hears, so they come from the agent rather than the request.
         # Taking them from the body would let a caller pick a different voice
-        # than the business chose.
+        agent_voice = agent.voice_id if (agent.voice_id and agent.voice_id in SUPPORTED_TTS_VOICE_IDS) else "shreya"
         agent_overrides = {
-            "tts_speaker": agent.voice_id,
+            "tts_speaker": agent_voice,
             "stt_language": agent.language or "unknown",
             "greet_on_connect": bool((agent.greeting or "").strip()),
         }

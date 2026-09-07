@@ -151,7 +151,8 @@ export function CallScreen({ name }: { name?: string }) {
         })),
         duration_seconds: secondsRef.current,
       });
-      navigator.sendBeacon?.(`/api/v1/contacts/t/${token}/session`, body);
+      const blob = new Blob([body], { type: "application/json" });
+      navigator.sendBeacon?.(`/api/v1/contacts/t/${token}/session`, blob);
     } catch {
       /* ignore beacon failure */
     }
