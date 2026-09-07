@@ -133,6 +133,13 @@ class VoiceSettings(BaseSettings):
     VOICE_TTS_PACE: float = 0.92
     VOICE_TTS_TEMPERATURE: float = 0.75
 
+    # Sliding-window clause chunking for streaming TTS:
+    # First chunk threshold is small (24 chars) to start audio synthesis immediately (low TTFB),
+    # while subsequent chunks threshold (48 chars) preserves natural prosody and intonation.
+    VOICE_TTS_FIRST_CHUNK_MIN_CHARS: int = 24
+    VOICE_TTS_SUBSEQUENT_CHUNK_MIN_CHARS: int = 48
+    VOICE_TTS_CHUNK_MAX_CHARS: int = 140
+
     # Hard ceiling: no session longer than 15 minutes (900s). One live at a time
     # still bills owner's quota, so this is the global backstop for cost.
     VOICE_MAX_CALL_SECONDS: int = 900
@@ -149,10 +156,10 @@ class VoiceSettings(BaseSettings):
     # cleanly. All are overridable via .env.
 
     # Silence (s) after you stop before the agent takes its turn.
-    # Tuned to ~350ms for snappy STT finalization and natural human breathing pauses.
-    VOICE_ENDPOINTING_MIN_DELAY: float = 0.35
+    # Tuned to ~280ms for snappy STT finalization and natural human breathing pauses.
+    VOICE_ENDPOINTING_MIN_DELAY: float = 0.28
     # The hard stop for an ambiguous ending.
-    VOICE_ENDPOINTING_MAX_DELAY: float = 0.85
+    VOICE_ENDPOINTING_MAX_DELAY: float = 0.70
     # "dynamic" adapts the wait to the caller's rhythm, or "fixed" enforces exact min_delay.
     VOICE_ENDPOINTING_MODE: str = "dynamic"
 
@@ -161,11 +168,11 @@ class VoiceSettings(BaseSettings):
     VOICE_SEMANTIC_TURN_DETECTION: bool = False
     VOICE_PREEMPTIVE_TTS: bool = False
 
-    VOICE_INTERRUPTION_MODE: str = "vad"
-    VOICE_INTERRUPTION_MIN_WORDS: int = 0
-    VOICE_INTERRUPTION_MIN_DURATION: float = 0.25
-    VOICE_RESUME_FALSE_INTERRUPTION: bool = True
-    VOICE_VAD_MIN_SILENCE: float = 0.30
+    VOICE_INTERRUPTION_MODE: str = "adaptive"
+    VOICE_INTERRUPTION_MIN_WORDS: int = 1
+    VOICE_INTERRUPTION_MIN_DURATION: float = 0.20
+    VOICE_RESUME_FALSE_INTERRUPTION: bool = False
+    VOICE_VAD_MIN_SILENCE: float = 0.25
     # Greet the user out loud the moment the call connects, like a real
     # voice agent — avoids the awkward "is this working?" silence.
     VOICE_GREET_ON_CONNECT: bool = True

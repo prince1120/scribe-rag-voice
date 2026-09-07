@@ -33,6 +33,8 @@ export const MIC_CAPTURE = {
   echoCancellation: true,
   noiseSuppression: true,
   autoGainControl: true,
+  channelCount: 1,
+  sampleRate: 48000,
 } as const;
 
 export interface NetworkWarning {

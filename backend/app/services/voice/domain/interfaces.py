@@ -23,3 +23,11 @@ from app.services.voice.config import VoiceSettings
 STTFactory = Callable[[VoiceSettings], stt.STT]
 TTSFactory = Callable[[VoiceSettings], tts.TTS]
 LLMFactory = Callable[[VoiceSettings], llm.LLM]
+
+
+class VoiceDataPacket:
+    """Standardized protocol packet payloads exchanged over the LiveKit WebRTC DataChannel."""
+    INTERRUPT = b'{"type":"interrupt"}'
+    CALL_ENDED_IDLE = b'{"type":"call_ended","reason":"idle"}'
+    CALL_ENDED_GOODBYE = b'{"type":"call_ended","reason":"goodbye"}'
+

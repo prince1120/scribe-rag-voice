@@ -8,6 +8,7 @@ import { NetworkBanner } from "./components/voice/NetworkBanner";
 import { MIC_CAPTURE, useCallQuality } from "./components/voice/useCallQuality";
 import { useAudioDeviceSwitching } from "./components/voice/useAudioDeviceSwitching";
 import { personaForVoice } from "./components/voice/voicePersona";
+import { VOICE_DATA_PACKETS } from "./components/voice/voiceEvents";
 import type { RemoteTrack, RemoteAudioTrack, Participant, TranscriptionSegment } from "livekit-client";
 import { PhoneOff, Mic, MicOff, X, Loader2, AudioLines, Check, Pencil, Play, Square, BookOpen, SlidersHorizontal, Sparkles, Radio, Volume2 } from "lucide-react";
 import type { ToastType } from "./Toast";
@@ -203,6 +204,7 @@ export function VoiceCallModal({
   const glowRef = useRef<HTMLDivElement>(null);
   const localAnalyserRef = useRef<Analyser | null>(null);
   const agentAnalyserRef = useRef<Analyser | null>(null);
+  const agentAudioElsRef = useRef<HTMLAudioElement[]>([]);
   const rafRef = useRef<number>(0);
   const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gotAgentResponseRef = useRef(false);
@@ -250,6 +252,14 @@ export function VoiceCallModal({
     agentAnalyserRef.current?.cleanup().catch(() => { });
     localAnalyserRef.current = null;
     agentAnalyserRef.current = null;
+    agentAudioElsRef.current.forEach((el) => {
+      try {
+        el.pause();
+        el.currentTime = 0;
+        el.remove();
+      } catch {}
+    });
+    agentAudioElsRef.current = [];
     roomRef.current?.disconnect();
     roomRef.current = null;
     setActiveRoom(null);
@@ -436,6 +446,7 @@ export function VoiceCallModal({
         el.autoplay = true;
         el.style.display = "none";
         document.body.appendChild(el);
+        agentAudioElsRef.current.push(el);
         // Analyser on the agent's voice → drives the orb while it speaks.
         try {
           const analyser = createAudioAnalyser(track as RemoteAudioTrack, {
@@ -503,15 +514,27 @@ export function VoiceCallModal({
         try {
           const str = new TextDecoder().decode(payload);
           const data = JSON.parse(str);
-          if (data.type === "call_ended" || data.type === "end_call") {
+          if (data.type === VOICE_DATA_PACKETS.CALL_ENDED || data.type === VOICE_DATA_PACKETS.END_CALL) {
             teardown();
             setState("idle");
             return;
           }
+          if (data.type === VOICE_DATA_PACKETS.INTERRUPT) {
+            // Instant hardware-level audio cutoff on user barge-in
+            agentAudioElsRef.current.forEach((el) => {
+              try {
+                el.pause();
+                el.currentTime = 0;
+              } catch {}
+            });
+            setActiveSpeaker("user");
+            setAgentState("listening");
+            return;
+          }
           if (
-            data.type === "booking_confirmed" ||
-            data.type === "booking_rescheduled" ||
-            data.type === "booking_cancelled"
+            data.type === VOICE_DATA_PACKETS.BOOKING_CONFIRMED ||
+            data.type === VOICE_DATA_PACKETS.BOOKING_RESCHEDULED ||
+            data.type === VOICE_DATA_PACKETS.BOOKING_CANCELLED
           ) {
             const title =
               data.text ||

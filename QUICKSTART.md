@@ -36,12 +36,14 @@ docker compose up -d qdrant redis
 ```
 No Docker? Use free cloud tiers instead and point `.env` at them: [Qdrant Cloud](https://cloud.qdrant.io), or skip Redis entirely (the app falls back to in-memory conversation context automatically).
 
-## 4. Start the backend
+## 4. Start the backend (One Command)
 
 ```powershell
+python run_backend.py
+# or
 .\start_backend.ps1
 ```
-This creates a venv, installs dependencies, and runs the API on `http://localhost:8000` (docs at `/docs`). If `LIVEKIT_URL` is set in `.env`, the voice worker also starts automatically in the background — nothing else to run for that.
+This single command checks requirements, handles Redis/Qdrant dependencies, frees any stale ports, and starts both the FastAPI backend and the auto-reloading LiveKit voice worker together (docs at `http://localhost:8000/docs`). Nothing else to run separately for voice.
 
 ## 5. Start the frontend (new terminal)
 

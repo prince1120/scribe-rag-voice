@@ -110,15 +110,25 @@ if ($redisUp) {
 # killing the worker mid-call each time you touch a file would be worse than
 # the problem it solves. Starting the backend is a thing you do on purpose.
 Write-Host "Clearing any stale voice worker..." -ForegroundColor Yellow
-$stale = Get-CimInstance Win32_Process -Filter "Name like '%python%'" |
-    Where-Object { $_.CommandLine -like '*voice.worker*' }
+try {
+    $conn = Get-NetTCPConnection -LocalPort 8081 -State Listen -ErrorAction SilentlyContinue
+    if ($conn) {
+        $conn | ForEach-Object {
+            Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
+        }
+        Write-Host "Cleared stale process holding voice worker port 8081." -ForegroundColor Green
+    }
+} catch {}
+
+$stale = Get-CimInstance Win32_Process -Filter "Name like '%python%'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like '*voice.worker*' -or $_.CommandLine -like '*worker_reload*' }
 if ($stale) {
     $stale | ForEach-Object {
         try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {}
     }
     Write-Host "Stopped $($stale.Count) stale worker process(es)." -ForegroundColor Green
 } else {
-    Write-Host "None running." -ForegroundColor Green
+    Write-Host "No stale worker processes found." -ForegroundColor Green
 }
 
 # Start the backend

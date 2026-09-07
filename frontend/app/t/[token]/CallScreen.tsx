@@ -16,6 +16,7 @@ import {
 import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
 import { MIC_CAPTURE, useAgentStall } from "../../components/voice/useCallQuality";
 import { SignalPill } from "../../components/voice/SignalPill";
+import { VOICE_DATA_PACKETS } from "../../components/voice/voiceEvents";
 import {
   Check,
   CheckCircle2,
@@ -248,11 +249,23 @@ export function CallScreen({ name }: { name?: string }) {
         try {
           const str = new TextDecoder().decode(payload);
           const data = JSON.parse(str);
-          if (data.type === "call_ended" || data.type === "end_call") {
+          if (data.type === VOICE_DATA_PACKETS.CALL_ENDED || data.type === VOICE_DATA_PACKETS.END_CALL) {
             setPhase("ended");
             void persistSession();
             teardown();
             try { room.disconnect(); } catch {}
+            return;
+          }
+          if (data.type === VOICE_DATA_PACKETS.INTERRUPT) {
+            // Instant hardware-level audio cutoff on user barge-in
+            audioElsRef.current.forEach((el) => {
+              try {
+                el.pause();
+                el.currentTime = 0;
+              } catch {}
+            });
+            setAgentSpeaking(false);
+            setWaitingForAgent(false);
             return;
           }
           if (data.type === "booking_confirmed" || data.type === "booking_rescheduled" || data.type === "booking_cancelled") {

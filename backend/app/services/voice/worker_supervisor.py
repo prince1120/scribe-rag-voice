@@ -164,6 +164,45 @@ def _spawn_worker() -> None:
     logger.info("Spawned voice worker pid=%s (logs: %s)", _spawned.pid, _LOG_PATH)
 
 
+def _free_stale_port(port: int) -> bool:
+    """Terminate any stale process holding the worker health port so a fresh worker can bind it."""
+    import os
+    import subprocess
+    killed = False
+    if sys.platform == "win32":
+        try:
+            out = subprocess.check_output(["netstat", "-ano", "-p", "tcp"], text=True, errors="replace")
+            pids = set()
+            for line in out.splitlines():
+                parts = line.strip().split()
+                if len(parts) >= 5 and parts[3] == "LISTENING":
+                    if parts[1].endswith(f":{port}"):
+                        try:
+                            pid = int(parts[4])
+                            if pid > 0 and pid != os.getpid():
+                                pids.add(pid)
+                        except ValueError:
+                            pass
+            for pid in pids:
+                logger.warning("Auto-clearing stale process %d occupying voice worker port %d", pid, port)
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+                killed = True
+        except Exception as exc:
+            logger.warning("Failed to auto-kill stale process on port %d: %s", port, exc)
+    else:
+        try:
+            out = subprocess.check_output(["lsof", "-t", f"-i:{port}"], text=True, errors="replace")
+            for line in out.strip().split():
+                pid = int(line.strip())
+                if pid > 0 and pid != os.getpid():
+                    logger.warning("Auto-clearing stale process %d occupying voice worker port %d", pid, port)
+                    os.kill(pid, 9)
+                    killed = True
+        except Exception as exc:
+            logger.warning("Failed to auto-kill stale process on port %d: %s", port, exc)
+    return killed
+
+
 async def ensure_worker_running(wait_for_ready_s: float = 8.0) -> None:
     """Best-effort: if the worker isn't answering its health check, start
     one and wait briefly for it to finish registering with LiveKit before
@@ -187,22 +226,22 @@ async def ensure_worker_running(wait_for_ready_s: float = 8.0) -> None:
         if await _worker_alive(trust_cache=False):
             return
 
-        # The worker is not answering 200, but something holds its port. A new
-        # process cannot bind it, so spawning would produce a process that dies
-        # on startup and changes nothing — which is exactly the loop that
-        # accumulated ten of them. Say what is wrong and stop.
+        # If something holds the port but is unresponsive, auto-clear the stale process
         if await asyncio.to_thread(_port_is_occupied):
-            logger.error(
-                "A process already holds port %d but its health check is not "
-                "passing, so it is not registered with LiveKit — calls will "
-                "connect to a room no agent joins. A new worker cannot start "
-                "while that port is held, so none is being spawned. Stop the "
-                "stale process and it will be restarted automatically "
-                "(Windows: Get-NetTCPConnection -LocalPort %d -State Listen, "
-                "then Stop-Process -Id <pid> -Force). Worker log: %s",
-                _health_port(), _health_port(), _LOG_PATH,
+            logger.warning(
+                "Voice worker port %d is occupied by an unresponsive process; auto-clearing stale process...",
+                _health_port(),
             )
-            return
+            await asyncio.to_thread(_free_stale_port, _health_port())
+            await asyncio.sleep(0.5)
+
+            if await asyncio.to_thread(_port_is_occupied):
+                logger.error(
+                    "Port %d remains occupied after clearing attempt. Worker log: %s",
+                    _health_port(),
+                    _LOG_PATH,
+                )
+                return
 
         # A previous spawn that is still running gets time to finish coming up
         # rather than being stacked on top of.

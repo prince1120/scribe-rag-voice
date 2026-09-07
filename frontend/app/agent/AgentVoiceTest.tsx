@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, Track, createAudioAnalyser } from "livekit-client";
 import { NetworkBanner } from "../components/voice/NetworkBanner";
 import { MIC_CAPTURE, useCallQuality } from "../components/voice/useCallQuality";
+import { VOICE_DATA_PACKETS } from "../components/voice/voiceEvents";
 import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
 
 type Phase = "idle" | "connecting" | "live" | "ended" | "error";
@@ -99,6 +100,22 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
         });
         (analyser.analyser.context as AudioContext).resume?.().catch(() => {});
         analyserRef.current = analyser;
+      });
+
+      room.on(RoomEvent.DataReceived, (payload: Uint8Array) => {
+        try {
+          const str = new TextDecoder().decode(payload);
+          const data = JSON.parse(str);
+          if (data.type === VOICE_DATA_PACKETS.INTERRUPT) {
+            audioElsRef.current.forEach((el) => {
+              try {
+                el.pause();
+                el.currentTime = 0;
+              } catch {}
+            });
+            setSpeaking(false);
+          }
+        } catch {}
       });
 
       room.on(RoomEvent.Disconnected, () => { setPhase("ended"); teardown(); });

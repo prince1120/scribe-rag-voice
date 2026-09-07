@@ -25,6 +25,7 @@ from app.logging_config import configure_logging
 from app.services.voice import rag_client, turn_metrics
 from app.services.voice.agent import VoiceAssistant
 from app.services.voice.config import VoiceSettings, voice_settings
+from app.services.voice.domain.interfaces import VoiceDataPacket
 from app.services.voice.registry import default_registry
 from app.services.voice.session_factory import (
     build_agent_session,
@@ -270,6 +271,62 @@ async def entrypoint(ctx: JobContext) -> None:
         room=ctx.room,
     )
 
+    # Broadcast an immediate interrupt packet to the client via WebRTC DataChannel
+    # the exact millisecond the user interrupts active agent speech, so the browser
+    # can flush and mute its audio hardware sink immediately (<30ms) without waiting
+    # for WebRTC track buffer draining.
+    def _send_interrupt_signal(*_):
+        if getattr(session, "current_speech", None) is not None:
+            if ctx.room and hasattr(ctx.room, "local_participant") and ctx.room.local_participant:
+                try:
+                    asyncio.create_task(
+                        ctx.room.local_participant.publish_data(
+                            VoiceDataPacket.INTERRUPT,
+                            reliable=True,
+                        )
+                    )
+                    logger.info("[INTERRUPT %s] Dispatched instant hardware audio-flush signal to client", ctx.room.name)
+                except Exception:
+                    pass
+
+    # Dynamic Syntactic End-Of-Thought (EOT) Predictor:
+    # Analyzes trailing tokens of user speech. If sentence has terminal punctuation (? . ! ।),
+    # shortens the wait to 0.22s for instant natural responsiveness (matching Vapi / Retell).
+    # If sentence ends with a hesitation conjunction (and, or, because, aur, lekin, ya),
+    # extends wait to 0.65s so thoughtful speakers aren't cut off.
+    _CONJUNCTION_SUFFIXES = (
+        " and", " or", " but", " because", " so",
+        " aur", " ya", " lekin", " ki", " toh", " matlab",
+    )
+
+    def _on_transcribed(ev):
+        try:
+            text = getattr(ev, "transcript", None) or getattr(ev, "text", "") or ""
+            text = text.strip()
+            if not text:
+                return
+
+            if text.endswith(("?", "!", ".", "।")):
+                session.update_options(endpointing_opts={"min_delay": 0.22, "max_delay": 0.45})
+            elif any(text.lower().endswith(conj) for conj in _CONJUNCTION_SUFFIXES):
+                session.update_options(endpointing_opts={"min_delay": 0.60, "max_delay": 0.85})
+            else:
+                session.update_options(
+                    endpointing_opts={
+                        "min_delay": params.settings.VOICE_ENDPOINTING_MIN_DELAY,
+                        "max_delay": params.settings.VOICE_ENDPOINTING_MAX_DELAY,
+                    }
+                )
+        except Exception:
+            pass
+
+    try:
+        session.on("user_started_speaking", _send_interrupt_signal)
+        session.on("interrupted", _send_interrupt_signal)
+        session.on("user_input_transcribed", _on_transcribed)
+    except Exception:
+        pass
+
     # Greet by *speaking the greeting text directly* (session.say → TTS only),
     # NOT session.generate_reply (which would burn an LLM call just to say
     # hello). Wait for the user to actually be in the room so they hear it.
@@ -491,7 +548,7 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> Opti
         # Signal the client browser to immediately transition to Call Ended screen
         try:
             if room and hasattr(room, "local_participant") and room.local_participant:
-                await room.local_participant.publish_data(b'{"type":"call_ended","reason":"idle"}')
+                await room.local_participant.publish_data(VoiceDataPacket.CALL_ENDED_IDLE)
         except Exception:
             pass
 

@@ -18,13 +18,17 @@ from app.services.guardrails.injection_detector import is_prompt_injection
 from app.services.guardrails.prompt_wrapper import wrap_tool_data
 from app.services.voice import rag_client
 from app.services.voice.config import VoiceSettings
+from app.services.voice.domain.interfaces import VoiceDataPacket
 from app.services.voice.filler import (
     _RAG_FILLER_DELAY_S,
     pick_rag_filler,
     start_thinking_filler,
 )
 from app.services.voice.language import normalize_tts_lang
-from app.services.voice.speech_clean import strip_markdown_for_speech
+from app.services.voice.speech_clean import (
+    strip_markdown_for_speech,
+    stream_clause_chunks,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -271,13 +275,15 @@ class VoiceAssistant(Agent):
         # hasn't run yet for greeting path)
         if self._last_user_lang:
             self._mirror_tts_language(self._last_user_lang)
-        async def cleaned():
-            async for chunk in text:
-                out = strip_markdown_for_speech(chunk)
-                if out:
-                    yield out
 
-        async for frame in Agent.default.tts_node(self, cleaned(), model_settings):
+        chunks_stream = stream_clause_chunks(
+            text,
+            min_first_chunk_chars=self._settings.VOICE_TTS_FIRST_CHUNK_MIN_CHARS,
+            min_subsequent_chunk_chars=self._settings.VOICE_TTS_SUBSEQUENT_CHUNK_MIN_CHARS,
+            max_chunk_chars=self._settings.VOICE_TTS_CHUNK_MAX_CHARS,
+        )
+
+        async for frame in Agent.default.tts_node(self, chunks_stream, model_settings):
             yield frame
 
     def _start_thinking_filler(self) -> None:
@@ -458,7 +464,7 @@ class VoiceAssistant(Agent):
         if room:
             if hasattr(room, "local_participant") and room.local_participant:
                 try:
-                    await room.local_participant.publish_data(b'{"type":"call_ended","reason":"goodbye"}')
+                    await room.local_participant.publish_data(VoiceDataPacket.CALL_ENDED_GOODBYE)
                     logger.info("Published call_ended data packet to client.")
                 except Exception:
                     pass

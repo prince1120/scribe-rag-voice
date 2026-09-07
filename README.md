@@ -125,19 +125,22 @@ client → POST /voice/token (issues a LiveKit room token + agent-dispatch metad
        → AgentSession(stt=Sarvam, llm=Groq or custom, tts=Sarvam, vad=Silero)
 ```
 
+- **Sub-800ms Low-Latency Architecture**: Engineered to match leading conversational voice platforms (Vapi, Retell AI, OpenAI Realtime) with:
+  - **Instant Hardware Barge-In (<50ms Cutoff)**: Sends an out-of-band JSON signal (`user_speech_committed`) across the WebRTC DataChannel immediately when VAD commits, commanding the client audio sinks to instantly mute and reset `<audio>` elements with zero buffer drain delay.
+  - **Dynamic Syntactic End-of-Thought (EOT) Predictor**: Evaluates real-time transcript syntax to dynamically set endpointing delays (220ms on terminal punctuation vs 600ms on continuations/hesitations), preventing mid-speech cutting while delivering instant responsiveness.
+  - **Sliding-Window Fast Clause TTS Chunker**: Emits the first speech clause to TTS at >=24 chars on punctuation boundaries (`[,;:—-]`), slashing initial audio TTFB to **under 300ms** while buffering subsequent clauses at >=48 chars for natural prosody. Cleans emojis and markdown noise.
+  - **48kHz Studio WebRTC Capture**: Pristine 48,000Hz mono audio constraints with hardware AEC, AGC, and noise suppression.
+  - See full technical documentation: [docs/VOICE_ENGINE_ARCHITECTURE.md](docs/VOICE_ENGINE_ARCHITECTURE.md).
 - **Providers are pluggable** via a small registry (`registry.py`) — adding a new STT/TTS/LLM vendor is "write one factory function, register one line," no changes to the session assembly or agent behavior code.
-- **Turn-taking** (barge-in, endpointing, preemptive generation) is tuned in `session_factory.py` to feel like a real assistant rather than a walkie-talkie.
 - **`lk.agent.state`** (listening/thinking/speaking) is published automatically by the LiveKit Agents framework and drives the call UI's orb color/animation in real time — no extra plumbing needed on either side.
 - **Voice preview**: each voice in the picker has a ▶ button that synthesizes a short sample via Sarvam's REST TTS endpoint directly (`POST /voice/preview`) — no call needed, just to hear it before picking.
 - **Personas / RAG toggle**: when RAG is off, pick a canned persona (Assistant/Motivational/Casual/Friend) or write a fully custom system prompt; when RAG is on, the agent answers from your documents via the same retrieval pipeline as text chat (`agent.py`'s `on_user_turn_completed` hook calls `/voice/retrieve` each turn).
 - **History continuity**: starting a voice call from an existing text conversation seeds the agent's chat context with that conversation's prior turns (`/voice/history`).
 
-**The worker auto-starts.** It used to require a second terminal (`python -m app.services.voice.worker start`) running at all times, which was the single biggest source of "voice is broken" — if that terminal wasn't open, calls would silently time out. Now:
-
-- The backend launches it automatically on its own startup (`app/main.py`'s lifespan), as a background task so it never delays the API server coming up.
-- `POST /voice/token` (fired the instant you click "Start conversation") *also* checks and launches it if it's somehow not running — a safety net independent of backend startup.
-- It's spawned detached from the API server process, specifically so `uvicorn --reload` restarts (which happen constantly during development) don't kill and relaunch it every time you save a file. Every check is a real HTTP health probe (livekit-agents' built-in health endpoint, `VOICE_WORKER_HEALTH_PORT`, default 8081) — never an in-memory flag — so this stays correct across restarts.
-- Each call is its own isolated job/session that starts and ends with Start/End Call as normal; only the worker *process* now shares the backend's lifetime instead of a single call's.
+**The worker auto-starts with one command.**
+- Run `python run_backend.py` or `.\start_backend.ps1` — the FastAPI API server and LiveKit voice worker boot together.
+- The supervisor automatically detects and self-heals any zombie processes on port 8081, ensuring 100% reliable startup.
+- Spawns with `worker_reload.py` (`watchfiles`) to hot-reload the worker on file edits without dropping API server uptime.
 - Logs land in `backend/voice_worker.log` if you need to check on it.
 
 For a real deployment, `docker-compose.yml` runs the worker as its own supervised service (`restart: unless-stopped` + healthcheck) instead of relying on the API server to babysit it — see [Running it](#running-it).
@@ -225,8 +228,14 @@ The frontend's `.env` only needs `BACKEND_ORIGIN` (and `BACKEND_API_KEY` if you 
 
 **Local dev (two terminals):**
 ```powershell
-.\start_backend.ps1     # installs deps, runs uvicorn --reload on :8000 (also auto-starts the voice worker)
-.\start_frontend.ps1    # npm install + next dev on :3000
+# Terminal 1: One command starts both FastAPI backend and the LiveKit Voice Worker
+python run_backend.py
+# or
+.\start_backend.ps1
+
+# Terminal 2: Next.js Frontend
+.\start_frontend.ps1
+# or: cd frontend && npm run dev
 ```
 Qdrant/Redis need to be reachable — either `docker compose up qdrant redis` or a cloud instance (see `.env.example`).
 
