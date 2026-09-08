@@ -14,7 +14,7 @@ import {
   createAudioAnalyser,
 } from "livekit-client";
 import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
-import { MIC_CAPTURE, useAgentStall } from "../../components/voice/useCallQuality";
+import { MIC_CAPTURE, useAgentStall, VOICE_ROOM_OPTIONS } from "../../components/voice/useCallQuality";
 import { SignalPill } from "../../components/voice/SignalPill";
 import { VOICE_DATA_PACKETS } from "../../components/voice/voiceEvents";
 import {
@@ -59,6 +59,7 @@ export function CallScreen({ name }: { name?: string }) {
   const [seconds, setSeconds] = useState(0);
   const [agentSpeaking, setAgentSpeaking] = useState(false);
   const [waitingForAgent, setWaitingForAgent] = useState(false);
+  const [agentIssue, setAgentIssue] = useState<"rate_limited" | "provider_busy" | "">("");
   const [agentHasSpoken, setAgentHasSpoken] = useState(false);
   const [quality, setQuality] = useState<ConnectionQuality>(
     ConnectionQuality.Excellent,
@@ -69,6 +70,9 @@ export function CallScreen({ name }: { name?: string }) {
   const [showMobileDrawer, setShowMobileDrawer] = useState(false);
   const [liveBooking, setLiveBooking] = useState<{ type: string; title: string; date?: string; time?: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const callIdRef = useRef<string | null>(null);
+
   const transcriptListRef = useRef<HTMLDivElement>(null);
 
   const roomRef = useRef<Room | null>(null);
@@ -79,8 +83,14 @@ export function CallScreen({ name }: { name?: string }) {
   const transcriptsRef = useRef<TranscriptMessage[]>([]);
   const secondsRef = useRef(0);
 
-  transcriptsRef.current = transcripts;
-  secondsRef.current = seconds;
+  // Keep disconnect persistence independent from React render timing.
+  useEffect(() => {
+    transcriptsRef.current = transcripts;
+  }, [transcripts]);
+
+  useEffect(() => {
+    secondsRef.current = seconds;
+  }, [seconds]);
 
   // Call duration counter
   useEffect(() => {
@@ -110,53 +120,36 @@ export function CallScreen({ name }: { name?: string }) {
   }, [transcripts, name]);
 
   const persistSession = useCallback(async () => {
-    const list = transcriptsRef.current;
-    if (list.length === 0) return;
+    if (!callIdRef.current) return;
+    const currentCall = callIdRef.current;
+    setSaveState("saving");
     try {
-      const pathSegments = window.location.pathname.split("/");
-      const token = pathSegments[pathSegments.length - 1];
-      if (!token) return;
-
-      await fetch(`/api/v1/contacts/t/${token}/session`, {
+      const res = await fetch("/api/v1/voice/record_session", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          channel: "voice",
-          messages: list.map((m) => ({
-            role: m.role,
-            content: m.text,
-            time: m.time,
-          })),
+          call_id: callIdRef.current,
+          messages: transcriptsRef.current.filter(m => m.isFinal && m.text.trim()).map(m => ({ role: m.role, content: m.text })),
           duration_seconds: secondsRef.current,
         }),
       });
+      if (!res.ok) throw new Error("Could not confirm the saved transcript.");
+      if (callIdRef.current === currentCall) setSaveState("saved");
     } catch {
-      /* ignore persist failure */
+      if (callIdRef.current === currentCall) setSaveState("error");
     }
   }, []);
 
   const persistBeacon = useCallback(() => {
-    const list = transcriptsRef.current;
-    if (list.length === 0) return;
-    try {
-      const pathSegments = window.location.pathname.split("/");
-      const token = pathSegments[pathSegments.length - 1];
-      if (!token) return;
-
-      const body = JSON.stringify({
-        channel: "voice",
-        messages: list.map((m) => ({
-          role: m.role,
-          content: m.text,
-          time: m.time,
-        })),
-        duration_seconds: secondsRef.current,
-      });
-      const blob = new Blob([body], { type: "application/json" });
-      navigator.sendBeacon?.(`/api/v1/contacts/t/${token}/session`, blob);
-    } catch {
-      /* ignore beacon failure */
-    }
+    if (!callIdRef.current) return;
+    const body = JSON.stringify({
+      call_id: callIdRef.current,
+      messages: transcriptsRef.current.filter(m => m.isFinal && m.text.trim()).map(m => ({ role: m.role, content: m.text })),
+      duration_seconds: secondsRef.current,
+    });
+    const blob = new Blob([body], { type: "application/json" });
+    if (blob.size < 60000) navigator.sendBeacon?.("/api/v1/voice/record_session", blob);
   }, []);
 
   const teardown = useCallback(() => {
@@ -171,6 +164,9 @@ export function CallScreen({ name }: { name?: string }) {
   useEffect(() => teardown, [teardown]);
 
   const start = useCallback(async () => {
+    callIdRef.current = null;
+    setSaveState("idle");
+    setLiveBooking(null);
     setError("");
     setSeconds(0);
     setTranscripts([]);
@@ -197,8 +193,9 @@ export function CallScreen({ name }: { name?: string }) {
         throw new Error(body?.detail || "Could not start the call.");
       }
 
-      const { token, url } = await response.json();
-      const room = new Room({ adaptiveStream: true, dynacast: true });
+      const { token, url, call_id } = await response.json();
+      callIdRef.current = call_id || null;
+      const room = new Room(VOICE_ROOM_OPTIONS);
       roomRef.current = room;
 
       room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
@@ -225,8 +222,12 @@ export function CallScreen({ name }: { name?: string }) {
             setAgentSpeaking(true);
             setAgentHasSpoken(true);
             setWaitingForAgent(false);
-          } else {
+          } else if (seg.final) {
+            // Only start the response timer once STT has finalized an
+            // utterance. Starting it for interim text creates a false "No
+            // response" warning while the caller is still talking.
             setWaitingForAgent(true);
+            setAgentIssue("");
           }
 
           setTranscripts((prev) => {
@@ -268,14 +269,20 @@ export function CallScreen({ name }: { name?: string }) {
             setWaitingForAgent(false);
             return;
           }
-          if (data.type === "booking_confirmed" || data.type === "booking_rescheduled" || data.type === "booking_cancelled") {
+          if (data.type === VOICE_DATA_PACKETS.AGENT_UNAVAILABLE) {
+            setWaitingForAgent(false);
+            setAgentSpeaking(false);
+            setAgentIssue(data.reason === "rate_limited" ? "rate_limited" : "provider_busy");
+            return;
+          }
+          if (data.type === "booking_pending" || data.type === "booking_confirmed" || data.type === "booking_rescheduled" || data.type === "booking_cancelled" || data.type === "booking_failed") {
             setLiveBooking({
               type: data.type,
-              title: data.text || (data.type === "booking_confirmed" ? "Appointment Booked" : data.type === "booking_rescheduled" ? "Appointment Rescheduled" : "Appointment Cancelled"),
+              title: data.text || (data.type === "booking_pending" ? "Confirming appointment…" : data.type === "booking_confirmed" ? "Appointment booked" : data.type === "booking_rescheduled" ? "Appointment rescheduled" : data.type === "booking_cancelled" ? "Appointment cancelled" : "Booking could not be confirmed"),
               date: data.date,
               time: data.time,
             });
-            setTimeout(() => setLiveBooking(null), 8000);
+            setTimeout(() => setLiveBooking(null), data.type === "booking_pending" ? 15000 : 8000);
           }
           if (data.text) {
             const role = data.role === "user" ? "user" : "assistant";
@@ -290,6 +297,7 @@ export function CallScreen({ name }: { name?: string }) {
                 isFinal: true,
               },
             ]);
+            if (role === "assistant") setAgentIssue("");
           }
         } catch {
           /* ignore */
@@ -403,7 +411,11 @@ export function CallScreen({ name }: { name?: string }) {
       ? { text: `Ending in ${900 - seconds}s — wrap up`, detail: "" }
       : null;
   const networkWarning =
-    phase === "live" && quality === ConnectionQuality.Lost
+    phase === "live" && agentIssue
+      ? agentIssue === "rate_limited"
+        ? { text: "Assistant is temporarily busy", detail: "Please try your question again in a moment." }
+        : { text: "Assistant is reconnecting", detail: "Please try your question again in a moment." }
+      : phase === "live" && quality === ConnectionQuality.Lost
       ? { text: "Reconnecting…", detail: "Your connection dropped." }
       : phase === "live" && quality === ConnectionQuality.Poor
       ? { text: "Weak network", detail: "Audio may break up. Try moving closer to your router." }
@@ -516,7 +528,7 @@ export function CallScreen({ name }: { name?: string }) {
               </div>
 
               {liveBooking && (
-                <div className="flex items-center gap-2 py-1.5 px-3.5 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-bold shadow-xs">
+                <div className={`flex items-center gap-2 py-1.5 px-3.5 rounded-xl text-xs font-bold shadow-xs ${liveBooking.type === "booking_failed" ? "bg-rose-50 border border-rose-300 text-rose-800" : liveBooking.type === "booking_pending" ? "bg-amber-50 border border-amber-300 text-amber-800" : "bg-emerald-50 border border-emerald-300 text-emerald-800"}`}>
                   <span>✓</span>
                   <span>{liveBooking.title}</span>
                 </div>
@@ -673,6 +685,8 @@ export function CallScreen({ name }: { name?: string }) {
             </div>
 
             <div className="recap-content-stream">
+              <p role="status" className="business-muted">{saveState === "saved" ? "Your conversation has been saved." : saveState === "saving" ? "Saving your conversation…" : saveState === "error" ? "We could not confirm the saved transcript. Please retry." : "Call ended."}</p>
+              {saveState === "error" && <button type="button" className="business-button secondary" onClick={() => void persistSession()}>Retry saving</button>}
               {transcripts.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center p-8 text-[var(--claude-muted)] text-xs">
                   <Volume2 size={24} className="mb-2 opacity-40" />

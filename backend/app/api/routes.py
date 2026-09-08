@@ -187,8 +187,14 @@ async def _chat_overrides(identity: Identity, x_user_groq_key, x_custom_llm_base
         from app.services import calendar_service as cal
         svcs = await cal.list_services(identity.tenant_id)
         if svcs:
-            lines = [f"- {s.name} ({s.duration_mins} mins)" for s in svcs]
-            cal_summary = "Active bookable services:\n" + "\n".join(lines) + "\nFor appointments, ask for preferred date and time."
+            lines = []
+            for s in svcs:
+                s_name = getattr(s, "name", None) or (s.get("name") if isinstance(s, dict) else "")
+                s_dur = getattr(s, "duration_mins", None) or (s.get("duration_mins") if isinstance(s, dict) else 30)
+                if s_name:
+                    lines.append(f"- {s_name} ({s_dur} mins)")
+            if lines:
+                cal_summary = "Active bookable services:\n" + "\n".join(lines) + "\nFor appointments, ask for preferred date and time."
     except Exception:
         pass
 

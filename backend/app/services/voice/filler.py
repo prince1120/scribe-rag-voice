@@ -23,8 +23,16 @@ _RAG_FILLER_PHRASES = [
 _RAG_FILLER_DELAY_S = 0.35
 
 _THINKING_FILLERS_BY_LANG: dict[str, list[str]] = {
-    "hi-IN": ["जी,", "हाँ जी,", "देखते हैं,", "बिल्कुल,"],
-    "en-IN": ["Got it,", "Right,", "Let's see,", "Okay,"],
+    "hi-IN": [
+        "Main check kar raha hoon, aap baat karte rahiye.",
+        "Ek pal, main iski details dekh raha hoon.",
+        "Main aapke liye confirm karta hoon.",
+    ],
+    "en-IN": [
+        "I’m checking that now — please keep talking.",
+        "One moment while I look into that for you.",
+        "I’m on it. Please go ahead.",
+    ],
 }
 _THINKING_FILLERS = _THINKING_FILLERS_BY_LANG["en-IN"]
 
@@ -55,7 +63,14 @@ def start_thinking_filler(agent, delay: float) -> None:
                 return
             lang = getattr(agent, "_last_user_lang", "en-IN") or "en-IN"
             filler = pick_thinking_filler(lang)
-            agent.session.say(filler, allow_interruptions=True, add_to_chat_ctx=False)
+            # `say` is async in the installed LiveKit Agents version. Awaiting
+            # it queues the bridge reliably but does not wait for its full
+            # playback, so it never stalls the reply pipeline.
+            await agent.session.say(
+                filler,
+                allow_interruptions=True,
+                add_to_chat_ctx=False,
+            )
         except asyncio.CancelledError:
             pass
         except Exception:

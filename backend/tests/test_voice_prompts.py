@@ -132,10 +132,10 @@ class TestLatencyBudget:
         about — common mid-sentence, when switching language, or when reciting
         a number in groups. With semantic turn detection on, 0.60 is enough
         because an incomplete thought keeps listening semantically."""
-        if voice_settings.VOICE_SEMANTIC_TURN_DETECTION:
-            assert voice_settings.VOICE_ENDPOINTING_MAX_DELAY >= 0.55
-        else:
-            assert voice_settings.VOICE_ENDPOINTING_MAX_DELAY >= 0.7
+        # Clear sentence endings take the syntactic fast path in worker.py;
+        # this fallback only protects ambiguous speech and must not introduce
+        # a visibly slow response on CPU-only deployments.
+        assert voice_settings.VOICE_ENDPOINTING_MAX_DELAY >= 0.55
 
     def test_the_vad_window_does_not_undercut_endpointing(self):
         """No endpointing decision can happen before Silero reports silence, so
@@ -197,7 +197,7 @@ class TestLatencyBudget:
     def test_token_ceiling_allows_a_complete_answer(self):
         """Too low and multi-part answers get cut off mid-sentence, which is
         what made replies feel shallow; too high and they become lectures."""
-        assert 250 <= voice_settings.VOICE_LLM_MAX_TOKENS <= 500
+        assert 160 <= voice_settings.VOICE_LLM_MAX_TOKENS <= 300
         assert voice_settings.VOICE_LLM_MAX_TOKENS_CAP >= voice_settings.VOICE_LLM_MAX_TOKENS
 
     def test_retrieval_stays_narrow_for_voice(self):

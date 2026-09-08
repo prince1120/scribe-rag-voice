@@ -7,6 +7,8 @@ rest of this codebase's convention.
 """
 import asyncio
 import logging
+import time
+from collections import OrderedDict
 from typing import Optional
 
 import aiohttp
@@ -21,6 +23,46 @@ logger = logging.getLogger(__name__)
 # assistant starting to speak.
 _session: Optional[aiohttp.ClientSession] = None
 _session_lock = asyncio.Lock()
+
+# A caller will often repeat a question after an interruption ("what was the
+# price again?") or clarify it with identical words.  Sending that exact query
+# through embeddings + vector search a second time adds avoidable dead air.
+# Keep this deliberately tiny and short lived: results are isolated by tenant
+# and backend, expire quickly after a knowledge-base edit, and failed lookups
+# are never cached.
+_CONTEXT_CACHE_TTL_S = 20.0
+_CONTEXT_CACHE_MAX_ENTRIES = 64
+_context_cache: OrderedDict[tuple[str, str, int, str], tuple[float, list[str]]] = OrderedDict()
+_context_cache_lock = asyncio.Lock()
+
+
+def _context_cache_key(query: str, tenant_id: str, backend_url: str, top_k: int) -> tuple[str, str, int, str]:
+    """Normalize only whitespace; retrieval still receives the caller's text."""
+    normalized_query = " ".join(query.casefold().split())
+    return (tenant_id, backend_url.rstrip("/").casefold(), top_k, normalized_query)
+
+
+async def _get_cached_context(key: tuple[str, str, int, str]) -> Optional[list[str]]:
+    now = time.monotonic()
+    async with _context_cache_lock:
+        entry = _context_cache.get(key)
+        if entry is None:
+            return None
+        expires_at, chunks = entry
+        if expires_at <= now:
+            _context_cache.pop(key, None)
+            return None
+        _context_cache.move_to_end(key)
+        # Return a copy so later per-turn truncation cannot mutate the cache.
+        return list(chunks)
+
+
+async def _cache_context(key: tuple[str, str, int, str], chunks: list[str]) -> None:
+    async with _context_cache_lock:
+        _context_cache[key] = (time.monotonic() + _CONTEXT_CACHE_TTL_S, list(chunks))
+        _context_cache.move_to_end(key)
+        while len(_context_cache) > _CONTEXT_CACHE_MAX_ENTRIES:
+            _context_cache.popitem(last=False)
 
 
 async def _get_session() -> aiohttp.ClientSession:
@@ -66,6 +108,11 @@ async def fetch_context(
     the call."""
     if not query.strip():
         return []
+    cache_key = _context_cache_key(query, tenant_id, backend_url, top_k)
+    cached = await _get_cached_context(cache_key)
+    if cached is not None:
+        logger.debug("Voice RAG cache hit for tenant %s", tenant_id)
+        return cached
     headers = {"X-Internal-Key": api_key} if api_key else {}
     try:
         session = await _get_session()
@@ -79,7 +126,10 @@ async def fetch_context(
                 logger.warning("Voice RAG retrieve failed: HTTP %s", resp.status)
                 return []
             data = await resp.json()
-            return [c for c in data.get("chunks", []) if c]
+            chunks = [c for c in data.get("chunks", []) if c]
+            if chunks:
+                await _cache_context(cache_key, chunks)
+            return chunks
     except Exception:
         logger.warning("Voice RAG retrieve failed", exc_info=True)
         return []

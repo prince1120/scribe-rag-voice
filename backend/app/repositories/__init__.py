@@ -421,6 +421,20 @@ async def rotate_contact_token(
 async def delete_contact(contact_id: str, owner_tenant_id: str) -> bool:
     """Remove a contact and its session history for good."""
     async with async_session() as session:
+        record = await session.scalar(select(ContactRecord).where(
+            ContactRecord.contact_id == contact_id, ContactRecord.owner_tenant_id == owner_tenant_id))
+        if not record:
+            return False
+        from app.models.db_models import BusinessRequestRecord, VoiceCallRecord
+        call_conversations = select(VoiceCallRecord.conversation_id).where(
+            VoiceCallRecord.contact_id == contact_id, VoiceCallRecord.tenant_id == owner_tenant_id)
+        await session.execute(delete(MessageRecord).where(MessageRecord.conversation_id.in_(call_conversations)))
+        await session.execute(delete(ConversationRecord).where(
+            ConversationRecord.conversation_id.in_(call_conversations), ConversationRecord.tenant_id == owner_tenant_id))
+        await session.execute(delete(BusinessRequestRecord).where(
+            BusinessRequestRecord.contact_id == contact_id, BusinessRequestRecord.tenant_id == owner_tenant_id))
+        await session.execute(delete(VoiceCallRecord).where(
+            VoiceCallRecord.contact_id == contact_id, VoiceCallRecord.tenant_id == owner_tenant_id))
         await session.execute(
             delete(ContactSessionRecord).where(
                 ContactSessionRecord.contact_id == contact_id

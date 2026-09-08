@@ -40,8 +40,8 @@ pip install -r requirements.txt
 if (-not (Test-Path -Path ".env")) {
     Write-Host "Creating .env file from example..." -ForegroundColor Yellow
     Copy-Item ".env.example" ".env"
-    Write-Host "IMPORTANT: Edit .env and add your GROQ_API_KEY!" -ForegroundColor Red
-    Write-Host "Get your free key at: https://console.groq.com" -ForegroundColor Cyan
+    Write-Host "IMPORTANT: Edit .env and add your MISTRAL_API_KEY!" -ForegroundColor Red
+    Write-Host "Get your key at: https://console.mistral.ai/api-keys" -ForegroundColor Cyan
 }
 
 # Check if Qdrant is accessible

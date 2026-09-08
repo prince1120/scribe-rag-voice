@@ -489,26 +489,26 @@ async def open_link(request: Request, response: Response, body: OpenLinkRequest)
     }
 
 
-class SaveSessionTranscriptRequest(BaseModel):
-    channel: str = "voice"
-    messages: list[dict] = []
-    duration_seconds: int = 0
+from app.services.business_calls import SaveCallBody
 
 
 @router.post("/t/{token}/session")
-async def save_contact_session_transcript(token: str, body: SaveSessionTranscriptRequest):
-    """Save call transcript turns and duration to the contact's session when a call ends."""
+async def save_contact_session_transcript(token: str, body: SaveCallBody,
+                                           identity: Identity = Depends(get_identity)):
+    """Compatibility endpoint: token alone cannot bypass the PIN/session gate."""
+    from app.api.business_routes import require_caller
+    from app.repositories import business
+    await require_caller(identity)
     record = await repositories.get_contact_by_token_hash(
         contacts.hash_token(token)
     )
-    if record is None:
+    if record is None or record.contact_id != identity.contact_id or record.owner_tenant_id != identity.tenant_id:
         raise HTTPException(status_code=404, detail="Contact not found")
 
-    await repositories.record_voice_transcript(
-        tenant_id=record.owner_tenant_id,
-        contact_id=record.contact_id,
-        messages=body.messages,
-        duration_seconds=body.duration_seconds,
-    )
+    try:
+        await business.save_call(str(body.call_id), identity.tenant_id, identity.contact_id,
+            [m.model_dump() for m in body.messages], body.duration_seconds)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
     return {"status": "saved"}
 

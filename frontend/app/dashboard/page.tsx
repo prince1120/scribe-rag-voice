@@ -114,7 +114,7 @@ export default function DashboardPage() {
     const isBackground = Boolean(opts?.background && data);
     if (!isBackground) setLoading(true);
     try {
-      const overviewRes = await ownerFetch("/api/v1/contacts/overview");
+      const overviewRes = await ownerFetch("/api/v1/contacts/overview", opts?.background ? {} : { cache: "no-store" });
       if (overviewRes.status === 403 || overviewRes.status === 401) {
         setError("Sign in as the owner to view your console.");
         return;
@@ -173,9 +173,10 @@ export default function DashboardPage() {
         {/* ── Top Header ─────────────────────────────────────── */}
         <header style={S.header} className="dash-header">
           <div>
-            <h1 style={S.title}>Workspace Overview</h1>
+            <span className="studio-eyebrow">Your business, at a glance</span>
+            <h1 style={S.title}>Workspace overview</h1>
             <p style={S.subtitle}>
-              Real-time call volume, active caller metrics, and conversation history.
+              See who reached out, catch up on conversations, and plan what comes next.
             </p>
           </div>
           <div style={{ display: "flex", gap: 10 }} className="dash-header-actions">

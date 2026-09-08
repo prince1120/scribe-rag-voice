@@ -36,13 +36,16 @@ def _fmt(seconds) -> str:
     return f"{seconds * 1000:.0f}ms"
 
 
-def attach(session, *, room_name: str) -> None:
-    """Log a latency breakdown for every assistant turn in this session.
+def attach(session, *, room_name: str, room=None) -> None:
+    """Log a latency breakdown for every assistant turn in this session
+    and broadcast live telemetry over the WebRTC DataChannel.
 
     Wrapped in a blanket try/except: this is diagnostics, and a change to the
     metrics shape in a future livekit-agents release must never be able to take
     down a live call to report on one.
     """
+    import asyncio
+    from app.services.voice.domain.interfaces import VoiceDataPacket
 
     @session.on("conversation_item_added")
     def _on_item(event) -> None:  # pragma: no cover - needs a live session
@@ -58,10 +61,6 @@ def attach(session, *, room_name: str) -> None:
                 return
 
             e2e = m.get("e2e_latency")
-            # How long the agent actually talked for. Not a latency stage, but
-            # the direct read on whether the brevity rules are holding — a turn
-            # that speaks for thirty seconds is the quality complaint and the
-            # latency complaint at the same time, and no stage timing shows it.
             started = m.get("started_speaking_at")
             stopped = m.get("stopped_speaking_at")
             spoken = (stopped - started) if (started and stopped) else None
@@ -73,9 +72,6 @@ def attach(session, *, room_name: str) -> None:
                 _fmt(e2e),
                 _fmt(m.get("end_of_turn_delay")),
                 _fmt(m.get("transcription_delay")),
-                # Our own RAG fetch lives in on_user_turn_completed, so this
-                # stage is the document lookup's real cost per turn — the
-                # number to look at before touching retrieval settings.
                 _fmt(m.get("on_user_turn_completed_delay")),
                 _fmt(m.get("llm_node_ttft")),
                 _fmt(m.get("tts_node_ttfb")),
@@ -87,5 +83,22 @@ def attach(session, *, room_name: str) -> None:
                 logger.warning(
                     "[TURN %s] slow turn: %s to first audio", room_name, _fmt(e2e)
                 )
+
+            # Broadcast live telemetry packet to browser client via WebRTC DataChannel
+            if e2e:
+                payload = {
+                    "e2e_ms": round(e2e * 1000),
+                    "ttft_ms": round(m.get("llm_node_ttft") * 1000) if m.get("llm_node_ttft") else None,
+                    "ttfb_ms": round(m.get("tts_node_ttfb") * 1000) if m.get("tts_node_ttfb") else None,
+                    "eot_ms": round(m.get("end_of_turn_delay") * 1000) if m.get("end_of_turn_delay") else None,
+                    "stt_ms": round(m.get("transcription_delay") * 1000) if m.get("transcription_delay") else None,
+                    "model": (m.get("llm_metadata") or {}).get("model_name", "groq"),
+                }
+                active_room = room or getattr(session, "room", None)
+                if active_room and hasattr(active_room, "local_participant") and active_room.local_participant:
+                    packet = VoiceDataPacket.telemetry(payload)
+                    asyncio.create_task(
+                        active_room.local_participant.publish_data(packet, reliable=True)
+                    )
         except Exception:
-            logger.debug("Could not log turn metrics", exc_info=True)
+            logger.debug("Could not log or broadcast turn metrics", exc_info=True)

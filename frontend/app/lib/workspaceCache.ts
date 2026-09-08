@@ -5,7 +5,7 @@
 // instant in-memory and localStorage caching with silent background revalidation (SWR pattern).
 
 import { useEffect, useSyncExternalStore } from "react";
-import { ownerFetch } from "./ownerFetch";
+import { ownerFetch, clearOwnerRequests } from "./ownerFetch";
 
 export interface WorkspaceCacheData {
   businessName: string | null;
@@ -57,6 +57,7 @@ if (typeof window !== "undefined") {
 /** Drop everything cached for the previous account. Must be called on sign-out
  *  and sign-in — otherwise the next user briefly sees the last one's business. */
 export function clearWorkspaceCache() {
+  clearOwnerRequests();
   memoryCache = { ...EMPTY_CACHE };
   if (typeof window !== "undefined") {
     try {

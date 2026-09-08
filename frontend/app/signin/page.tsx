@@ -7,7 +7,7 @@
 // Personal mode visitors use API keys on the main demo screen (/).
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { ScribeMark } from "../Logo";
 import { clearWorkspaceCache } from "../lib/workspaceCache";
@@ -89,6 +89,16 @@ export default function SignInPage() {
       </header>
 
       <main className="signin-main">
+        <section className="signin-story" aria-labelledby="signin-story-title">
+          <span className="studio-eyebrow">A little more room to run your business</span>
+          <h2 id="signin-story-title">Good conversations.<br /><em>Better connections.</em></h2>
+          <p>Your assistant, customer conversations, and bookings. A thoughtful home for everything that happens next.</p>
+          <div className="signin-illustration" aria-hidden="true">
+            <div className="studio-wave">{[14, 28, 42, 24, 54, 36, 64, 42, 26, 48, 32, 16].map((height, i) => <span key={i} style={{ height, animationDelay: `${i * -0.13}s` }} />)}</div>
+            <span className="signin-illustration-label">Made for a more natural conversation</span>
+          </div>
+          <div className="signin-story-foot"><span>01 / Your knowledge</span><span>02 / Your voice</span><span>03 / Your business</span></div>
+        </section>
         <form className="signin-card ds-animate-scale" onSubmit={submit}>
           <div className="signin-brand">
             <span className="signin-mark" aria-hidden="true">
@@ -127,7 +137,7 @@ export default function SignInPage() {
 
         <div>
           <h1 className="signin-title">
-            {mode === "signin" ? "Owner sign in" : "Build your assistant"}
+            {mode === "signin" ? "Welcome back." : "Build your assistant"}
           </h1>
           <p className="signin-sub">
             {mode === "signin"

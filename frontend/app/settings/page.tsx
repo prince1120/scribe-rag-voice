@@ -216,7 +216,7 @@ export default function SettingsPage() {
         {/* Header */}
         <header style={S.header}>
           <div>
-            <h1 style={S.title}>Account & Business Profile</h1>
+            <h1 style={S.title}>Account & business profile</h1>
             <p style={S.subtitle}>
               Manage your public business identity, provider AI keys, and login credentials.
             </p>

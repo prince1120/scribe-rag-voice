@@ -6,8 +6,8 @@
 // dark glassmorphism sidebar, live agent indicators, and mobile drawer support.
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
+import { useState } from "react";
 import {
   LayoutDashboard,
   Bot,
@@ -21,9 +21,11 @@ import {
   Sparkles,
   Calendar,
   Layers,
+  Inbox,
 } from "lucide-react";
 import { clearWorkspaceCache, useWorkspace } from "../../lib/workspaceCache";
 import { NotificationBell } from "./NotificationBell";
+import { ScribeMark } from "../../Logo";
 
 interface NavItem {
   href: string;
@@ -32,6 +34,7 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
+  { href: "/inbox", label: "Inbox", icon: <Inbox size={18} /> },
   {
     href: "/dashboard",
     label: "Overview",
@@ -75,41 +78,20 @@ export function OwnerShell({
   status?: string;
 }) {
   const pathname = usePathname();
-  const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
   const workspace = useWorkspace();
 
   const businessName = propBusinessName || workspace.businessName;
   const isLive = propStatus ? propStatus === "deployed" : workspace.isLive;
 
-  // Clear navigating state when route transitions
-  useEffect(() => {
-    setNavigatingTo(null);
-  }, [pathname]);
-
-  // Pre-warm route prefetching on mount for 0ms transitions
-  useEffect(() => {
-    NAV.forEach((item) => {
-      try {
-        router.prefetch(item.href);
-      } catch {
-        /* ignore */
-      }
-    });
-  }, [router]);
-
   return (
     <div className="owner-shell">
-      {/* Top progress sweep during route transitions */}
-      {navigatingTo && <div className="owner-top-progress" />}
-
       {/* ── Left Navigation Rail ─────────────────────────────── */}
       <aside className={`owner-rail ${menuOpen ? "is-open" : ""}`}>
         {/* Brand Lockup */}
         <div className="owner-brand">
           <div className="owner-brand-mark" aria-hidden="true">
-            <Sparkles size={16} className="text-white animate-pulse" />
+            <ScribeMark className="w-5 h-5" />
           </div>
           <div className="owner-brand-text">
             <span
@@ -138,21 +120,17 @@ export function OwnerShell({
           <div className="owner-nav-section-label">MAIN MENU</div>
           {NAV.map((item) => {
             const isCurrent = pathname === item.href;
-            const isNavigating = navigatingTo === item.href;
-            const active = isNavigating || (navigatingTo === null && isCurrent);
+            const active = isCurrent;
 
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                prefetch={true}
-                className={`owner-nav-item ${active ? "is-active" : ""} ${isNavigating ? "is-navigating" : ""}`}
+                prefetch={false}
+                className={`owner-nav-item ${active ? "is-active" : ""}`}
                 aria-current={active ? "page" : undefined}
                 onClick={() => {
                   setMenuOpen(false);
-                  if (pathname !== item.href) {
-                    setNavigatingTo(item.href);
-                  }
                 }}
               >
                 <span className="owner-nav-icon">{item.icon}</span>
@@ -260,7 +238,7 @@ export function OwnerShell({
         </header>
 
         {/* Scrollable Content Viewport */}
-        <div className="owner-content">{children}</div>
+        <div className="owner-content"><div key={pathname} className="studio-page-enter">{children}</div></div>
       </div>
     </div>
   );

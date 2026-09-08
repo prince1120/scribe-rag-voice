@@ -237,7 +237,7 @@ async def ensure_worker_running(wait_for_ready_s: float = 8.0) -> None:
 
             if await asyncio.to_thread(_port_is_occupied):
                 logger.error(
-                    "Port %d remains occupied after clearing attempt. Worker log: %s",
+                    "Port %d remains occupied after clearing attempt. No agent will answer calls. Worker log: %s",
                     _health_port(),
                     _LOG_PATH,
                 )

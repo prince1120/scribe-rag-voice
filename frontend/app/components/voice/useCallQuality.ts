@@ -13,7 +13,7 @@
 // Shared here rather than copied a third time.
 
 import { useCallback, useEffect, useState } from "react";
-import { ConnectionQuality, Room, RoomEvent } from "livekit-client";
+import { AudioPresets, ConnectionQuality, Room, RoomEvent } from "livekit-client";
 
 /**
  * Microphone capture settings for `setMicrophoneEnabled`.
@@ -35,6 +35,19 @@ export const MIC_CAPTURE = {
   autoGainControl: true,
   channelCount: 1,
   sampleRate: 48000,
+} as const;
+
+/** Audio-only calls should not use the SDK's higher-bandwidth music preset.
+ * Opus speech, DTX, and RED preserve intelligibility and recover more cleanly
+ * on weak Wi-Fi or cellular links. */
+export const VOICE_ROOM_OPTIONS = {
+  adaptiveStream: true,
+  dynacast: true,
+  publishDefaults: {
+    audioPreset: AudioPresets.speech,
+    dtx: true,
+    red: true,
+  },
 } as const;
 
 export interface NetworkWarning {
@@ -68,8 +81,11 @@ export function useAgentStall(waiting: boolean): NetworkWarning | null {
 
   useEffect(() => {
     if (!waiting) {
-      setElapsed(0);
-      return;
+      // Schedule the reset outside the effect's synchronous phase. Besides
+      // avoiding a cascading render, this lets the current audio event finish
+      // before the UI switches from "thinking" back to live.
+      const reset = window.setTimeout(() => setElapsed(0), 0);
+      return () => window.clearTimeout(reset);
     }
     const startedAt = Date.now();
     // 500ms rather than per-frame: this drives a text swap, and a call screen

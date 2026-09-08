@@ -11,7 +11,7 @@ import asyncio
 import json
 import logging
 from typing import Dict, List, Optional
-from uuid import uuid4
+from uuid import uuid4, UUID
 
 import httpx
 from pydantic import BaseModel
@@ -43,6 +43,8 @@ from app.services.voice.config import (
     voice_settings,
 )
 from app.services.voice.worker_supervisor import ensure_worker_running
+from app.repositories import business
+from app.services.business_calls import SaveCallBody, call_public
 
 logger = logging.getLogger(__name__)
 
@@ -318,8 +320,9 @@ async def create_voice_token(
     ).strip()
     # A custom OpenAI-compatible model replaces Groq entirely, so its presence
     # makes a Groq key unnecessary rather than merely optional.
+    voice_channel = owner_service.channel_settings(agent, "voice") if agent else {}
     has_custom_llm = bool(
-        (body.custom_llm_base_url or resolved.get("custom_llm_base_url") or "").strip()
+        (body.custom_llm_base_url or voice_channel.get("base_url") or resolved.get("custom_llm_base_url") or "").strip()
     )
 
     if not effective_groq and not has_custom_llm:
@@ -400,12 +403,18 @@ async def create_voice_token(
         from app.services import calendar_service as cal
         svcs = await cal.list_services(identity.tenant_id)
         if svcs:
-            lines = [f"- {s.name} ({s.duration_mins} mins)" for s in svcs]
-            cal_summary = "Bookable services:\n" + "\n".join(lines) + "\nUse check_availability to check free slots, and book_appointment when caller confirms."
+            lines = []
+            for s in svcs:
+                s_name = getattr(s, "name", None) or (s.get("name") if isinstance(s, dict) else "")
+                s_dur = getattr(s, "duration_mins", None) or (s.get("duration_mins") if isinstance(s, dict) else 30)
+                if s_name:
+                    lines.append(f"- {s_name} ({s_dur} mins)")
+            if lines:
+                cal_summary = "Bookable services:\n" + "\n".join(lines) + "\nUse check_availability to check free slots, and book_appointment when caller confirms."
     except Exception:
         pass
 
-    channel = owner_service.channel_settings(agent, "voice") if agent else {}
+    channel = voice_channel
     if agent is not None and channel.get("script"):
         instructions = owner_service.build_agent_prompt(
             script=channel["script"],
@@ -422,7 +431,7 @@ async def create_voice_token(
         # Voice, greeting and language are configuration the owner set and the
         # caller hears, so they come from the agent rather than the request.
         # Taking them from the body would let a caller pick a different voice
-        agent_voice = agent.voice_id if (agent.voice_id and agent.voice_id in SUPPORTED_TTS_VOICE_IDS) else "shreya"
+        agent_voice = agent.voice_id if (agent.voice_id and agent.voice_id in SUPPORTED_TTS_VOICE_IDS) else "priya"
         agent_overrides = {
             "tts_speaker": agent_voice,
             "stt_language": agent.language or "unknown",
@@ -518,23 +527,9 @@ async def create_voice_token(
     if contact is not None and getattr(contact, "source", "owner") == DIRECTORY_SOURCE:
         meta["max_call_seconds"] = settings.DIRECTORY_MAX_CALL_SECONDS
 
-    if identity.contact_id:
-        # Concurrent, not sequential: the session row references the
-        # conversation only by a plain nullable column, with no foreign key, so
-        # neither write needs the other to have landed. Two round trips here
-        # were two more seconds of spinner on a slow link.
-        await asyncio.gather(
-            repositories.get_or_create_conversation(conversation_id, tenant_id),
-            repositories.start_contact_session(
-                session_id=str(uuid4()),
-                contact_id=identity.contact_id,
-                conversation_id=conversation_id,
-                ip_address=client_ip(request),
-                user_agent=request.headers.get("user-agent"),
-                device_id=None,
-                channel="voice",
-            ),
-        )
+    call_id = await business.create_call(tenant_id, identity.contact_id,
+        client_ip(request), request.headers.get("user-agent"))
+    meta["call_id"] = call_id
     if body.llm_model:
         meta["llm_model"] = body.llm_model
     if body.custom_llm_base_url:
@@ -615,28 +610,33 @@ async def create_voice_token(
         url=settings.LIVEKIT_URL,
         room_name=room_name,
         participant_identity=participant_identity,
+        call_id=call_id,
     )
-
-
-class VoiceSessionRecordRequest(BaseModel):
-    messages: List[dict] = []
-    duration_seconds: int = 0
 
 
 @router.post("/record_session")
 async def record_voice_session(
-    body: VoiceSessionRecordRequest,
+    body: SaveCallBody,
     identity: Identity = Depends(get_identity),
 ) -> dict:
-    """Save call transcript turns and duration so the owner dashboard shows
-    the conversation, questions asked, and caller details."""
-    if not body.messages:
-        return {"status": "skipped"}
+    """Idempotent browser fallback. Analysis runs through the durable queue."""
+    if identity.is_contact:
+        from app.api.business_routes import require_caller
+        await require_caller(identity)
+    try:
+        call = await business.save_call(str(body.call_id), identity.tenant_id, identity.contact_id,
+            [m.model_dump() for m in body.messages], body.duration_seconds)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    return {"status": "saved", **call_public(call)}
 
-    conv_id = await repositories.record_voice_transcript(
-        tenant_id=identity.tenant_id,
-        contact_id=identity.contact_id,
-        messages=body.messages,
-        duration_seconds=body.duration_seconds,
-    )
-    return {"status": "saved", "conversation_id": conv_id}
+
+@router.get("/calls/{call_id}")
+async def get_saved_call(call_id: UUID, identity: Identity = Depends(get_identity)):
+    if identity.is_contact:
+        from app.api.business_routes import require_caller
+        await require_caller(identity)
+    call = await business.get_call(str(call_id), identity.tenant_id, identity.contact_id)
+    if not call:
+        raise HTTPException(404, "Call not found")
+    return call_public(call, include_transcript=True)

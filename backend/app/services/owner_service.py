@@ -497,6 +497,11 @@ async def save_provider_settings(
     await get_or_create_workspace(tenant_id)
 
     fields: dict = {}
+    # The Mistral field uses the same encrypted OpenAI-compatible provider slot.
+    if mistral_key is not None and custom_llm_key is None:
+        custom_llm_key = mistral_key
+        custom_llm_base_url = custom_llm_base_url or "https://api.mistral.ai/v1"
+        llm_model = llm_model or "mistral-small-latest"
     for name, value in (
         ("groq_key_enc", groq_key),
         ("sarvam_key_enc", sarvam_key),

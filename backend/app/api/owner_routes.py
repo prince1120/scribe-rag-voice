@@ -675,8 +675,9 @@ async def list_agents(identity: Identity = Depends(get_identity)):
         )
         rows = list(result.scalars().all())
     active = await repositories.get_agent(identity.tenant_id)
-    
-    def _is_active(r) -> bool:
+    is_deployed = bool(active and active.status == "deployed")
+
+    def _matches_current(r) -> bool:
         if not active:
             return False
         if active.name and r.name and active.name == r.name:
@@ -702,7 +703,9 @@ async def list_agents(identity: Identity = Depends(get_identity)):
                 "language": r.language,
                 "voice_id": r.voice_id,
                 "greeting": r.greeting,
-                "is_active": _is_active(r),
+                "is_current": _matches_current(r),
+                "is_active": _matches_current(r) and is_deployed,
+                "is_live": _matches_current(r) and is_deployed,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
                 "script": r.script or "",
                 "voice_script": r.voice_script or "",

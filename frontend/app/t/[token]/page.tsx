@@ -8,15 +8,17 @@
 // a "welcome aboard" screen, a tour — defeats the point of sending a link.
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 
 import { CallScreen } from "./CallScreen";
+import { CallerChat } from "../../components/business/CallerChat";
+import "../../styles/business.css";
 
 type State = "opening" | "pin" | "ready" | "error";
 
 export default function ContactLinkPage() {
   const params = useParams<{ token: string }>();
-  const router = useRouter();
+  const [channel, setChannel] = useState<"voice" | "chat">("voice");
 
   const [state, setState] = useState<State>("opening");
   const [message, setMessage] = useState("");
@@ -77,7 +79,7 @@ export default function ContactLinkPage() {
         // Straight into the app. Replace, not push, so Back doesn't land them
         // on a link that has already been redeemed.
         // A voice-only link stays on this page and renders the call screen.
-        if ((data.mode || "both") !== "voice") router.replace("/");
+        setChannel(data.mode === "chat" ? "chat" : "voice");
       } catch {
         setState("error");
         setMessage("Could not reach the server. Check your connection and try again.");
@@ -86,7 +88,7 @@ export default function ContactLinkPage() {
         setSubmitting(false);
       }
     },
-    [params, router]
+    [params]
   );
 
   useEffect(() => {
@@ -127,7 +129,10 @@ export default function ContactLinkPage() {
 
   // Voice links render the call screen in place rather than bouncing through
   // the full app, which would show a document sidebar they cannot use.
-  if (state === "ready" && mode === "voice") return <CallScreen name={name} />;
+  if (state === "ready") return <div className="customer-workspace">
+    {mode === "both" && <nav className="customer-channel-switch" aria-label="Choose conversation channel"><div className="business-tabs"><button type="button" aria-pressed={channel === "voice"} onClick={() => setChannel("voice")}>Talk to the assistant</button><button type="button" aria-pressed={channel === "chat"} onClick={() => setChannel("chat")}>Type instead</button></div><small>Switching to text ends an active voice call.</small></nav>}
+    {channel === "voice" ? <CallScreen name={name} /> : <CallerChat name={name} />}
+  </div>;
 
   return (
     <main className="link-page">
@@ -173,11 +178,6 @@ export default function ContactLinkPage() {
           </form>
         )}
 
-        {state === "ready" && mode !== "voice" && (
-          <p className="link-title">
-            {name ? `Welcome, ${name}` : "Welcome"} — taking you in…
-          </p>
-        )}
 
         {state === "error" && (
           <>

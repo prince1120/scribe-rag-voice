@@ -127,6 +127,38 @@ class TestTheHookStopsTheReply:
         agent = _agent(rag_enabled=True)
         await agent.on_user_turn_completed(_ctx(), _msg("okay"))
 
+    async def test_question_does_not_automatically_retrieve(self, monkeypatch):
+        from unittest.mock import AsyncMock
+        from app.services.voice import rag_client
+
+        retrieve = AsyncMock(return_value=["Business hours are 9 to 5."])
+        monkeypatch.setattr(rag_client, "fetch_context", retrieve)
+        agent = _agent(rag_enabled=True)
+        monkeypatch.setattr(agent, "_start_thinking_filler", lambda: None)
+        await agent.on_user_turn_completed(_ctx(), _msg("What are your business hours?"))
+        retrieve.assert_not_awaited()
+
+    async def test_explicit_search_retrieves_for_current_tenant(self, monkeypatch):
+        from unittest.mock import AsyncMock
+        from app.services.voice import rag_client
+
+        retrieve = AsyncMock(return_value=["Business hours are 9 to 5."])
+        monkeypatch.setattr(rag_client, "fetch_context", retrieve)
+        agent = _agent(rag_enabled=True)
+        result = await agent.search_knowledge_base("business hours")
+        assert "9 to 5" in result
+        assert retrieve.await_args.kwargs["tenant_id"] == "t1"
+
+    async def test_disabled_search_cannot_retrieve(self, monkeypatch):
+        from unittest.mock import AsyncMock
+        from app.services.voice import rag_client
+
+        retrieve = AsyncMock()
+        monkeypatch.setattr(rag_client, "fetch_context", retrieve)
+        result = await _agent(rag_enabled=False).search_knowledge_base("business hours")
+        assert "disabled" in result
+        retrieve.assert_not_awaited()
+
 
 # ---- helpers ---------------------------------------------------------------
 

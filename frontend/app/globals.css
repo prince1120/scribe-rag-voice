@@ -5,6 +5,7 @@
 @import "./styles/callscreen.css";
 @import "./styles/owner.css";
 @import "./styles/responsive-polish.css";
+@import "./styles/studio-polish.css"; /* Shared marketing and console polish. */
 
 @theme {
   --breakpoint-sm: 640px;

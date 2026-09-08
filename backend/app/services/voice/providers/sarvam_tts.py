@@ -24,10 +24,10 @@ def build_sarvam_tts(settings: VoiceSettings) -> tts.TTS:
     speaker = settings.VOICE_TTS_SPEAKER
     if speaker not in SUPPORTED_TTS_VOICE_IDS:
         logger.warning(
-            "Requested TTS speaker '%s' is not supported in bulbul:v3. Falling back to 'shubh'.",
+            "Requested TTS speaker '%s' is not supported in bulbul:v3. Falling back to 'priya'.",
             speaker,
         )
-        speaker = "shubh"
+        speaker = "priya"
 
     return sarvam.TTS(
         target_language_code=settings.VOICE_TTS_LANGUAGE,

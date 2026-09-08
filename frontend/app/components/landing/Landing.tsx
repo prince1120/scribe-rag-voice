@@ -19,10 +19,13 @@ import {
   Buildings,
   Robot,
 } from "@phosphor-icons/react";
-import { motion, useReducedMotion } from "motion/react";
+import { motion, useReducedMotion, useScroll, useTransform, useSpring } from "motion/react";
 import { Geist } from "next/font/google";
 import { ScribeMark } from "../../Logo";
 import type { KeyPair } from "../../lib/personalSession";
+import { LiveInteractiveMockup } from "./LiveInteractiveMockup";
+import { ScrollTextReveal } from "./ScrollTextReveal";
+import { ScrollFloatingControl } from "./ScrollFloatingControl";
 
 const geist = Geist({ subsets: ["latin"], display: "swap" });
 
@@ -84,6 +87,23 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
     if (canStart) onStart(groqInput, sarvamInput.trim() || undefined);
   };
 
+  const { scrollY, scrollYProgress } = useScroll();
+  const smoothProgress = useSpring(scrollYProgress, { stiffness: 280, damping: 30 });
+  const [isScrolled, setIsScrolled] = useState(false);
+
+  useEffect(() => {
+    return scrollY.on("change", (latest) => {
+      setIsScrolled(latest > 28);
+    });
+  }, [scrollY]);
+
+  // Subtle hero parallax & physical depth
+  const heroTextY = useTransform(scrollYProgress, [0, 0.22], [0, -28]);
+  const heroTextOpacity = useTransform(scrollYProgress, [0, 0.2], [1, 0.92]);
+  const mockupY = useTransform(scrollYProgress, [0, 0.25], [0, 32]);
+  const mockupRotate = useTransform(scrollYProgress, [0, 0.25], [0, -1.2]);
+  const mockupScale = useTransform(scrollYProgress, [0, 0.25], [1, 0.985]);
+
   // Stagger parent for high-agency orchestration — parent + children same tree
   const heroParent = {
     hidden: {},
@@ -95,7 +115,7 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
   };
 
   return (
-    <div className={`${geist.className} min-h-[100dvh] flex flex-col antialiased selection:bg-[var(--claude-accent-soft)] overflow-x-hidden`} style={{ background: "var(--claude-bg)" }}>
+    <div className={`${geist.className} studio-landing min-h-[100dvh] flex flex-col antialiased selection:bg-[var(--claude-accent-soft)] overflow-x-hidden`} style={{ background: "var(--claude-bg)" }}>
       <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 z-[60] px-4 py-2 rounded-full text-xs font-semibold bg-[var(--claude-accent)] text-white">
         Skip to content
       </a>
@@ -108,24 +128,46 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
         }}
       />
 
-      {/* Fluid Island Nav — detached pill, not edge-glued */}
+      {/* Fluid Island Nav — starts stylishly compact, expands smoothly on scroll */}
       <motion.header
         initial={reduce ? false : { opacity: 0, y: -12, filter: "blur(8px)" }}
-        animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-        transition={{ duration: 0.7, ease: [0.32, 0.72, 0, 1] as const }}
-        className="fixed top-6 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-24px)] max-w-[1120px] pointer-events-none"
+        animate={{
+          opacity: 1,
+          y: 0,
+          filter: "blur(0px)",
+          maxWidth: isScrolled ? "1360px" : "880px",
+          top: isScrolled ? 10 : 22,
+        }}
+        transition={{
+          type: "spring",
+          stiffness: 220,
+          damping: 26,
+          mass: 0.85,
+        }}
+        className="fixed left-1/2 -translate-x-1/2 z-40 w-[calc(100%-24px)] pointer-events-none will-change-[max-width,top]"
       >
         <nav
-          className="pointer-events-auto flex items-center justify-between gap-3 rounded-full px-5 sm:px-6 py-2.5 border shadow-[0_8px_32px_rgba(44,43,40,0.08),0_1px_2px_rgba(44,43,40,0.06)]"
+          className={`pointer-events-auto relative flex items-center justify-between gap-3 rounded-full py-2.5 border transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+            isScrolled
+              ? "px-6 sm:px-8 shadow-[0_16px_44px_rgba(44,43,40,0.12),0_1px_3px_rgba(44,43,40,0.08)] backdrop-blur-xl border-[rgba(200,195,182,0.95)]"
+              : "px-5 sm:px-6 shadow-[0_8px_30px_rgba(44,43,40,0.06),0_1px_2px_rgba(44,43,40,0.04)] backdrop-blur-md border-[rgba(221,217,204,0.85)]"
+          }`}
           style={{
-            background: "rgba(250,249,245,0.88)",
-            borderColor: "rgba(221,217,204,0.9)",
-            backdropFilter: "blur(16px)",
-            WebkitBackdropFilter: "blur(16px)",
-            boxShadow: "0 8px 32px rgba(44,43,40,0.08), inset 0 1px 0 rgba(255,255,255,0.6)",
+            background: isScrolled ? "rgba(250,249,245,0.95)" : "rgba(250,249,245,0.86)",
+            boxShadow: isScrolled
+              ? "0 16px 44px rgba(44,43,40,0.12), inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 1px rgba(72,84,168,0.08)"
+              : "0 8px 30px rgba(44,43,40,0.06), inset 0 1px 0 rgba(255,255,255,0.7)",
           }}
           aria-label="Primary"
         >
+          {/* Real-time reading progress track along bottom edge of nav pill */}
+          <div className="absolute -bottom-[1px] left-6 right-6 h-[2px] rounded-full overflow-hidden bg-black/[0.04] pointer-events-none">
+            <motion.div
+              style={{ scaleX: smoothProgress, transformOrigin: "left" }}
+              className="h-full w-full rounded-full bg-[var(--claude-accent)] opacity-85 shadow-[0_0_8px_var(--claude-accent)]"
+            />
+          </div>
+
           <Link href="/" className="flex items-center gap-3 group">
             <div
               className="w-8 h-8 rounded-full flex items-center justify-center border shadow-xs transition-transform duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105 group-active:scale-[0.98] will-change-transform"
@@ -173,18 +215,22 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
 
       <main id="main" className="flex-1 flex flex-col items-center w-full">
         {/* Hero — lifted, fits viewport without scroll, compact */}
-        <section className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 pt-24 sm:pt-28 lg:pt-20 pb-10 sm:pb-12 lg:pb-16">
+        <section className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 pt-28 sm:pt-32 lg:pt-32 pb-10 sm:pb-12 lg:pb-16">
           <motion.div
             variants={heroParent}
             initial="hidden"
             animate="show"
-            className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-6 items-center w-full"
+            className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-8 items-start w-full"
           >
             {/* Left — centered on phone, left-aligned on desktop for symmetry */}
-            <motion.div variants={revealItem} className="lg:col-span-7 flex flex-col items-center lg:items-start text-center lg:text-left min-w-0 lg:pl-[2vw]">
+            <motion.div
+              variants={revealItem}
+              style={{ y: heroTextY, opacity: heroTextOpacity }}
+              className="lg:col-span-7 flex flex-col items-center lg:items-start text-center lg:text-left min-w-0 lg:pl-[2vw] will-change-transform"
+            >
               <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-medium tracking-wide border mx-auto lg:mx-0" style={{ borderColor: "var(--claude-border-strong)", background: "var(--claude-surface)", color: "var(--claude-accent)" }}>
                 <Sparkle size={14} weight="regular" />
-                Turn documents into a live phone assistant in 60s
+                A voice for your business. A moment back for you.
               </span>
 
               <h1
@@ -198,7 +244,7 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
               </h1>
 
               <p className="text-[14px] sm:text-[15px] leading-relaxed max-w-[52ch] mt-4 mx-auto lg:mx-0 text-center lg:text-left" style={{ color: "var(--claude-muted)", lineHeight: 1.6 }}>
-                Upload price sheets, FAQs, or service guides. Scribe answers real customer calls with verified document truth — voice and chat from one knowledge base.
+                Give your customers a place to ask, talk, and book. Your AI assistant uses your business knowledge to help them, through voice and chat on one simple link.
               </p>
 
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center lg:justify-start gap-3 w-full sm:w-auto mt-6">
@@ -207,7 +253,7 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
                   className="group inline-flex items-center justify-between gap-4 pl-7 pr-2 py-2.5 rounded-full text-sm font-semibold text-white shadow-[0_8px_24px_rgba(72,84,168,0.22)] will-change-transform transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] hover:shadow-[0_10px_28px_rgba(72,84,168,0.28)] active:scale-[0.98]"
                   style={{ background: "var(--claude-accent)" }}
                 >
-                  Create your assistant in 60s
+                  Create your assistant
                   <span className="w-8 h-8 rounded-full bg-white/15 flex items-center justify-center transition-transform duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)] group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:scale-105">
                     <ArrowRight size={16} weight="bold" />
                   </span>
@@ -233,7 +279,7 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
                 </span>
                 <span className="inline-flex items-center gap-2">
                   <Lightning size={16} weight="regular" className="text-[var(--claude-accent)]" />
-                  Sub-second turn
+                  Natural voice conversations
                 </span>
                 <span className="inline-flex items-center gap-2">
                   <ShieldCheck size={16} weight="regular" className="text-emerald-600" />
@@ -242,116 +288,36 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
               </div>
             </motion.div>
 
-            {/* Right — asset with offset asymmetry, varied aspect */}
-            <motion.div variants={revealItem} className="lg:col-span-5 relative w-full max-w-[520px] mx-auto lg:mx-0 min-w-0 lg:mt-2">
-              <div className="double-bezel-outer p-1.5 sm:p-2 shadow-[0_20px_60px_rgba(44,43,40,0.10),0_2px_10px_rgba(44,43,40,0.06)] transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)]">
-                <div className="double-bezel-inner overflow-hidden flex flex-col relative" style={{ background: "var(--claude-surface)" }}>
-                  <div aria-hidden className="pointer-events-none absolute -top-20 -right-16 w-[380px] h-[380px] rounded-full blur-[52px] opacity-[0.07]" style={{ background: "var(--claude-accent)" }} />
-                  <div className="flex items-center justify-between gap-2 px-3.5 py-2.5 border-b" style={{ borderColor: "var(--claude-border)", background: "var(--claude-surface-2)" }}>
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="w-6 h-6 rounded-full bg-[var(--claude-accent-soft)] border border-[var(--claude-border)] flex items-center justify-center text-[var(--claude-accent)] shrink-0">
-                        <Phone size={12} weight="regular" />
-                      </span>
-                      <div className="min-w-0">
-                        <div className="text-[10px] font-semibold leading-none truncate" style={{ color: "var(--claude-text)" }}>
-                          Maya · Apex Dental Clinic
-                        </div>
-                        <div className="text-[9px] leading-none mt-0.5 truncate" style={{ color: "var(--claude-muted)" }}>
-                          Healthcare · Anushka · Warm
-                        </div>
-                      </div>
-                    </div>
-                    <span className="inline-flex items-center gap-1 text-[9px] font-mono font-semibold px-2 py-1 rounded-full border shrink-0 tabular-nums" style={{ borderColor: "var(--claude-border)", background: "var(--claude-surface)", color: "var(--claude-accent)" }}>
-                      <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
-                      00:42
-                    </span>
-                  </div>
-
-                  <div className="flex flex-col items-center gap-3 px-4 py-4">
-                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-semibold" style={{ borderColor: "var(--claude-border)", background: "var(--claude-bg)", color: "var(--claude-text)" }}>
-                      <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
-                      Listening — grounded answer
-                    </div>
-                    <div className="relative flex items-center justify-center w-[100px] h-[100px] sm:w-[132px] sm:h-[132px]">
-                      <div className="absolute inset-0 rounded-full border opacity-[0.06]" style={{ borderColor: "var(--claude-accent)" }} />
-                      <div className="voice-wave-halo opacity-25" />
-                      <div className="voice-wave-halo delayed opacity-15" />
-                      <div
-                        className="rounded-full relative overflow-hidden"
-                        style={{
-                          width: 88,
-                          height: 88,
-                          background: "radial-gradient(circle at 35% 30%, #FFFFFF 0%, var(--claude-accent) 58%, var(--claude-accent-hover) 100%)",
-                          boxShadow: "0 14px 36px -10px rgba(72,84,168,0.38), inset 0 -8px 18px rgba(0,0,0,0.20), inset 0 8px 14px rgba(255,255,255,0.84)",
-                        }}
-                      >
-                        <div aria-hidden className="absolute rounded-full" style={{ width: "56%", height: "56%", top: "9%", left: "11%", background: "radial-gradient(circle, rgba(255,255,255,0.94) 0%, transparent 68%)", filter: "blur(4px)" }} />
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1 opacity-60">
-                      <span className="w-[3px] rounded-full bg-[var(--claude-border-strong)]" style={{ height: 10 }} />
-                      <span className="w-[3px] rounded-full bg-[var(--claude-border-strong)]" style={{ height: 14 }} />
-                      <span className="w-[3px] rounded-full bg-[var(--claude-border-strong)]" style={{ height: 16 }} />
-                      <span className="w-[3px] rounded-full bg-[var(--claude-border-strong)]" style={{ height: 11 }} />
-                      <span className="w-[3px] rounded-full bg-[var(--claude-border-strong)]" style={{ height: 13 }} />
-                    </div>
-                    <p className="text-[9px] font-mono tracking-widest uppercase tabular-nums" style={{ color: "var(--claude-muted)" }}>
-                      24 kHz neural turn · verified
-                    </p>
-                  </div>
-
-                  <div className="mx-3 mb-3 rounded-[14px] border overflow-hidden" style={{ borderColor: "var(--claude-border)", background: "var(--claude-bg)" }}>
-                    <div className="px-3 py-2 flex items-center justify-between border-b" style={{ borderColor: "var(--claude-border)", background: "var(--claude-surface-2)" }}>
-                      <span className="text-[10px] font-semibold inline-flex items-center gap-1.5" style={{ color: "var(--claude-text)" }}>
-                        <FileText size={12} weight="regular" className="text-emerald-600" />
-                        Clinic schedule · Sec 2.1
-                      </span>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full border bg-white tabular-nums" style={{ borderColor: "var(--claude-border)", color: "var(--claude-muted)" }}>
-                        1.2
-                      </span>
-                    </div>
-                    <div className="p-3.5 flex flex-col gap-3">
-                      <div className="self-end max-w-[82%] rounded-2xl rounded-br-[6px] px-3.5 py-2.5 text-[13px] leading-snug shadow-sm" style={{ background: "var(--claude-bubble)", color: "#F5F3EB" }}>
-                        Do you have emergency appointments Thu?
-                      </div>
-                      <div className="self-start max-w-[88%] rounded-2xl rounded-bl-[6px] border px-3.5 py-3 text-[13px] leading-relaxed" style={{ background: "var(--claude-surface)", borderColor: "var(--claude-border)", color: "var(--claude-text)" }}>
-                        Yes — Dr. Roberts has an emergency slot Thu 2:30 PM. I can hold it and send the intake link.
-                        <span className="inline-flex items-center justify-center ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded border align-baseline tabular-nums" style={{ background: "var(--claude-accent-soft)", borderColor: "var(--claude-border-strong)", color: "var(--claude-accent)" }}>
-                          1.2
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 text-[10px] font-mono tabular-nums">
-                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold">
-                          <CheckCircle size={12} weight="regular" />
-                          Verified
-                        </span>
-                        <span style={{ color: "var(--claude-muted)" }}>312ms retrieval · 892ms total</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
+            <motion.div
+              variants={revealItem}
+              style={{ y: mockupY, rotateZ: mockupRotate, scale: mockupScale }}
+              className="lg:col-span-5 relative w-full max-w-[430px] mx-auto lg:mx-0 min-w-0 lg:ml-auto will-change-transform"
+            >
+              <LiveInteractiveMockup />
             </motion.div>
           </motion.div>
         </section>
 
+        {/* Editorial Statement with Real-time Word-by-Word Scroll Scrubbing */}
         <motion.section
-          initial={reduce ? false : { opacity: 0, y: 16, filter: "blur(6px)" }}
-          whileInView={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-          viewport={{ once: true, amount: 0.35 }}
+          initial={reduce ? false : { opacity: 0, y: 16 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, amount: 0.25 }}
           transition={{ duration: 0.7, ease: [0.32, 0.72, 0, 1] as const }}
-          className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-14 border-t"
+          className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-24 border-t relative overflow-hidden"
           style={{ borderColor: "var(--claude-border)" }}
         >
-          <div className="max-w-3xl mx-auto text-center">
-            <p className="font-editorial text-[26px] sm:text-[32px] md:text-[38px] leading-[1.25] tracking-tight" style={{ color: "var(--claude-text)", textWrap: "balance" }}>
-              Existing systems operate in <span className="underline decoration-[var(--claude-border-strong)] underline-offset-[6px] decoration-[1.5px]">multiple fields</span>, yet customer inquiries still land on unanswered lines.
-            </p>
-            <p className="font-editorial font-semibold text-[26px] sm:text-[32px] md:text-[38px] tracking-tight mt-4" style={{ color: "var(--claude-accent)" }}>
-              Your business needs an intelligent voice.
-            </p>
-          </div>
+          {/* Subtle ambient radial glow that follows scroll position */}
+          <motion.div
+            aria-hidden
+            className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[580px] h-[340px] rounded-full blur-[72px] opacity-[0.08]"
+            style={{ background: "var(--claude-accent)" }}
+          />
+
+          <ScrollTextReveal
+            paragraph="Every question is a chance to make someone feel looked after. Even when your day is already full."
+            highlightPunchline="Make room for every conversation."
+          />
         </motion.section>
 
 
@@ -396,11 +362,38 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
                 </p>
                 <div className="mt-5 rounded-xl border p-3 flex items-center gap-3" style={{ borderColor: "var(--claude-border)", background: "var(--claude-bg)" }}>
                   <div className="flex-1 flex flex-col gap-1.5">
-                    <div className="h-1.5 rounded-full" style={{ background: "var(--claude-border)", width: "68%" }} />
-                    <div className="h-1.5 rounded-full" style={{ background: "var(--claude-accent)", width: "92%" }} />
-                    <div className="h-1.5 rounded-full" style={{ background: "var(--claude-border)", width: "54%" }} />
+                    <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "var(--claude-border)" }}>
+                      <motion.div
+                        className="h-full rounded-full"
+                        style={{ background: "var(--claude-muted)" }}
+                        initial={{ width: "0%" }}
+                        whileInView={{ width: "68%" }}
+                        viewport={{ once: true, amount: 0.4 }}
+                        transition={{ duration: 0.9, delay: 0.1, ease: "easeOut" }}
+                      />
+                    </div>
+                    <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "var(--claude-border)" }}>
+                      <motion.div
+                        className="h-full rounded-full"
+                        style={{ background: "var(--claude-accent)" }}
+                        initial={{ width: "0%" }}
+                        whileInView={{ width: "92%" }}
+                        viewport={{ once: true, amount: 0.4 }}
+                        transition={{ duration: 1.1, delay: 0.2, ease: "easeOut" }}
+                      />
+                    </div>
+                    <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "var(--claude-border)" }}>
+                      <motion.div
+                        className="h-full rounded-full"
+                        style={{ background: "var(--claude-muted)" }}
+                        initial={{ width: "0%" }}
+                        whileInView={{ width: "54%" }}
+                        viewport={{ once: true, amount: 0.4 }}
+                        transition={{ duration: 0.8, delay: 0.3, ease: "easeOut" }}
+                      />
+                    </div>
                   </div>
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center border text-[10px] font-bold" style={{ background: "var(--claude-accent-soft)", borderColor: "var(--claude-border)", color: "var(--claude-accent)" }}>
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center border text-[10px] font-bold shadow-2xs" style={{ background: "var(--claude-accent-soft)", borderColor: "var(--claude-border)", color: "var(--claude-accent)" }}>
                     3
                   </div>
                 </div>
@@ -431,13 +424,33 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
                   Natural cadence in English, Hindi, and regional accents. Built for fluid phone calls.
                 </p>
                 <div className="mt-5 rounded-xl border p-3 flex items-center gap-3" style={{ borderColor: "var(--claude-border)", background: "var(--claude-bg)" }}>
-                  <div className="flex items-end gap-1 h-7">
-                    <span className="w-1 rounded-full" style={{ height: 10, background: "var(--claude-border-strong)" }} />
-                    <span className="w-1 rounded-full" style={{ height: 18, background: "var(--claude-accent)" }} />
-                    <span className="w-1 rounded-full" style={{ height: 14, background: "var(--claude-border-strong)" }} />
-                    <span className="w-1 rounded-full" style={{ height: 20, background: "var(--claude-accent)" }} />
-                    <span className="w-1 rounded-full" style={{ height: 12, background: "var(--claude-border-strong)" }} />
-                    <span className="w-1 rounded-full" style={{ height: 16, background: "var(--claude-accent)" }} />
+                  <div className="flex items-end gap-1.5 h-7">
+                    {[
+                      { base: 8, max: 22, dur: 0.85, delay: 0.0 },
+                      { base: 16, max: 28, dur: 1.1, delay: 0.15 },
+                      { base: 12, max: 24, dur: 0.9, delay: 0.3 },
+                      { base: 20, max: 28, dur: 1.05, delay: 0.05 },
+                      { base: 10, max: 20, dur: 0.85, delay: 0.2 },
+                      { base: 14, max: 26, dur: 0.95, delay: 0.1 },
+                    ].map((b, idx) => (
+                      <motion.span
+                        key={idx}
+                        className="w-1 rounded-full"
+                        animate={{
+                          height: [b.base, b.max, b.base * 0.7, b.max * 0.9, b.base],
+                        }}
+                        transition={{
+                          duration: b.dur,
+                          delay: b.delay,
+                          repeat: Infinity,
+                          ease: "easeInOut",
+                        }}
+                        style={{
+                          height: b.base,
+                          background: idx % 2 === 1 ? "var(--claude-accent)" : "var(--claude-border-strong)",
+                        }}
+                      />
+                    ))}
                   </div>
                   <span className="ml-auto text-[10px] font-mono tabular-nums px-2 py-1 rounded-full border bg-white" style={{ borderColor: "var(--claude-border)", color: "var(--claude-muted)" }}>
                     Hindi · English
@@ -467,7 +480,13 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
                   Every call produces a full audio recording and verified transcript with citations — full oversight, zero extra work.
                 </p>
               </div>
-              <div className="rounded-2xl px-5 py-3 border font-mono text-xs flex items-center justify-center sm:justify-start gap-3 shrink-0 tabular-nums w-full sm:w-auto" style={{ background: "var(--claude-bg)", borderColor: "var(--claude-border)" }}>
+              <div className="relative overflow-hidden rounded-2xl px-5 py-3 border font-mono text-xs flex items-center justify-center sm:justify-start gap-3 shrink-0 tabular-nums w-full sm:w-auto shadow-xs" style={{ background: "var(--claude-bg)", borderColor: "var(--claude-border)" }}>
+                <motion.div
+                  aria-hidden
+                  className="pointer-events-none absolute -inset-y-2 -left-12 w-12 bg-gradient-to-r from-transparent via-white/50 to-transparent skew-x-12"
+                  animate={{ x: ["-100%", "400%"] }}
+                  transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut", repeatDelay: 1 }}
+                />
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 <span style={{ color: "var(--claude-accent)" }} className="font-semibold">
                   scribe.app/t/business-token
@@ -623,7 +642,7 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
 
       <footer className="border-t mt-auto" style={{ borderColor: "var(--claude-border)", background: "var(--claude-surface-2)" }}>
         <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs" style={{ color: "var(--claude-muted)" }}>
-          <p>Scribe. Grounded knowledge, real phone voice, every conversation verified.</p>
+          <p>Scribe. Your knowledge. Your voice. Your business.</p>
           <div className="flex items-center gap-4">
             <Link href="/directory" className="hover:text-[var(--claude-text)] transition-colors">
               Directory
@@ -638,6 +657,9 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
           </div>
         </div>
       </footer>
+
+      {/* Interactive floating scroll progress & back-to-top pill */}
+      <ScrollFloatingControl />
     </div>
   );
 }

@@ -14,7 +14,7 @@ import { ownerFetch } from "../lib/ownerFetch";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, Track, createAudioAnalyser } from "livekit-client";
 import { NetworkBanner } from "../components/voice/NetworkBanner";
-import { MIC_CAPTURE, useCallQuality } from "../components/voice/useCallQuality";
+import { MIC_CAPTURE, useCallQuality, VOICE_ROOM_OPTIONS } from "../components/voice/useCallQuality";
 import { VOICE_DATA_PACKETS } from "../components/voice/voiceEvents";
 import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
 
@@ -85,7 +85,7 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
       }
 
       const { token, url } = await response.json();
-      const room = new Room({ adaptiveStream: true, dynacast: true });
+      const room = new Room(VOICE_ROOM_OPTIONS);
       roomRef.current = room;
 
       room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {

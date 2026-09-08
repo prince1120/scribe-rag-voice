@@ -14,7 +14,7 @@ export default function AgentsGalleryPage() {
         <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4" style={{ borderColor: "var(--claude-border)" }}>
           <div>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight" style={{ color: "var(--claude-text)" }}>
-              My Agents & Versions
+              My assistants
             </h1>
             <p className="text-xs sm:text-sm mt-1 text-gray-500">
               Manage your created AI assistants, switch your active live agent, clone configurations, or edit scripts.
@@ -22,7 +22,7 @@ export default function AgentsGalleryPage() {
           </div>
           <Link
             href="/agent"
-            className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 flex items-center gap-1.5 transition-all shadow-xs self-start sm:self-auto"
+            className="owner-primary-action px-4 py-2 rounded-xl text-xs font-bold text-white flex items-center gap-1.5 self-start sm:self-auto"
           >
             <Plus size={14} /> Create New Agent
           </Link>

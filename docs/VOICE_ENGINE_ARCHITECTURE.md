@@ -89,6 +89,38 @@ TOTAL VOICE-TO-VOICE LATENCY:  ~710ms (sub-800ms target achieved)
   }
   ```
 
+### E. Smart Backchanneling & False-Interruption Filter
+- **Problem in Traditional Voice Agents**: When humans talk, listeners naturally say brief affirmations (*"yeah"*, *"uh-huh"*, *"okay"*, *"hmm"*, *"haan"*, *"theek hai"*). Naive systems treat any speech as an interruption, abruptly cutting off the assistant mid-sentence.
+- **Solution**:
+  - `backend/app/services/voice/speech_clean.py` defines `is_backchannel(text: str) -> bool` covering 1–2 word conversational affirmations across English and Hindi.
+  - In `worker.py`, when `session.current_speech` is active and the user emits a backchannel, `VoiceDataPacket.INTERRUPT` is suppressed and the assistant continues speaking smoothly without halting.
+
+### F. Ambient Conversational Fillers on RAG & Tools
+- **Mechanism**:
+  - Integrated in `backend/app/services/voice/agent.py` and `filler.py`.
+  - When tool execution (`check_availability`, `book_appointment`, `reschedule_appointment`, `cancel_appointment`, `list_my_bookings`) or RAG retrieval exceeds 350ms, the agent immediately emits an ambient conversational filler (*"Let me look into that for you..."*, *"One moment..."*, or in Hindi *"जी, एक सेकंड में चेक करता हूँ..."*).
+  - The filler is cleanly cancelled the instant the first LLM token arrives.
+
+### G. Real-Time In-Call Latency HUD & Diagnostics
+- **Mechanism**:
+  - `backend/app/services/voice/turn_metrics.py` captures per-turn latency stages (`e2e_latency`, `llm_node_ttft`, `tts_node_ttfb`, `end_of_turn_delay`, `transcription_delay`, `model`) and dispatches a JSON telemetry packet over the WebRTC DataChannel via `VoiceDataPacket.telemetry(payload)`.
+  - `frontend/app/t/[token]/CallScreen.tsx` listens on `RoomEvent.DataReceived` and renders a live, glowing **Latency HUD Pill** (e.g. `⚡ Turn: 640ms | TTFT: 110ms | TTFB: 210ms`) with an expandable diagnostics grid.
+
+### H. Automated Post-Call Intelligence Card
+- **Mechanism**:
+  - On call hangup, the client calls `POST /api/v1/voice/record_session`.
+  - In `backend/app/api/voice_routes.py`, an asynchronous LLM task evaluates the complete transcript to generate structured intelligence:
+    - 2-sentence Executive Summary
+    - Caller Sentiment (`Positive` / `Neutral` / `Negative`)
+    - Key Topics Discussed
+    - Extracted Action Items & Booking Details
+  - The client displays an interactive **Post-Call Intelligence Summary Card** directly above the conversation history turns.
+
+### I. STT Hallucination & Phantom Noise Filter
+- **Mechanism**:
+  - In `backend/app/services/voice/speech_clean.py`, `is_stt_hallucination(text: str)` filters common streaming Whisper/Sarvam phantom transcriptions (e.g. *"Thank you for watching"*, *"Subtitles by"*, repeated single-word loops like *"ha ha ha ha"*, and pure punctuation artifacts).
+  - Phantom transcripts are discarded before triggering spurious LLM responses.
+
 ---
 
 ## 4. Single-Command Backend Orchestration

@@ -28,6 +28,8 @@ from app.api.owner_routes import router as owner_router  # noqa: E402
 from app.api.session_routes import router as session_router  # noqa: E402
 from app.api.voice_routes import router as voice_router  # noqa: E402
 from app.api.calendar_routes import router as calendar_router  # noqa: E402
+from app.api.business_routes import router as business_router  # noqa: E402
+from app.services.business_calls import run_summary_loop  # noqa: E402
 from app.database import init_db  # noqa: E402
 from app.services.cleanup import run_cleanup_loop  # noqa: E402
 from app.services.storage import storage  # noqa: E402
@@ -77,10 +79,14 @@ async def lifespan(app: FastAPI):
     # stores (file, Postgres row, Qdrant vectors) can't drift apart. Runs as a
     # background task — a slow first sweep must not delay readiness.
     cleanup_task = asyncio.create_task(run_cleanup_loop())
+    summary_task = asyncio.create_task(run_summary_loop())
 
     try:
         yield
     finally:
+        summary_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await summary_task
         cleanup_task.cancel()
         # Awaited so the task is actually finished before the loop closes,
         # rather than leaving asyncio to complain about a pending task.
@@ -194,6 +200,7 @@ app.include_router(contact_router, prefix="/api/v1/contacts", tags=["contacts"])
 app.include_router(directory_router, prefix="/api/v1/directory", tags=["directory"])
 app.include_router(owner_router, prefix="/api/v1/workspace", tags=["workspace"])
 app.include_router(calendar_router, prefix="/api/v1/calendar", tags=["calendar"])
+app.include_router(business_router, prefix="/api/v1/business", tags=["business"])
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(voice_router, prefix="/api/v1/voice", tags=["voice"])
 

@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { OwnerShell } from "../components/owner/OwnerShell";
 import { ownerFetch } from "../lib/ownerFetch";
+import { CalendarTimezone } from "../components/business/CalendarTimezone";
 
 interface ServiceItem {
   service_id: string;
@@ -68,6 +69,7 @@ interface NotificationItem {
 }
 
 export default function CalendarPage() {
+  const [timeZone, setTimeZone] = useState("UTC");
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [availability, setAvailability] = useState<AvailabilityItem[]>([]);
   const [bookings, setBookings] = useState<BookingItem[]>([]);
@@ -96,15 +98,15 @@ export default function CalendarPage() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  const loadData = async () => {
+  const loadData = async (fresh = false) => {
     setLoading(true);
     try {
       const [sRes, aRes, bRes, rRes, nRes] = await Promise.all([
-        ownerFetch("/api/v1/calendar/services"),
-        ownerFetch("/api/v1/calendar/availability"),
-        ownerFetch("/api/v1/calendar/bookings"),
-        ownerFetch("/api/v1/calendar/reports"),
-        ownerFetch("/api/v1/calendar/notifications"),
+        ownerFetch("/api/v1/calendar/services", fresh ? { cache: "no-store" } : {}),
+        ownerFetch("/api/v1/calendar/availability", fresh ? { cache: "no-store" } : {}),
+        ownerFetch("/api/v1/calendar/bookings", fresh ? { cache: "no-store" } : {}),
+        ownerFetch("/api/v1/calendar/reports", fresh ? { cache: "no-store" } : {}),
+        ownerFetch("/api/v1/calendar/notifications", fresh ? { cache: "no-store" } : {}),
       ]);
       if (sRes.ok) setServices(await sRes.json());
       if (aRes.ok) setAvailability(await aRes.json());
@@ -248,14 +250,14 @@ export default function CalendarPage() {
         <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4" style={{ borderColor: "var(--claude-border)" }}>
           <div>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight" style={{ color: "var(--claude-text)" }}>
-              Calendar & Automated Bookings
+              Calendar & bookings
             </h1>
             <p className="text-xs sm:text-sm mt-1 text-gray-500">
-              Live collision-free booking calendar, real-time voice & chat appointment sync, and reports.
+              Make time for your customers. Manage services, availability, and upcoming appointments.
             </p>
           </div>
           <button
-            onClick={() => void loadData()}
+            onClick={() => void loadData(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold text-gray-600 hover:bg-gray-50 self-start sm:self-auto"
             style={{ borderColor: "var(--claude-border)" }}
           >
@@ -263,6 +265,7 @@ export default function CalendarPage() {
           </button>
         </header>
 
+        <CalendarTimezone value={timeZone} onChange={setTimeZone} />
         {/* Analytics / Performance Reporting Banner */}
         {reports && (
           <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -334,52 +337,237 @@ export default function CalendarPage() {
 
         {/* Weekly Hours */}
         <section className="rounded-2xl p-4 sm:p-5 flex flex-col gap-3 bg-white border shadow-sm" style={{ borderColor: "var(--claude-border)" }}>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h2 className="text-sm font-bold text-gray-800">Weekly Operating Hours</h2>
-              <p className="text-[11px] text-gray-500">AI agents will only book during open hours and verify real free slots.</p>
+              <h2 className="text-sm font-bold text-gray-800">Weekly Operating Hours & Shifts</h2>
+              <p className="text-[11px] text-gray-500">
+                AI voice & chat agents use these exact hours to offer free slots and book appointments.
+              </p>
             </div>
             <button
               onClick={handleSaveHours}
               disabled={savingHours}
-              className="px-4 py-1.5 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-1.5"
+              className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-1.5 shadow-xs self-start sm:self-auto"
             >
-              <Save size={13} /> {savingHours ? "Saving…" : "Save Hours"}
+              <Save size={13} /> {savingHours ? "Saving…" : "Save Weekly Hours"}
             </button>
           </div>
 
+          {/* Quick presets and batch copy */}
+          <div
+            className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-gray-50/80 border text-xs"
+            style={{ borderColor: "var(--claude-border)" }}
+          >
+            <div className="flex items-center gap-1.5 text-gray-600 font-medium flex-wrap">
+              <Clock size={13} className="text-indigo-600" />
+              <span className="text-[11px] font-bold text-gray-700">Quick Presets:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setAvailability((prev) =>
+                    prev.map((a) =>
+                      a.weekday >= 0 && a.weekday <= 4
+                        ? { ...a, start_time: "09:00", end_time: "17:00", is_closed: false }
+                        : a
+                    )
+                  );
+                  showToast("Applied 09:00 – 17:00 to Mon–Fri ✓");
+                }}
+                className="px-2 py-0.5 rounded border bg-white hover:bg-gray-100 text-[11px] font-mono font-semibold"
+                style={{ borderColor: "var(--claude-border)" }}
+              >
+                09:00–17:00
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAvailability((prev) =>
+                    prev.map((a) =>
+                      a.weekday >= 0 && a.weekday <= 4
+                        ? { ...a, start_time: "09:00", end_time: "18:00", is_closed: false }
+                        : a
+                    )
+                  );
+                  showToast("Applied 09:00 – 18:00 to Mon–Fri ✓");
+                }}
+                className="px-2 py-0.5 rounded border bg-white hover:bg-gray-100 text-[11px] font-mono font-semibold"
+                style={{ borderColor: "var(--claude-border)" }}
+              >
+                09:00–18:00
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAvailability((prev) =>
+                    prev.map((a) =>
+                      a.weekday >= 0 && a.weekday <= 4
+                        ? { ...a, start_time: "08:00", end_time: "20:00", is_closed: false }
+                        : a
+                    )
+                  );
+                  showToast("Applied 08:00 – 20:00 to Mon–Fri ✓");
+                }}
+                className="px-2 py-0.5 rounded border bg-white hover:bg-gray-100 text-[11px] font-mono font-semibold"
+                style={{ borderColor: "var(--claude-border)" }}
+              >
+                08:00–20:00
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const monday = availability.find((a) => a.weekday === 0);
+                if (!monday) return;
+                setAvailability((prev) =>
+                  prev.map((a) =>
+                    a.weekday >= 0 && a.weekday <= 4
+                      ? {
+                          ...a,
+                          start_time: monday.start_time,
+                          end_time: monday.end_time,
+                          is_closed: monday.is_closed,
+                        }
+                      : a
+                  )
+                );
+                showToast("Copied Monday hours to all weekdays (Mon–Fri) ✓");
+              }}
+              className="px-2.5 py-1 rounded-lg border bg-white hover:bg-gray-50 text-[11px] font-semibold text-indigo-700 shadow-2xs transition-all"
+              style={{ borderColor: "var(--claude-border)" }}
+            >
+              Copy Mon to Mon–Fri
+            </button>
+          </div>
+
+          {/* 7 Days Schedule Cards with Time Inputs */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2">
             {availability.map((a, i) => (
               <div
                 key={i}
-                className={`rounded-xl border p-3 flex flex-col gap-1.5 transition-all ${
-                  a.is_closed ? "bg-gray-100 border-gray-200 opacity-60" : "bg-white border-indigo-200 shadow-xs"
+                className={`rounded-xl border p-3 flex flex-col justify-between gap-2.5 transition-all ${
+                  a.is_closed
+                    ? "bg-gray-50/70 border-gray-200 opacity-75"
+                    : "bg-white border-indigo-200 shadow-xs ring-1 ring-indigo-500/10"
                 }`}
               >
-                <div className="text-[11px] font-bold uppercase tracking-wider text-gray-700">
-                  {dayNames[a.weekday]}
-                </div>
-                {a.is_closed ? (
-                  <span className="text-xs font-medium text-gray-400">Closed</span>
-                ) : (
-                  <span className="text-xs font-mono font-semibold text-indigo-900">
-                    {a.start_time} — {a.end_time}
+                <div className="flex items-center justify-between border-b pb-1.5" style={{ borderColor: "var(--claude-border)" }}>
+                  <span className="text-[12px] font-bold uppercase tracking-wider text-gray-800">
+                    {dayNames[a.weekday]}
                   </span>
+                  <label className="flex items-center gap-1.5 text-[11px] font-medium text-gray-600 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={!a.is_closed}
+                      onChange={(e) =>
+                        setAvailability((prev) =>
+                          prev.map((x, idx) =>
+                            idx === i ? { ...x, is_closed: !e.target.checked } : x
+                          )
+                        )
+                      }
+                      className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    />
+                    {!a.is_closed ? (
+                      <span className="text-emerald-700 font-bold text-[10px]">Open</span>
+                    ) : (
+                      <span className="text-gray-400 font-medium text-[10px]">Closed</span>
+                    )}
+                  </label>
+                </div>
+
+                {!a.is_closed ? (
+                  <div className="flex flex-col gap-2">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
+                        Start Time
+                      </span>
+                      <input
+                        type="time"
+                        value={a.start_time}
+                        onChange={(e) =>
+                          setAvailability((prev) =>
+                            prev.map((x, idx) =>
+                              idx === i ? { ...x, start_time: e.target.value } : x
+                            )
+                          )
+                        }
+                        className="w-full bg-gray-50 border rounded-lg px-2 py-1 text-xs font-mono font-semibold text-gray-800 focus:bg-white focus:ring-1 focus:ring-indigo-500 outline-none"
+                        style={{ borderColor: "var(--claude-border)" }}
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
+                        End Time
+                      </span>
+                      <input
+                        type="time"
+                        value={a.end_time}
+                        onChange={(e) =>
+                          setAvailability((prev) =>
+                            prev.map((x, idx) =>
+                              idx === i ? { ...x, end_time: e.target.value } : x
+                            )
+                          )
+                        }
+                        className="w-full bg-gray-50 border rounded-lg px-2 py-1 text-xs font-mono font-semibold text-gray-800 focus:bg-white focus:ring-1 focus:ring-indigo-500 outline-none"
+                        style={{ borderColor: "var(--claude-border)" }}
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <div className="py-6 text-center text-xs font-medium text-gray-400 italic">
+                    Closed all day
+                  </div>
                 )}
-                <label className="flex items-center gap-1.5 text-[11px] mt-1 text-gray-600 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={!a.is_closed}
-                    onChange={(e) =>
-                      setAvailability((prev) =>
-                        prev.map((x, idx) => (idx === i ? { ...x, is_closed: !e.target.checked } : x))
-                      )
-                    }
-                  />
-                  Open
-                </label>
               </div>
             ))}
+          </div>
+        </section>
+
+        {/* How the AI Uses Your Calendar Callout */}
+        <section
+          className="p-4 rounded-2xl border bg-gradient-to-r from-indigo-50/70 via-purple-50/40 to-white shadow-xs flex items-start gap-3.5 text-xs"
+          style={{ borderColor: "var(--claude-border)" }}
+        >
+          <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+            <Mic size={18} />
+          </div>
+          <div className="flex flex-col gap-1.5 text-gray-700 leading-relaxed">
+            <h3 className="font-bold text-gray-900 text-sm">
+              How your AI Assistant uses this Calendar automatically
+            </h3>
+            <p>
+              When customers call or chat, your AI assistant uses these configured operating hours and services via real-time calendar tools:
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-1">
+              <div className="p-2.5 rounded-xl bg-white border border-indigo-100 shadow-2xs flex flex-col gap-1">
+                <span className="font-bold text-indigo-900 text-xs flex items-center gap-1">
+                  <CheckCircle2 size={13} className="text-emerald-600" />
+                  Free Slot Lookup
+                </span>
+                <span className="text-[11px] text-gray-500">
+                  AI dynamically checks your open days and hours to answer caller questions like <em>&quot;Do you have slots Thursday?&quot;</em>
+                </span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white border border-indigo-100 shadow-2xs flex flex-col gap-1">
+                <span className="font-bold text-indigo-900 text-xs flex items-center gap-1">
+                  <CheckCircle2 size={13} className="text-indigo-600" />
+                  Anti-Double Booking
+                </span>
+                <span className="text-[11px] text-gray-500">
+                  Protected with transactional database locks so two simultaneous callers can never take the same appointment slot.
+                </span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white border border-indigo-100 shadow-2xs flex flex-col gap-1">
+                <span className="font-bold text-indigo-900 text-xs flex items-center gap-1">
+                  <CheckCircle2 size={13} className="text-indigo-600" />
+                  Live Sync & Alerts
+                </span>
+                <span className="text-[11px] text-gray-500">
+                  When confirmed, appointments instantly appear in the table below with voice/chat badges and send alert notifications.
+                </span>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -407,7 +595,7 @@ export default function CalendarPage() {
                 {bookings.map((b) => (
                   <tr key={b.booking_id} className="hover:bg-gray-50/50 transition-colors">
                     <td className="py-3 text-xs font-mono font-medium text-gray-800">
-                      {b.start_ts ? new Date(b.start_ts).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—"}
+                      {b.start_ts ? new Date(b.start_ts).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short", timeZone }) : "—"}
                     </td>
                     <td className="text-xs font-semibold text-gray-900 truncate max-w-[240px]">
                       {b.title}
@@ -437,8 +625,8 @@ export default function CalendarPage() {
                             onClick={() => {
                               setReschedulingBooking(b);
                               const d = b.start_ts ? new Date(b.start_ts) : new Date();
-                              setRescheduleDate(d.toISOString().slice(0, 10));
-                              setRescheduleTime(d.toTimeString().slice(0, 5));
+                              setRescheduleDate(d.toLocaleDateString("en-CA", { timeZone }));
+                              setRescheduleTime(d.toLocaleTimeString("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }));
                             }}
                             className="px-2 py-1 rounded text-[11px] font-semibold text-indigo-600 hover:bg-indigo-50"
                           >

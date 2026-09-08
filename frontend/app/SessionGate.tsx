@@ -6,6 +6,7 @@
 // way the gate can be tested and changed without touching either.
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 
 type GateState = "checking" | "locked" | "open";
 
@@ -16,12 +17,15 @@ type GateState = "checking" | "locked" | "open";
 let alreadyOpen = false;
 
 export default function SessionGate({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const publicEntry = pathname === "/signin" || pathname === "/directory" || pathname?.startsWith("/t/") || pathname?.startsWith("/link/");
   const [state, setState] = useState<GateState>("open");
   const [passcode, setPasscode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
+    if (publicEntry) return;
     if (alreadyOpen) return;
 
     let active = true;
@@ -70,7 +74,7 @@ export default function SessionGate({ children }: { children: React.ReactNode })
     return () => {
       active = false;
     };
-  }, []);
+  }, [publicEntry]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -96,6 +100,8 @@ export default function SessionGate({ children }: { children: React.ReactNode })
       setSubmitting(false);
     }
   }
+
+  if (publicEntry) return <>{children}</>;
 
   if (state === "checking") {
     return (

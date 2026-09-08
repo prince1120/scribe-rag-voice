@@ -185,6 +185,7 @@ class VoiceTokenResponse(BaseModel):
     url: str
     room_name: str
     participant_identity: str
+    call_id: str = ""
 
 
 class VoicePreviewRequest(BaseModel):

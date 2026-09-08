@@ -29,7 +29,10 @@ class VoiceSettings(BaseSettings):
     # a clear error rather than silently falling back to something else.
     VOICE_STT_PROVIDER: str = "sarvam"
     VOICE_TTS_PROVIDER: str = "sarvam"
-    VOICE_LLM_PROVIDER: str = "groq"
+    # Mistral uses the OpenAI-compatible API and is the default for voice.
+    # It avoids the very small Groq TPM allowance that can leave an active
+    # caller waiting with no response when a burst of turns exhausts it.
+    VOICE_LLM_PROVIDER: str = "mistral"
 
     # Sarvam
     SARVAM_API_KEY: str = ""
@@ -42,7 +45,10 @@ class VoiceSettings(BaseSettings):
     VOICE_TTS_LANGUAGE: str = "en-IN"
     # Must be compatible with the TTS plugin's default model (bulbul:v3) —
     # bulbul:v2 speakers like "anushka" will raise at construction time.
-    VOICE_TTS_SPEAKER: str = "shubh"
+    # Sarvam's production guidance recommends Priya as the most broadly
+    # natural female voice across English and major Indian languages. Owners
+    # can still choose any supported voice per agent.
+    VOICE_TTS_SPEAKER: str = "priya"
 
     # Groq — default to the *instant* model: for real-time voice, time-to-
     # first-token dominates perceived latency, and 8b-instant is far snappier
@@ -50,7 +56,7 @@ class VoiceSettings(BaseSettings):
     # trade latency for the larger model's reasoning.
     GROQ_API_KEY: str = ""
     MISTRAL_API_KEY: str = ""
-    VOICE_LLM_MODEL: str = "openai/gpt-oss-20b"
+    VOICE_LLM_MODEL: str = "mistral-small-latest"
     # Deliberately lower than text chat's rag_pipeline.py default (800): a
     # spoken answer needs to stay short to be listenable (800 tokens is
     # roughly a minute of TTS) and short is also cheap. The Settings panel's
@@ -70,15 +76,12 @@ class VoiceSettings(BaseSettings):
     # the filler phrases, which are chosen in code from a fixed list the model
     # never sees.
     VOICE_LLM_TEMPERATURE: float = 0.3
-    # ~500 tokens is ~35-40 seconds of speech — plenty for a complete grounded answer with phone/email
-    # without mid-sentence cut. Delivery rules still ask for 1-3 sentences, but we no longer
-    # truncate an answer that needs to deliver contact details or experience.
-    VOICE_LLM_MAX_TOKENS: int = 500
-    # Styled cap lifted from 200 → 350 so a verified answer (e.g. "Amit has more than
-    # four years... in Android development. Phone is +91...") can complete in one turn.
-    # 350 is ~25s, still conversational, but not cutting at "experience".
-    VOICE_LLM_STYLED_MAX_TOKENS_CAP: int = 350
-    VOICE_LLM_MAX_TOKENS_CAP: int = 700
+    # A voice turn should normally be one or two short sentences. Keeping the
+    # completion budget small reduces first-audio time and avoids consuming a
+    # provider's per-minute allowance with answers nobody wants to hear.
+    VOICE_LLM_MAX_TOKENS: int = 220
+    VOICE_LLM_STYLED_MAX_TOKENS_CAP: int = 240
+    VOICE_LLM_MAX_TOKENS_CAP: int = 350
 
     # Generic OpenAI-compatible LLM (any provider: Mistral, OpenRouter, a
     # self-hosted server, ...). Set per-session from the token request's
@@ -124,7 +127,10 @@ class VoiceSettings(BaseSettings):
     # SECONDS the model may think before the agent makes a noise. Below the
     # point where silence reads as a dropped call, above the point where a fast
     # reply would be preceded by a pointless "okay". 0 disables it.
-    VOICE_THINKING_FILLER_DELAY: float = 0.5
+    # A quick reply should sound immediate, not like it was preceded by a
+    # needless "okay". Wait just under a second before using a spoken bridge;
+    # long model/tool work still feels attended while fast turns stay clean.
+    VOICE_THINKING_FILLER_DELAY: float = 0.85
 
     # Sarvam speech shaping. Tuned for human-like prosody, not flat TTS:
     # - pace 0.92: slightly slower than 1.0 default — more natural, less hurried, room for Indian accent
@@ -134,9 +140,9 @@ class VoiceSettings(BaseSettings):
     VOICE_TTS_TEMPERATURE: float = 0.75
 
     # Sliding-window clause chunking for streaming TTS:
-    # First chunk threshold is small (24 chars) to start audio synthesis immediately (low TTFB),
+    # First chunk threshold is deliberately small (18 chars) to start audio synthesis immediately (low TTFB),
     # while subsequent chunks threshold (48 chars) preserves natural prosody and intonation.
-    VOICE_TTS_FIRST_CHUNK_MIN_CHARS: int = 24
+    VOICE_TTS_FIRST_CHUNK_MIN_CHARS: int = 18
     VOICE_TTS_SUBSEQUENT_CHUNK_MIN_CHARS: int = 48
     VOICE_TTS_CHUNK_MAX_CHARS: int = 140
 
@@ -156,10 +162,14 @@ class VoiceSettings(BaseSettings):
     # cleanly. All are overridable via .env.
 
     # Silence (s) after you stop before the agent takes its turn.
-    # Tuned to ~280ms for snappy STT finalization and natural human breathing pauses.
-    VOICE_ENDPOINTING_MIN_DELAY: float = 0.28
-    # The hard stop for an ambiguous ending.
-    VOICE_ENDPOINTING_MAX_DELAY: float = 0.70
+    # Timer fallback for an utterance where STT has not supplied a clear
+    # sentence ending.  Clear question/statement endings use an even faster
+    # per-turn path in worker.py; this is the safe path for ordinary speech.
+    VOICE_ENDPOINTING_MIN_DELAY: float = 0.24
+    # The hard stop for an ambiguous ending. Keeping it below a typical human
+    # beat removes avoidable dead air without treating a brief thinking pause
+    # as a completed turn.
+    VOICE_ENDPOINTING_MAX_DELAY: float = 0.55
     # "dynamic" adapts the wait to the caller's rhythm, or "fixed" enforces exact min_delay.
     VOICE_ENDPOINTING_MODE: str = "dynamic"
 
@@ -168,11 +178,13 @@ class VoiceSettings(BaseSettings):
     VOICE_SEMANTIC_TURN_DETECTION: bool = False
     VOICE_PREEMPTIVE_TTS: bool = False
 
-    VOICE_INTERRUPTION_MODE: str = "adaptive"
-    VOICE_INTERRUPTION_MIN_WORDS: int = 1
+    # Local VAD is dependable even without a hosted turn detector. A caller
+    # can barge in on the first audible word instead of waiting for STT.
+    VOICE_INTERRUPTION_MODE: str = "vad"
+    VOICE_INTERRUPTION_MIN_WORDS: int = 0
     VOICE_INTERRUPTION_MIN_DURATION: float = 0.20
-    VOICE_RESUME_FALSE_INTERRUPTION: bool = False
-    VOICE_VAD_MIN_SILENCE: float = 0.25
+    VOICE_RESUME_FALSE_INTERRUPTION: bool = True
+    VOICE_VAD_MIN_SILENCE: float = 0.24
     # Greet the user out loud the moment the call connects, like a real
     # voice agent — avoids the awkward "is this working?" silence.
     VOICE_GREET_ON_CONNECT: bool = True
@@ -217,13 +229,14 @@ if not voice_settings.LIMITS_ENABLED:
 SUPPORTED_TTS_VOICES: dict[str, list[dict[str, str]]] = {
     "male": [
         {"id": "shubh", "label": "Shubh", "tagline": "Confident & Bold"},
+        {"id": "ratan", "label": "Ratan", "tagline": "Natural English & Hinglish"},
         {"id": "rahul", "label": "Rahul", "tagline": "Deep & Authoritative"},
         {"id": "amit", "label": "Amit", "tagline": "Steady & Trustworthy"},
         {"id": "kabir", "label": "Kabir", "tagline": "Rich & Cinematic"},
         {"id": "dev", "label": "Dev", "tagline": "Casual & Relatable"},
     ],
     "female": [
-        {"id": "priya", "label": "Priya", "tagline": "Cheerful & Engaging"},
+        {"id": "priya", "label": "Priya", "tagline": "Natural & Conversational"},
         {"id": "ishita", "label": "Ishita", "tagline": "Polished & Articulate"},
         {"id": "neha", "label": "Neha", "tagline": "Energetic & Warm"},
         {"id": "roopa", "label": "Roopa", "tagline": "Gentle & Soothing"},
@@ -337,8 +350,9 @@ _RAG_PROMPT = (
     "You are Scribe, a research assistant who answers from the user's own "
     "documents in a spoken conversation.\n\n"
     "WORKING WITH EXCERPTS\n"
-    "- Some turns attach 'Relevant excerpts' above the user's message. They "
-    "were retrieved by similarity and are NOT guaranteed to be relevant.\n"
+    "- Answer from supplied knowledge or verified prior results first. Only "
+    "call search_knowledge_base when information is missing or the caller "
+    "requests a lookup. Results are NOT guaranteed to be relevant.\n"
     "- Read them before answering. Use what genuinely answers the question and "
     "ignore the rest — never summarise an excerpt just because it was "
     "provided.\n"
@@ -350,8 +364,8 @@ _RAG_PROMPT = (
     "needed them and nothing relevant came back. Do not fall back on general "
     "knowledge and present it as if it came from their files — if you step "
     "outside their documents, say that you are.\n"
-    "- No excerpts attached means no lookup was needed: small talk, a "
-    "follow-up, or an acknowledgement. Just respond naturally, and never "
+    "- No excerpts means no search has run yet. Search if needed for missing "
+    "facts; otherwise respond naturally to small talk and follow-ups. Never "
     "re-explain something the user didn't ask about again.\n"
     "- If the user signals they're done with a topic, acknowledge it briefly "
     "and move on."

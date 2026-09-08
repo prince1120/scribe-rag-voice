@@ -5,7 +5,7 @@ import { Room, RoomEvent, Track, createAudioAnalyser } from "livekit-client";
 
 import { VoiceSpectrum } from "./components/voice/VoiceSpectrum";
 import { NetworkBanner } from "./components/voice/NetworkBanner";
-import { MIC_CAPTURE, useCallQuality } from "./components/voice/useCallQuality";
+import { MIC_CAPTURE, useCallQuality, VOICE_ROOM_OPTIONS } from "./components/voice/useCallQuality";
 import { useAudioDeviceSwitching } from "./components/voice/useAudioDeviceSwitching";
 import { personaForVoice } from "./components/voice/voicePersona";
 import { VOICE_DATA_PACKETS } from "./components/voice/voiceEvents";
@@ -435,7 +435,7 @@ export function VoiceCallModal({
       if (!res.ok) throw new Error(await extractErrorDetail(res));
       const { url, token } = await res.json();
 
-      const room = new Room();
+      const room = new Room(VOICE_ROOM_OPTIONS);
       roomRef.current = room;
       setActiveRoom(room);
 
@@ -529,6 +529,10 @@ export function VoiceCallModal({
             });
             setActiveSpeaker("user");
             setAgentState("listening");
+            return;
+          }
+          if (data.type === VOICE_DATA_PACKETS.TELEMETRY) {
+            // Received real-time latency telemetry
             return;
           }
           if (

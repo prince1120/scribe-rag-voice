@@ -39,6 +39,8 @@ export interface SnapshotItem {
   language: string;
   voice_id: string;
   is_active?: boolean;
+  is_current?: boolean;
+  is_live?: boolean;
 }
 
 export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
@@ -74,10 +76,10 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
     setTimeout(() => setToast(null), 3500);
   };
 
-  const load = async () => {
+  const load = async (fresh = false) => {
     setLoading(true);
     try {
-      const r = await ownerFetch("/api/v1/workspace/agents");
+      const r = await ownerFetch("/api/v1/workspace/agents", fresh ? { cache: "no-store" } : {});
       if (r.ok) {
         const j = await r.json();
         setSnapshots(j.snapshots || []);
@@ -271,7 +273,7 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
           </div>
 
           <button
-            onClick={() => void load()}
+            onClick={() => void load(true)}
             title="Refresh agents"
             className="p-1.5 rounded-lg border text-gray-600 hover:bg-gray-50"
             style={{ borderColor: "var(--claude-border)" }}
@@ -307,7 +309,9 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
         <div className="grid gap-3">
           {filteredSnapshots.map((s) => {
             const isExpanded = expandedId === s.snapshot_id;
-            const isLive = Boolean(s.is_active);
+            const isSelected = Boolean(s.is_current ?? s.is_active);
+            const isLive = Boolean(s.is_live ?? (s.is_active && activeAgent?.status === "deployed"));
+            const isDraft = isSelected && !isLive;
 
             return (
               <div
@@ -315,6 +319,8 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
                 className={`rounded-2xl border p-4 transition-all ${
                   isLive
                     ? "bg-white border-emerald-300 shadow-sm ring-1 ring-emerald-400/20"
+                    : isDraft
+                    ? "bg-amber-50/20 border-amber-200 shadow-xs"
                     : "bg-white border-gray-200 hover:border-gray-300 shadow-xs"
                 }`}
               >
@@ -324,10 +330,14 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-bold text-gray-900">{s.name}</span>
                       
-                      {/* Active Live Badge */}
+                      {/* Active Live / Draft Badge */}
                       {isLive ? (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 flex items-center gap-1">
                           <CheckCircle2 size={11} /> Active Live Agent
+                        </span>
+                      ) : isDraft ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300/80 flex items-center gap-1">
+                          <Clock size={11} /> In Studio (Draft / Offline)
                         </span>
                       ) : (
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 text-gray-500">
@@ -368,7 +378,21 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
 
                   {/* Actions Header */}
                   <div className="flex items-center gap-1.5 flex-shrink-0 self-end sm:self-center">
-                    {!isLive ? (
+                    {isLive ? (
+                      <Link
+                        href="/agent"
+                        className="h-8 px-3.5 rounded-xl text-xs font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 flex items-center gap-1.5 transition-all"
+                      >
+                        <ExternalLink size={12} /> Open in Studio
+                      </Link>
+                    ) : isDraft ? (
+                      <Link
+                        href="/agent"
+                        className="h-8 px-3.5 rounded-xl text-xs font-bold text-amber-900 bg-amber-50 border border-amber-300 hover:bg-amber-100 flex items-center gap-1.5 transition-all"
+                      >
+                        <ExternalLink size={12} /> Open & Deploy Live
+                      </Link>
+                    ) : (
                       <button
                         onClick={() => void activate(s.snapshot_id, s.name)}
                         disabled={activating === s.snapshot_id}
@@ -378,13 +402,6 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
                         <Play size={12} className={activating === s.snapshot_id ? "animate-spin" : ""} />
                         {activating === s.snapshot_id ? "Activating…" : "Make Live"}
                       </button>
-                    ) : (
-                      <Link
-                        href="/agent"
-                        className="h-8 px-3.5 rounded-xl text-xs font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 flex items-center gap-1.5 transition-all"
-                      >
-                        <ExternalLink size={12} /> Open in Studio
-                      </Link>
                     )}
 
                     <button

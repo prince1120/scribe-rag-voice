@@ -106,7 +106,12 @@ def resolve_identity(
                 parts = kind.split(":", 2)
                 contact_id = parts[1] if len(parts) > 1 else ""
                 c_owner_tenant = parts[2] if len(parts) > 2 else OWNER_TENANT_ID
-                if not owner_tenant:
+                if contact_id and c_owner_tenant and is_owner and owner_tenant != c_owner_tenant:
+                    # User is an owner of a different workspace, but currently using another business's link.
+                    # For this business, they are a pure contact.
+                    is_owner = False
+                    owner_tenant = c_owner_tenant
+                elif not owner_tenant:
                     owner_tenant = c_owner_tenant
         except SessionError:
             pass

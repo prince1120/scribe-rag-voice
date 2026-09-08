@@ -30,6 +30,22 @@ interface AgentCard {
   deployed_at: string | null;
 }
 
+const DIRECTORY_CACHE_KEY = "scribe_public_directory_v1";
+const DIRECTORY_CACHE_TTL_MS = 30_000;
+
+function readDirectoryCache(): AgentCard[] | null {
+  try {
+    const raw = sessionStorage.getItem(DIRECTORY_CACHE_KEY);
+    if (!raw) return null;
+    const cached = JSON.parse(raw) as { at: number; agents: AgentCard[] };
+    return Date.now() - cached.at < DIRECTORY_CACHE_TTL_MS && Array.isArray(cached.agents)
+      ? cached.agents
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function browserId(): string {
   const KEY = "app_client_id";
   let id = localStorage.getItem(KEY);
@@ -59,7 +75,13 @@ export default function DirectoryPage() {
   useEffect(() => {
     let cancelled = false;
     async function loadAgents() {
-      setLoading(true);
+      const cached = typeof window !== "undefined" ? readDirectoryCache() : null;
+      if (cached) {
+        setAgents(cached);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
       setError("");
       try {
         const res = await fetch("/api/v1/directory/agents");
@@ -70,6 +92,7 @@ export default function DirectoryPage() {
         if (!cancelled) {
           const list: AgentCard[] = data.agents || [];
           setAgents(list);
+          try { sessionStorage.setItem(DIRECTORY_CACHE_KEY, JSON.stringify({ at: Date.now(), agents: list })); } catch { /* storage unavailable */ }
 
           if (typeof window !== "undefined") {
             const params = new URLSearchParams(window.location.search);
@@ -182,12 +205,12 @@ export default function DirectoryPage() {
 
   return (
     <div
-      className="min-h-screen flex flex-col font-sans"
+      className="directory-page min-h-screen flex flex-col font-sans"
       style={{ background: "var(--claude-bg)", color: "var(--claude-text)" }}
     >
       {/* Top Header */}
       <header
-        className="sticky top-0 z-20 border-b backdrop-blur-md px-4 sm:px-8 py-3 flex items-center justify-between"
+        className="directory-header sticky top-0 z-20 border-b backdrop-blur-md px-4 sm:px-8 py-3 flex items-center justify-between"
         style={{
           borderColor: "var(--claude-border)",
           background: "rgba(240, 238, 230, 0.85)",
@@ -236,7 +259,7 @@ export default function DirectoryPage() {
       </header>
 
       {/* Hero Section */}
-      <section className="px-4 sm:px-8 pt-10 pb-8 max-w-5xl mx-auto w-full text-center">
+      <section className="directory-hero px-4 sm:px-8 pt-10 pb-8 max-w-5xl mx-auto w-full text-center">
         <div
           className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-4 border"
           style={{
@@ -253,14 +276,13 @@ export default function DirectoryPage() {
           className="font-serif-display text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight mb-3"
           style={{ color: "var(--claude-text)" }}
         >
-          Talk to a Business Assistant
+          A helpful voice, ready when you are.
         </h1>
         <p
           className="text-sm sm:text-base max-w-2xl mx-auto mb-8"
           style={{ color: "var(--claude-muted)", lineHeight: 1.6 }}
         >
-          Browse active businesses using Scribe. Choose any assistant below to start a live, spoken
-          voice call or text chat grounded in their verified services and documents.
+          Find a business and start a conversation. Their assistant can answer questions, share details, and help you book time.
         </p>
 
         {/* Search & Filter Bar */}
@@ -317,7 +339,7 @@ export default function DirectoryPage() {
       </section>
 
       {/* Directory Grid */}
-      <main className="px-4 sm:px-8 pb-16 max-w-5xl mx-auto w-full flex-1">
+      <main className="directory-main px-4 sm:px-8 pb-16 max-w-5xl mx-auto w-full flex-1">
         {error && (
           <div
             className="p-4 rounded-xl border mb-6 text-center text-xs font-medium"
@@ -332,7 +354,7 @@ export default function DirectoryPage() {
         )}
 
         {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="directory-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {[1, 2, 3].map((i) => (
               <div
                 key={i}
@@ -373,13 +395,13 @@ export default function DirectoryPage() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="directory-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredAgents.map((agent) => {
               const isConnecting = connectingId === agent.handle;
               return (
                 <div
                   key={agent.handle}
-                  className="rounded-2xl border p-5 flex flex-col justify-between transition-all hover:shadow-md hover:border-[var(--claude-border-strong)]"
+                  className="directory-card rounded-2xl border p-5 flex flex-col justify-between transition-all hover:shadow-md hover:border-[var(--claude-border-strong)]"
                   style={{
                     borderColor: "var(--claude-border)",
                     background: "var(--claude-surface)",
@@ -482,7 +504,7 @@ export default function DirectoryPage() {
       {/* Quick Connect Modal */}
       {connectModalAgent && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          className="directory-modal fixed inset-0 z-50 flex items-center justify-center p-4"
           style={{ background: "rgba(20, 20, 18, 0.45)", backdropFilter: "blur(4px)" }}
         >
           <div
@@ -612,7 +634,7 @@ export default function DirectoryPage() {
 
       {/* Footer */}
       <footer
-        className="border-t py-6 px-4 sm:px-8 text-center text-xs"
+        className="directory-footer border-t py-6 px-4 sm:px-8 text-center text-xs"
         style={{ borderColor: "var(--claude-border)", color: "var(--claude-muted)" }}
       >
         <p>Scribe AI Assistants — Grounded, low-latency communication for businesses and creators.</p>

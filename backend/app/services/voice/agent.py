@@ -21,7 +21,6 @@ from app.services.voice.config import VoiceSettings
 from app.services.voice.domain.interfaces import VoiceDataPacket
 from app.services.voice.filler import (
     _RAG_FILLER_DELAY_S,
-    pick_rag_filler,
     start_thinking_filler,
 )
 from app.services.voice.language import normalize_tts_lang
@@ -219,11 +218,28 @@ class VoiceAssistant(Agent):
         tenant_id: str = "default",
         chat_ctx: Optional[llm.ChatContext] = None,
     ) -> None:
-        super().__init__(instructions=instructions, chat_ctx=chat_ctx)
+        retrieval_policy = (
+            "\n\nKNOWLEDGE LOOKUP POLICY\n"
+            "Answer directly when the answer is already in your instructions, supplied "
+            "business knowledge, or verified conversation/tool results. Do not search "
+            "on every turn. Call search_knowledge_base only when information needed "
+            "to answer is missing, or the caller explicitly requests a document lookup. "
+            "Never invent missing business facts. After searching, answer the caller's "
+            "question from relevant results; if nothing answers it, explain what is "
+            "unavailable. Use calendar tools for live availability and bookings."
+            if rag_enabled else
+            "\n\nDocument search is disabled for this call. Do not call "
+            "search_knowledge_base. Answer from supplied knowledge and be honest "
+            "when information is missing."
+        )
+        super().__init__(instructions=instructions + retrieval_policy, chat_ctx=chat_ctx)
         self._settings = settings
         self._rag_enabled = rag_enabled
         self._tenant_id = tenant_id
         self._filler_task: Optional[asyncio.Task] = None
+        # Booking writes may take a network/database round trip. Keep these
+        # tasks alive after the LLM tool returns so speech never waits on them.
+        self._booking_tasks: set[asyncio.Task] = set()
         self._last_user_lang: Optional[str] = None
         self._goodbye_pending: bool = False
 
@@ -289,6 +305,137 @@ class VoiceAssistant(Agent):
     def _start_thinking_filler(self) -> None:
         start_thinking_filler(self, self._settings.VOICE_THINKING_FILLER_DELAY)
 
+    async def _say_rag_progress(self) -> None:
+        """Speak one clear bridge while a document lookup completes.
+
+        This is deliberately distinct from the generic thinking filler: the
+        caller should hear what is happening and know an answer is coming,
+        rather than receive a vague acknowledgement followed by silence.
+        """
+        lang = self._last_user_lang or "en-IN"
+        if lang.startswith("hi"):
+            message = "Ek pal, main aapke business ki jaankari check kar raha hoon. Main abhi sahi jawab deta hoon."
+        else:
+            message = "One moment, I’m checking the business information so I can give you the right answer."
+        try:
+            # AgentSession.say is async and returns once speech has been
+            # scheduled; it does not make the RAG request wait for playback.
+            await self.session.say(
+                message,
+                allow_interruptions=True,
+                add_to_chat_ctx=False,
+            )
+        except Exception:
+            logger.debug("Could not play RAG progress message", exc_info=True)
+
+    async def _publish_booking_event(self, payload: dict) -> None:
+        room = self._get_room()
+        if not room or not getattr(room, "local_participant", None):
+            return
+        try:
+            import json
+            await room.local_participant.publish_data(json.dumps(payload).encode())
+        except Exception:
+            logger.debug("Could not publish booking update", exc_info=True)
+
+    def _run_background_booking(
+        self, *, service_id: str, service_name: str, date: str, time: str,
+        start_ts, timezone_name: str, reason: str, contact_id: Optional[str],
+    ) -> None:
+        """Start the slow calendar write after the spoken acknowledgement.
+
+        The function tool returns immediately. A later event updates the caller
+        screen and a short direct announcement confirms the actual database
+        result. It never claims a booking before `create_booking` succeeds.
+        """
+        async def complete() -> None:
+            from app.services.calendar_service import create_booking
+            try:
+                record = await create_booking(
+                    tenant_id=self._tenant_id,
+                    service_id_or_name=service_id,
+                    start_ts=start_ts,
+                    title=f"{service_name}: {reason}" if reason else f"{service_name} appointment",
+                    contact_id=contact_id,
+                    source="voice",
+                    idempotency_key=(
+                        f"voice:{getattr(self, '_call_id', '')}:{service_id}:{date}:{time}"
+                    ),
+                )
+                if record.status == "cancelled":
+                    await self._publish_booking_event({
+                        "type": "booking_failed",
+                        "text": "This appointment was previously cancelled.",
+                    })
+                    await self.session.say(
+                        "I found that this appointment was previously cancelled, so it was not booked again.",
+                        allow_interruptions=True,
+                    )
+                    return
+                await self._publish_booking_event({
+                    "type": "booking_confirmed",
+                    "booking_id": record.booking_id,
+                    "service": service_name,
+                    "date": date,
+                    "time": time,
+                    "timezone": timezone_name,
+                    "start_ts": start_ts.isoformat(),
+                    "text": f"Booking confirmed: {service_name} on {date} at {time}",
+                })
+                # Give the acknowledgement a chance to begin before the final
+                # confirmation queues behind it.
+                await asyncio.sleep(0.35)
+                lang = self._last_user_lang or "en-IN"
+                if lang.startswith("hi"):
+                    confirmation = f"Aapka {service_name} {date} ko {time} baje confirm ho gaya hai."
+                else:
+                    confirmation = f"Your {service_name} is confirmed for {date} at {time}, {timezone_name}."
+                await self.session.say(confirmation, allow_interruptions=True)
+            except ValueError as exc:
+                await self._publish_booking_event({"type": "booking_failed", "text": str(exc)})
+                await self.session.say(
+                    "I could not confirm that slot. Please choose another available time.",
+                    allow_interruptions=True,
+                )
+            except Exception:
+                logger.exception("Background booking failed")
+                await self._publish_booking_event({
+                    "type": "booking_failed",
+                    "text": "We could not confirm the booking. Please try again.",
+                })
+                await self.session.say(
+                    "I could not confirm the booking right now. Please try again in a moment.",
+                    allow_interruptions=True,
+                )
+
+        task = asyncio.create_task(complete())
+        self._booking_tasks.add(task)
+        task.add_done_callback(self._booking_tasks.discard)
+
+    def _speak_booking_progress(self, service_name: str, date: str, time: str) -> None:
+        """Give a specific spoken acknowledgement without holding up the calendar write."""
+        lang = self._last_user_lang or "en-IN"
+        if lang.startswith("hi"):
+            message = (
+                f"Main {service_name} ko {date} ko {time} baje confirm kar raha hoon. "
+                "Aap baat karte rahiye, main confirmation aate hi bata dunga."
+            )
+        else:
+            message = (
+                f"I am confirming your {service_name} for {date} at {time}. "
+                "Please keep talking while I check that for you."
+            )
+
+        async def announce() -> None:
+            try:
+                await self.session.say(message, allow_interruptions=True)
+            except Exception:
+                logger.debug("Could not announce booking progress", exc_info=True)
+
+        task = asyncio.create_task(announce())
+        self._booking_tasks.add(task)
+        task.add_done_callback(self._booking_tasks.discard)
+
     @llm.function_tool(description="Check available time slots for a service on a given date. Date format: YYYY-MM-DD. Returns a list of free slots.")
     async def check_availability(self, service: str, date: str) -> str:
         from app.services.calendar_service import free_slots
@@ -302,61 +449,72 @@ class VoiceAssistant(Agent):
         except Exception as e:
             return f"Could not check slots: {e}"
 
-    @llm.function_tool(description="Book a calendar appointment for a service. Call ONLY after user confirms date and time. Params: service (service name or ID), date (YYYY-MM-DD), time (HH:MM), reason (optional note).")
-    async def book_appointment(self, service: str, date: str, time: str, reason: str = "") -> str:
-        from datetime import datetime, timezone
-        from app.services.calendar_service import create_booking, free_slots, resolve_service
+    @llm.function_tool(description="Leave a message or request for the business owner. Call ONLY when caller explicitly asks to leave a message or request a callback. Params: message (what caller needs), reply_contact (caller phone number or email so owner can respond).")
+    async def leave_message_for_business(self, message: str, reply_contact: str) -> str:
+        self._start_thinking_filler()
+        from app.repositories.business import create_request
+        from uuid import uuid4
         try:
-            svc = await resolve_service(self._tenant_id, service)
-            sid = svc.service_id if svc else service
-            sname = svc.name if svc else service
-
-            # Verify availability before confirming
-            slots = await free_slots(self._tenant_id, sid, date)
-            if time not in slots:
-                avail_sample = ", ".join(slots[:3]) if slots else "none"
-                return f"The slot at {time} on {date} is not available. Free slots: {avail_sample}. Please suggest another time to the caller."
-
-            dt = datetime.fromisoformat(f"{date}T{time}:00").replace(tzinfo=timezone.utc)
             contact_id = getattr(self, "_contact_id", None)
-            rec = await create_booking(
+            if not contact_id:
+                return "This link is not registered to a contact. Please provide your contact details directly to the business."
+            req = await create_request(
                 tenant_id=self._tenant_id,
-                service_id_or_name=sid,
-                start_ts=dt,
-                title=f"{sname}: {reason}" if reason else f"{sname} appointment",
                 contact_id=contact_id,
-                source="voice",
+                request_id=str(uuid4()),
+                message=message.strip(),
+                reply_to=reply_contact.strip(),
+                call_id=getattr(self, "_call_id", None),
             )
-
-            # Publish real-time event to caller UI
-            room = getattr(self.session, "room", None)
-            if room and hasattr(room, "local_participant") and room.local_participant:
-                try:
-                    import json
-                    await room.local_participant.publish_data(
-                        json.dumps({
-                            "type": "booking_confirmed",
-                            "booking_id": rec.booking_id,
-                            "service": sname,
-                            "date": date,
-                            "time": time,
-                            "text": f"Booked {sname} on {date} at {time}",
-                        }).encode()
-                    )
-                except Exception:
-                    pass
-
             lang = self._last_user_lang or "en-IN"
             if lang.startswith("hi"):
-                return f"Ho gaya! {sname} {date} ko {time} baje book ho gaya hai. Booking ID {rec.booking_id} hai."
-            return f"Successfully booked {sname} on {date} at {time}. Confirmation ID is {rec.booking_id}."
-        except ValueError as e:
-            return f"Could not complete booking: {e}"
+                return f"Aapka message business tak pahuncha diya gaya hai. Request ID {req.request_id} hai."
+            return f"Your message has been sent to the business team. Reference ID: {req.request_id}."
         except Exception as e:
-            return f"Calendar error: {e}"
+            return f"Could not send message: {e}"
 
-    @llm.function_tool(description="Reschedule an existing appointment to a new date (YYYY-MM-DD) and time (HH:MM).")
+    @llm.function_tool(description="Start booking a calendar appointment after the user confirms date and time. This tool acknowledges the caller and confirms in the background, so never wait for a result or claim it is booked in your next reply. Params: service (service name or ID), date (YYYY-MM-DD), time (HH:MM), reason (optional note).")
+    async def book_appointment(self, service: str, date: str, time: str, reason: str = "") -> str:
+        from app.services.voice.filler import cancel_thinking_filler
+        from app.services.calendar_service import resolve_service, local_booking_time, business_timezone
+        try:
+            svc = await resolve_service(self._tenant_id, service)
+            if not svc:
+                return "I could not find that service. Please ask the caller to choose one of the listed services."
+            sid, sname = svc.service_id, svc.name
+
+            dt = await local_booking_time(self._tenant_id, date, time)
+            zone = str(await business_timezone(self._tenant_id))
+            contact_id = getattr(self, "_contact_id", None)
+            await self._publish_booking_event({
+                "type": "booking_pending",
+                "text": f"Confirming {sname} for {date} at {time}…",
+            })
+            # Replace generic fillers such as “Right” with a precise spoken
+            # acknowledgement. This is deliberately detached from the slow
+            # calendar write, so the caller can continue the conversation.
+            cancel_thinking_filler(self)
+            self._speak_booking_progress(sname, date, time)
+            self._run_background_booking(
+                service_id=sid, service_name=sname, date=date, time=time,
+                start_ts=dt, timezone_name=zone, reason=reason,
+                contact_id=contact_id,
+            )
+            return (
+                "BACKGROUND BOOKING STARTED. The caller has already received a clear spoken "
+                "acknowledgement. Do not reply with only 'Okay', 'Right', or a claim that it is "
+                "booked. Continue naturally with the caller's next request; a separate announcement "
+                "will state the real booking result."
+            )
+        except ValueError as e:
+            return f"I could not prepare that booking: {e}"
+        except Exception as e:
+            logger.exception("Could not start background booking")
+            return "I could not start the booking right now. Please try again."
+
+    @llm.function_tool(description="Reschedule an existing appointment to a new date (YYYY-MM-DD) and time (HH:MM). Call ONLY after user explicitly confirms the new date and time.")
     async def reschedule_appointment(self, booking_id: str, date: str, time: str) -> str:
+        self._start_thinking_filler()
         from app.services.calendar_service import reschedule_booking
         try:
             rec = await reschedule_booking(
@@ -364,9 +522,10 @@ class VoiceAssistant(Agent):
                 booking_id=booking_id.strip(),
                 new_date_str=date.strip(),
                 new_time_str=time.strip(),
+                contact_id=getattr(self, "_contact_id", None),
             )
             # Publish real-time event
-            room = getattr(self.session, "room", None)
+            room = self._get_room()
             if room and hasattr(room, "local_participant") and room.local_participant:
                 try:
                     import json
@@ -391,17 +550,19 @@ class VoiceAssistant(Agent):
         except Exception as e:
             return f"Calendar error: {e}"
 
-    @llm.function_tool(description="Cancel an existing appointment. Params: booking_id, reason (optional).")
+    @llm.function_tool(description="Cancel an existing appointment. Call ONLY after user explicitly confirms they want to cancel. Params: booking_id, reason (optional).")
     async def cancel_appointment(self, booking_id: str, reason: str = "") -> str:
+        self._start_thinking_filler()
         from app.services.calendar_service import cancel_booking
         try:
             rec = await cancel_booking(
                 tenant_id=self._tenant_id,
                 booking_id=booking_id.strip(),
                 reason=reason.strip(),
+                contact_id=getattr(self, "_contact_id", None),
             )
             # Publish real-time event
-            room = getattr(self.session, "room", None)
+            room = self._get_room()
             if room and hasattr(room, "local_participant") and room.local_participant:
                 try:
                     import json
@@ -426,7 +587,8 @@ class VoiceAssistant(Agent):
 
     @llm.function_tool(description="List appointments or bookings for the current caller or for a specific date (YYYY-MM-DD).")
     async def list_my_bookings(self, date: str = "") -> str:
-        from app.services.calendar_service import list_bookings
+        self._start_thinking_filler()
+        from app.services.calendar_service import list_bookings, as_utc, business_timezone
         try:
             contact_id = getattr(self, "_contact_id", None)
             bookings = await list_bookings(
@@ -434,14 +596,16 @@ class VoiceAssistant(Agent):
                 contact_id=contact_id,
                 from_date=date if date else None,
                 to_date=date if date else None,
-                status="confirmed",
                 limit=5,
             )
             if not bookings:
                 return "No upcoming appointments found."
             items = []
+            zone = await business_timezone(self._tenant_id)
             for b in bookings:
-                dt_str = b.start_ts.strftime("%A, %B %d at %I:%M %p") if b.start_ts else "Scheduled"
+                if b.status == "cancelled":
+                    continue
+                dt_str = as_utc(b.start_ts).astimezone(zone).strftime("%A, %B %d at %I:%M %p %Z") if b.start_ts else "Scheduled"
                 items.append(f"{b.title} on {dt_str} (ID: {b.booking_id})")
             return "Found appointments: " + "; ".join(items)
         except Exception as e:
@@ -589,16 +753,27 @@ class VoiceAssistant(Agent):
             asyncio.create_task(self._auto_hangup_after_delay(4.0))
             return
 
-        # Fires for every agent, RAG or not. Started here and left to run: this
-        # hook returns before the LLM is invoked, so the task is still pending
-        # while generation happens, which is exactly the window being covered.
+        # Retrieval belongs to an explicit model tool call, never to the
+        # end-of-turn hook. Known answers can start streaming immediately.
         self._start_thinking_filler()
 
+    @llm.function_tool(description=(
+        "Search the caller's knowledge base for missing information. Use ONLY "
+        "when supplied knowledge or verified conversation results cannot answer "
+        "the question, or the caller explicitly requests document search. Do not "
+        "use for greetings, known answers, or live calendar availability. "
+        "query: a focused question including any needed conversation context."
+    ))
+    async def search_knowledge_base(self, query: str) -> str:
         if not self._rag_enabled:
-            return
+            return "Knowledge-base search is disabled for this call. Do not invent missing information."
+        if not query.strip():
+            return "Please provide a specific question to search for."
 
-        if not _should_search(query):
-            return
+        # A document lookup can outlast the normal response window. Replace
+        # the vague generic filler with a single, truthful RAG progress line.
+        from app.services.voice.filler import cancel_thinking_filler
+        cancel_thinking_filler(self)
 
         # Adaptive top_k: short fact (3) vs medium/broad query (5) like text chat
         _words = len((query or "").strip().split())
@@ -612,15 +787,18 @@ class VoiceAssistant(Agent):
                 top_k=_adaptive_top_k,
             )
         )
-        done, _ = await asyncio.wait({fetch_task}, timeout=_RAG_FILLER_DELAY_S)
-        if fetch_task not in done:
-            filler = pick_rag_filler()
-            logger.info("Document lookup running long — speaking filler: %s", filler)
-            self.session.say(filler, allow_interruptions=True)
-
-        chunks = await fetch_task
+        try:
+            done, _ = await asyncio.wait({fetch_task}, timeout=_RAG_FILLER_DELAY_S)
+            if fetch_task not in done:
+                logger.info("Document lookup running long — speaking RAG progress bridge")
+                await self._say_rag_progress()
+            chunks = await fetch_task
+        finally:
+            if not fetch_task.done():
+                fetch_task.cancel()
+                await asyncio.gather(fetch_task, return_exceptions=True)
         if not chunks:
-            return
+            return "No usable knowledge-base results were available. Say you could not find or verify the requested information; do not invent an answer."
 
         max_words = self._settings.VOICE_RAG_EXCERPT_MAX_WORDS
         chunks = [_truncate_words(c, max_words) for c in chunks]
@@ -631,4 +809,4 @@ class VoiceAssistant(Agent):
             "If prompt covers it, answer from prompt and ignore excerpts. If not, use excerpts to supplement:\n\n"
             f"{excerpts}"
         )
-        turn_ctx.add_message(role="user", content=wrapped)
+        return wrapped

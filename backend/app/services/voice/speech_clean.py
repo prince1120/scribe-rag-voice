@@ -21,6 +21,42 @@ _EMOJI_PATTERN = re.compile(
 # Clause delimiters: terminal punctuation (. ? ! ।), line breaks, or intra-sentence clauses (, ; : — –)
 _CLAUSE_SPLIT_REGEX = re.compile(r"([.?!;\n।|]+|\s*[,—–:]\s*)")
 
+_HALLUCINATION_PATTERNS = [
+    re.compile(r"^(?:thank\s+you\s+for\s+watching|thanks\s+for\s+watching|subtitles\s+by|translated\s+by|subscribe|like\s+and\s+subscribe|amara\.org)", re.IGNORECASE),
+    re.compile(r"^(\b\w+\b)(?:\s+\1){3,}", re.IGNORECASE),
+    re.compile(r"^[.\-_,?!~@#$%^&*()\s]+$"),
+]
+
+_BACKCHANNEL_PHRASES = {
+    "yeah", "yes", "yep", "uh-huh", "uh huh", "uh-hum", "um-hum",
+    "okay", "ok", "got it", "hmm", "hm", "right", "sure", "i see", "mhm", "mm-hmm",
+    "haan", "haanji", "haan ji", "sahi", "sahi hai", "theek", "theek hai", "accha", "achha", "ji", "hnn",
+}
+
+
+def is_stt_hallucination(text: str) -> bool:
+    """Determine if a transcribed user utterance is an acoustic noise artifact or hallucination."""
+    if not text:
+        return True
+    s = text.strip().lower()
+    if not s:
+        return True
+    for pat in _HALLUCINATION_PATTERNS:
+        if pat.search(s):
+            return True
+    return False
+
+
+def is_backchannel(text: str) -> bool:
+    """Check if an utterance is a short acknowledgment that should not interrupt the assistant."""
+    if not text:
+        return False
+    normalized = re.sub(r"[^\w\s-]", "", text.strip().lower())
+    words = normalized.split()
+    if len(words) > 2:
+        return False
+    return normalized in _BACKCHANNEL_PHRASES or (len(words) == 1 and words[0] in _BACKCHANNEL_PHRASES)
+
 
 def strip_markdown_for_speech(text: str) -> str:
     if not text:

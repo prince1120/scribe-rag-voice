@@ -3,8 +3,9 @@ Owner sets slots; AI and owner manage live bookings with collision prevention.
 """
 from datetime import datetime, timezone
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Query, Header
+from pydantic import BaseModel, Field, model_validator
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from app.identity import Identity, get_identity
 from app.api.contact_routes import _require_owner
 from app.services import calendar_service as cal
@@ -18,6 +19,16 @@ class AvailabilityBody(BaseModel):
     start_time: str = Field(pattern=r"^\d{2}:\d{2}$")
     end_time: str = Field(pattern=r"^\d{2}:\d{2}$")
     is_closed: bool = False
+
+    @model_validator(mode="after")
+    def valid_hours(self):
+        for value in (self.start_time, self.end_time):
+            h, m = map(int, value.split(":"))
+            if h > 23 or m > 59:
+                raise ValueError("Use a valid 24-hour time")
+        if not self.is_closed and self.start_time >= self.end_time:
+            raise ValueError("Closing time must be after opening time")
+        return self
 
 
 class ServiceBody(BaseModel):
@@ -44,6 +55,35 @@ class CancelBody(BaseModel):
 
 
 # ---- Services --------------------------------------------------------------
+
+class TimezoneBody(BaseModel):
+    timezone: str = Field(min_length=1, max_length=64)
+
+
+@router.get("/settings")
+async def calendar_settings(identity: Identity = Depends(get_identity)):
+    _require_owner(identity)
+    return {"timezone": str(await cal.business_timezone(identity.tenant_id))}
+
+
+@router.put("/settings")
+async def save_calendar_settings(body: TimezoneBody, identity: Identity = Depends(get_identity)):
+    _require_owner(identity)
+    try:
+        ZoneInfo(body.timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise HTTPException(422, "Choose a valid IANA time zone, such as Asia/Kolkata")
+    from app.database import async_session
+    from app.models.db_models import CalendarSettingsRecord
+    async with async_session() as session:
+        await cal.transaction_lock(session, f"calendar:{identity.tenant_id}")
+        record = await session.get(CalendarSettingsRecord, identity.tenant_id)
+        if record:
+            record.timezone_name = body.timezone
+        else:
+            session.add(CalendarSettingsRecord(tenant_id=identity.tenant_id, timezone_name=body.timezone))
+        await session.commit()
+    return {"timezone": body.timezone}
 
 @router.get("/services")
 async def get_services(identity: Identity = Depends(get_identity)):
@@ -106,10 +146,13 @@ async def get_availability(identity: Identity = Depends(get_identity)):
 @router.put("/availability")
 async def put_availability(body: list[AvailabilityBody], identity: Identity = Depends(get_identity)):
     _require_owner(identity)
+    if len(body) != 7 or len({b.weekday for b in body}) != 7:
+        raise HTTPException(400, "Provide one entry for each day of the week")
     from app.database import async_session
     from app.models.db_models import AvailabilityRecord
     from sqlalchemy import delete
     async with async_session() as s:
+        await cal.transaction_lock(s, f"calendar:{identity.tenant_id}")
         await s.execute(delete(AvailabilityRecord).where(AvailabilityRecord.tenant_id == identity.tenant_id))
         for b in body[:7]:
             s.add(AvailabilityRecord(tenant_id=identity.tenant_id, weekday=b.weekday, start_time=b.start_time, end_time=b.end_time, is_closed=b.is_closed))
@@ -140,8 +183,8 @@ async def list_bookings(
             "title": b.title,
             "service_id": b.service_id,
             "contact_id": b.contact_id,
-            "start_ts": b.start_ts.isoformat() if b.start_ts else None,
-            "end_ts": b.end_ts.isoformat() if b.end_ts else None,
+            "start_ts": cal.as_utc(b.start_ts).isoformat() if b.start_ts else None,
+            "end_ts": cal.as_utc(b.end_ts).isoformat() if b.end_ts else None,
             "status": b.status,
             "source": b.source,
             "created_at": b.created_at.isoformat() if b.created_at else None,
@@ -151,10 +194,11 @@ async def list_bookings(
 
 
 @router.post("/bookings")
-async def create_booking(body: BookingBody, identity: Identity = Depends(get_identity)):
+async def create_booking(body: BookingBody, identity: Identity = Depends(get_identity),
+                         idempotency_key: Optional[str] = Header(default=None, max_length=128)):
     _require_owner(identity)
     try:
-        dt = datetime.fromisoformat(f"{body.date}T{body.time}:00").replace(tzinfo=timezone.utc)
+        dt = await cal.local_booking_time(identity.tenant_id, body.date, body.time)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid date/time format. Use YYYY-MM-DD and HH:MM.")
     try:
@@ -165,11 +209,12 @@ async def create_booking(body: BookingBody, identity: Identity = Depends(get_ide
             title=body.title or "Direct Booking",
             contact_id=body.contact_id,
             source="manual",
+            idempotency_key=f"manual:{idempotency_key}" if idempotency_key else None,
         )
         return {
             "booking_id": rec.booking_id,
             "title": rec.title,
-            "start_ts": rec.start_ts.isoformat(),
+            "start_ts": cal.as_utc(rec.start_ts).isoformat(),
             "status": rec.status,
         }
     except ValueError as e:
@@ -193,7 +238,7 @@ async def reschedule_booking_endpoint(
         return {
             "booking_id": rec.booking_id,
             "title": rec.title,
-            "start_ts": rec.start_ts.isoformat(),
+            "start_ts": cal.as_utc(rec.start_ts).isoformat(),
             "status": rec.status,
         }
     except ValueError as e:

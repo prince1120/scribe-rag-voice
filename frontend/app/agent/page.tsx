@@ -29,6 +29,7 @@ import {
 
 import "./studio.css";
 import { ownerFetch } from "../lib/ownerFetch";
+import { OwnerLoading } from "../components/owner/OwnerLoading";
 import { AgentDocuments } from "./AgentDocuments";
 import { SiteAgentModal } from "./SiteAgentModal";
 import { AgentTest } from "./AgentTest";
@@ -105,7 +106,7 @@ const DEFAULT_MODELS: ModelOption[] = [
 
 const DEFAULT_VOICES: Record<string, Voice[]> = {
   female: [
-    { id: "priya", label: "Priya", tagline: "Cheerful & Engaging" },
+    { id: "priya", label: "Priya", tagline: "Natural & Conversational" },
     { id: "ishita", label: "Ishita", tagline: "Polished & Articulate" },
     { id: "neha", label: "Neha", tagline: "Energetic & Warm" },
     { id: "roopa", label: "Roopa", tagline: "Gentle & Soothing" },
@@ -113,6 +114,7 @@ const DEFAULT_VOICES: Record<string, Voice[]> = {
   ],
   male: [
     { id: "shubh", label: "Shubh", tagline: "Confident & Bold" },
+    { id: "ratan", label: "Ratan", tagline: "Natural English & Hinglish" },
     { id: "rahul", label: "Rahul", tagline: "Deep & Authoritative" },
     { id: "amit", label: "Amit", tagline: "Steady & Trustworthy" },
     { id: "kabir", label: "Kabir", tagline: "Rich & Cinematic" },
@@ -411,7 +413,7 @@ export default function AgentPage() {
   if (loading) {
     return (
       <OwnerShell businessName={businessName}>
-        <div style={S.loadingContainer}>Loading assistant studio…</div>
+        <OwnerLoading label="Loading assistant studio…" />
       </OwnerShell>
     );
   }

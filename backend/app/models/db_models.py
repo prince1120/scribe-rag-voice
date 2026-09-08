@@ -409,3 +409,45 @@ class CallReportRecord(Base):
     booking_intent: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     sentiment: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class VoiceCallRecord(Base):
+    """One server-issued call ID shared by the browser, worker and summary job."""
+    __tablename__ = "voice_calls"
+    call_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    contact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    conversation_id: Mapped[str] = mapped_column(String(36), unique=True)
+    transcript: Mapped[list] = mapped_column(JSON, default=list)
+    transcript_source: Mapped[str] = mapped_column(String(16), default="none")
+    duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    summary_status: Mapped[str] = mapped_column(String(16), default="waiting", index=True)
+    summary: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    summary_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    summary_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    summary_lease: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class BusinessRequestRecord(Base):
+    __tablename__ = "business_requests"
+    request_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    contact_id: Mapped[str] = mapped_column(String(36), index=True)
+    call_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    kind: Mapped[str] = mapped_column(String(24), default="message")
+    message: Mapped[str] = mapped_column(Text)
+    reply_to: Mapped[str] = mapped_column(String(200), default="")
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)
+    owner_note: Mapped[str] = mapped_column(String(2000), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class CalendarSettingsRecord(Base):
+    __tablename__ = "calendar_settings"
+    tenant_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    timezone_name: Mapped[str] = mapped_column(String(64), default="UTC")
