@@ -1,6 +1,7 @@
 "use client";
 
 import { ownerFetch } from "../lib/ownerFetch";
+import { extractApiErrorMessage, formatClientError } from "../lib/apiErrors";
 
 // Call your own agent, from the console.
 //
@@ -80,8 +81,18 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
       });
 
       if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body?.detail || "Could not start the call.");
+        if (response.status === 403) {
+          throw new Error("Voice testing is unavailable or the assistant has not been deployed yet.");
+        }
+        if (response.status === 429) {
+          throw new Error("Voice testing rate limit reached. Please wait a moment before trying again.");
+        }
+        if (response.status === 502 || response.status === 503) {
+          const detail = await extractApiErrorMessage(response, "Voice worker is temporarily offline or unreachable.");
+          throw new Error(detail);
+        }
+        const errDetail = await extractApiErrorMessage(response, "Could not start the test call.");
+        throw new Error(errDetail);
       }
 
       const { token, url } = await response.json();
@@ -139,9 +150,13 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
         rafRef.current = requestAnimationFrame(tick);
       };
       rafRef.current = requestAnimationFrame(tick);
-    } catch (err) {
+    } catch (err: any) {
       setPhase("error");
-      setError(err instanceof Error ? err.message : "Could not start the call.");
+      if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError" || err?.message?.toLowerCase().includes("permission")) {
+        setError("Microphone permission was denied. Please allow microphone access in your browser to test voice.");
+      } else {
+        setError(formatClientError(err, "Could not start the test call."));
+      }
       teardown();
     }
   }, [teardown]);

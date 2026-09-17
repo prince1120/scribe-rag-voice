@@ -95,17 +95,10 @@ function demoHeaders(creds?: DemoCredentials): Record<string, string> {
   return headers;
 }
 
+import { extractApiErrorMessage } from "./apiErrors";
+
 async function toApiError(response: Response): Promise<ApiError> {
-  // FastAPI puts the human-readable reason in `detail`; fall back to the
-  // status text so an HTML error page never surfaces as the message.
-  let detail = response.statusText || "Request failed";
-  try {
-    const body = await response.json();
-    if (typeof body?.detail === "string") detail = body.detail;
-    else if (typeof body?.error === "string") detail = body.error;
-  } catch {
-    /* non-JSON error body — keep the status text */
-  }
+  const detail = await extractApiErrorMessage(response, response.statusText || "Request failed");
   return new ApiError(response.status, detail);
 }
 

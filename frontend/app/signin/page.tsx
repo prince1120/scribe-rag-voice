@@ -11,6 +11,7 @@ import { useState } from "react";
 
 import { ScribeMark } from "../Logo";
 import { clearWorkspaceCache } from "../lib/workspaceCache";
+import { extractApiErrorMessage, formatClientError } from "../lib/apiErrors";
 
 type AuthMode = "signin" | "signup";
 
@@ -52,8 +53,11 @@ export default function SignInPage() {
       });
 
       if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body?.detail || (mode === "signup" ? "Could not create account." : "Could not sign in."));
+        const message = await extractApiErrorMessage(
+          response,
+          mode === "signup" ? "Could not create account." : "Could not sign in."
+        );
+        throw new Error(message);
       }
 
       const data = await response.json();
@@ -63,8 +67,9 @@ export default function SignInPage() {
       clearWorkspaceCache();
       // Business owners land in the console (/dashboard or /agent for fresh setup)
       window.location.href = data.is_business ? (mode === "signup" ? "/agent" : "/dashboard") : "/";
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Authentication failed.");
+    } catch (err: any) {
+      setError(formatClientError(err, "Authentication failed."));
+    } finally {
       setBusy(false);
     }
   }
@@ -88,7 +93,7 @@ export default function SignInPage() {
         </nav>
       </header>
 
-      <main className="signin-main">
+      <main id="main-content" className="signin-main" tabIndex={-1}>
         <section className="signin-story" aria-labelledby="signin-story-title">
           <span className="studio-eyebrow">A little more room to run your business</span>
           <h2 id="signin-story-title">Good conversations.<br /><em>Better connections.</em></h2>

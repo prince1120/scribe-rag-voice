@@ -1,0 +1,246 @@
+/* Product-wide finish: quiet motion, instant navigation feedback, and shared
+   states. This layer intentionally preserves the cream / indigo identity. */
+
+html {
+  color-scheme: light;
+  background: var(--claude-bg);
+  text-rendering: optimizeLegibility;
+}
+
+/* Shared reading and input behavior, including sign-in and public support. */
+:where(a, button, input, textarea, select, summary):focus-visible {
+  outline: 2px solid var(--claude-accent);
+  outline-offset: 3px;
+}
+:where(.signin-page, .setup-page, .directory-page, .product-support-page, .link-page) {
+  min-height: 100dvh;
+}
+:where(.signin-page, .setup-page, .directory-page, .product-support-page) :is(h1, h2) {
+  text-wrap: balance;
+}
+:where(.signin-page, .setup-page, .product-support-page) :is(input, select, textarea) {
+  max-width: 100%;
+}
+@media (max-width: 640px) {
+  :where(.signin-page, .setup-page, .product-support-page, .link-page) :is(input, select, textarea) {
+    font-size: 16px;
+  }
+  .product-support-page header .flex { min-width: 0; flex-wrap: wrap; }
+  .support-modal-card { max-height: calc(100dvh - 2rem); overflow-y: auto; overscroll-behavior: contain; }
+}
+
+body {
+  min-height: 100dvh;
+  background:
+    radial-gradient(circle at 88% -8%, rgba(72, 84, 168, 0.10), transparent 28rem),
+    radial-gradient(circle at -8% 72%, rgba(197, 188, 163, 0.12), transparent 30rem),
+    var(--claude-bg);
+  font-family: "Aptos", "Segoe UI Variable Text", "Segoe UI", ui-sans-serif, sans-serif;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-texture, 0);
+  pointer-events: none;
+  opacity: 0.18;
+  background-image:
+    repeating-linear-gradient(0deg, rgba(57, 50, 40, 0.018) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.12) 0 1px, transparent 1px 5px);
+  mix-blend-mode: multiply;
+}
+
+::selection {
+  color: var(--claude-text);
+  background: rgba(72, 84, 168, 0.22);
+}
+
+.skip-link {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: calc(var(--z-toast) + 2);
+  padding: 0.65rem 0.9rem;
+  border-radius: var(--radius-md);
+  color: white;
+  background: var(--claude-accent);
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-160%);
+  transition: transform var(--duration-base) var(--ease-decelerate);
+}
+.skip-link:focus { transform: none; }
+
+.route-progress {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: calc(var(--z-toast) + 1);
+  height: 2px;
+  pointer-events: none;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 120ms ease 180ms;
+}
+.route-progress span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--claude-accent);
+  box-shadow: 0 0 12px rgba(72, 84, 168, 0.5);
+  transform: translateX(-100%);
+}
+.route-progress.is-loading { opacity: 1; }
+.route-progress.is-loading span { animation: route-progress 1.15s var(--ease-decelerate) infinite; }
+.route-progress.is-complete { opacity: 0; transition-delay: 100ms; }
+.route-progress.is-complete span { transform: none; transition: transform 180ms var(--ease-decelerate); }
+
+@keyframes route-progress {
+  0% { transform: translateX(-100%) scaleX(0.3); transform-origin: left; }
+  55% { transform: translateX(-26%) scaleX(0.72); transform-origin: left; }
+  100% { transform: translateX(105%) scaleX(0.25); transform-origin: right; }
+}
+
+/* Shared tactile behavior. Keep transforms restrained so layouts never jump. */
+:where(button, [role="button"], a):not([aria-disabled="true"]) {
+  -webkit-tap-highlight-color: transparent;
+}
+:where(button, [role="button"]):not(:disabled):active {
+  transform: scale(0.985);
+}
+
+:where(.owner-shell, .directory-page, .signin-page, .link-page) :where(button, a) {
+  transition-property: color, background-color, border-color, opacity, box-shadow, transform;
+  transition-duration: var(--duration-base);
+  transition-timing-function: var(--ease-standard);
+}
+
+/* Owner console: make every section feel like the same product. */
+.owner-shell .owner-content {
+  background:
+    linear-gradient(rgba(240, 238, 230, 0.86), rgba(240, 238, 230, 0.96)),
+    radial-gradient(circle at 92% 4%, rgba(72, 84, 168, 0.13), transparent 26rem);
+}
+.owner-shell .owner-content > .studio-page-enter {
+  width: 100%;
+  min-height: calc(100dvh - var(--header-height) - 2rem);
+}
+.owner-shell .owner-nav-item {
+  position: relative;
+  overflow: hidden;
+}
+.owner-shell .owner-nav-item::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(72, 84, 168, 0.08), transparent 72%);
+  opacity: 0;
+  transform: translateX(-20%);
+  transition: opacity var(--duration-base), transform var(--duration-slow) var(--ease-decelerate);
+}
+.owner-shell .owner-nav-item:hover::before,
+.owner-shell .owner-nav-item.is-active::before { opacity: 1; transform: none; }
+.owner-shell .owner-nav-item > * { position: relative; }
+.owner-shell .owner-topbar {
+  backdrop-filter: blur(18px) saturate(1.1);
+  -webkit-backdrop-filter: blur(18px) saturate(1.1);
+}
+
+/* Route-level skeleton: recognizable layout, no spinner or content jump. */
+.app-loading {
+  min-height: 100dvh;
+  padding: clamp(1rem, 3vw, 2rem);
+  color: var(--claude-text);
+}
+.app-loading-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: min(72rem, 100%);
+  margin: 0 auto 1.25rem;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+.app-loading-mark {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 1px solid var(--claude-border);
+  border-radius: 0.7rem;
+  color: var(--claude-accent);
+  background: var(--claude-surface);
+  box-shadow: var(--shadow-xs);
+}
+.app-loading-shell {
+  display: grid;
+  grid-template-columns: 13rem 1fr;
+  gap: 1rem;
+  width: min(72rem, 100%);
+  min-height: 72dvh;
+  margin: auto;
+}
+.app-loading-rail { border-radius: var(--radius-xl); }
+.app-loading-canvas {
+  padding: clamp(1.25rem, 4vw, 3rem);
+  border: 1px solid var(--claude-border);
+  border-radius: var(--radius-xl);
+  background: rgba(250, 249, 245, 0.68);
+}
+.app-loading-line { width: min(32rem, 72%); height: 0.8rem; margin-top: 1rem; }
+.app-loading-line.is-title { width: min(22rem, 54%); height: 2.2rem; margin-top: 0; }
+.app-loading-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.85rem; margin-top: 3rem; }
+.app-loading-grid > * { min-height: 7rem; border-radius: var(--radius-lg); }
+.app-loading-panel { min-height: 15rem; margin-top: 1rem; border-radius: var(--radius-lg); }
+
+/* A useful dead-end rather than the framework default. */
+.not-found-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  padding: 2rem;
+  text-align: center;
+}
+.not-found-orbit {
+  display: grid;
+  place-items: center;
+  width: 7rem;
+  height: 7rem;
+  margin-bottom: 2rem;
+  border: 1px solid var(--claude-border);
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--claude-accent-soft), transparent 68%);
+  animation: not-found-float 4s ease-in-out infinite;
+}
+.not-found-orbit span {
+  display: grid;
+  place-items: center;
+  width: 3.4rem;
+  height: 3.4rem;
+  border-radius: 1rem;
+  color: var(--claude-accent);
+  background: var(--claude-surface);
+  box-shadow: var(--shadow-lg);
+}
+.not-found-kicker { display: flex; align-items: center; gap: 0.4rem; color: var(--claude-accent); font-size: var(--text-sm); font-weight: 600; }
+.not-found-page h1 { max-width: 12ch; margin: 0.8rem 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp(2.5rem, 7vw, 5.4rem); font-weight: 400; line-height: 0.98; letter-spacing: -0.055em; text-wrap: balance; }
+.not-found-page > p:not(.not-found-kicker) { max-width: 42ch; color: var(--claude-text-2); line-height: 1.7; }
+.not-found-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.75rem; margin-top: 1.8rem; }
+.not-found-actions a { display: inline-flex; align-items: center; gap: 0.45rem; min-height: 2.75rem; padding: 0.7rem 1rem; border-radius: var(--radius-md); font-size: var(--text-sm); font-weight: 600; }
+.not-found-primary { color: white; background: var(--claude-accent); box-shadow: var(--shadow-sm); }
+.not-found-secondary { border: 1px solid var(--claude-border-strong); color: var(--claude-text); background: var(--claude-surface); }
+@keyframes not-found-float { 50% { transform: translateY(-7px) rotate(2deg); } }
+
+@media (max-width: 700px) {
+  .app-loading-shell { grid-template-columns: 1fr; }
+  .app-loading-rail { display: none; }
+  .app-loading-grid { grid-template-columns: 1fr 1fr; }
+  .owner-shell .owner-content > .studio-page-enter { min-height: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-progress.is-loading span { animation: none; transform: scaleX(0.7); transform-origin: left; }
+  .not-found-orbit { animation: none; }
+}

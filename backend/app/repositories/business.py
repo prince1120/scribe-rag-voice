@@ -26,11 +26,14 @@ async def transaction_lock(session, key: str):
         await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_id})
 
 
-async def create_call(tenant_id, contact_id, ip_address=None, user_agent=None):
+async def create_call(tenant_id, contact_id, ip_address=None, user_agent=None,
+                      context_label=None, voice_consent_at=None):
     call_id, conversation_id = str(uuid4()), str(uuid4())
     async with async_session() as session:
         session.add(VoiceCallRecord(call_id=call_id, tenant_id=tenant_id,
-                                   contact_id=contact_id, conversation_id=conversation_id))
+                                   contact_id=contact_id, conversation_id=conversation_id,
+                                   context_label=(context_label or "").strip()[:240] or None,
+                                   voice_consent_at=voice_consent_at))
         session.add(ConversationRecord(conversation_id=conversation_id, tenant_id=tenant_id))
         if contact_id:
             session.add(ContactSessionRecord(

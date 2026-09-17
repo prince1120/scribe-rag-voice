@@ -30,8 +30,8 @@ def _safe_url() -> str:
 
 
 def _engine_kwargs() -> dict:
-    """Postgres behind Supabase's connection pooler needs settings SQLite does
-    not, and passing them to SQLite raises."""
+    """Postgres needs pooler-friendly settings; SQLite needs none.
+    Passing postgres args to SQLite raises, so branch strictly."""
     if not settings.DATABASE_URL.startswith("postgresql"):
         return {}
     return {
@@ -42,6 +42,17 @@ def _engine_kwargs() -> dict:
         "max_overflow": 10,
         "pool_timeout": 10,
     }
+
+
+def _is_production_db() -> bool:
+    """True when DATABASE_URL points at a real Postgres (self-hosted or Supabase).
+    Used to fail fast rather than silently creating a local SQLite fallback."""
+    return settings.DATABASE_URL.startswith("postgresql")
+
+
+# Lightweight local tests may explicitly opt into SQLite via env:
+#   SCRIBE_ALLOW_SQLITE=true pytest ...
+# Production (DEBUG=false) with SQLite is a durability trap and should warn.
 
 
 engine = create_async_engine(settings.DATABASE_URL, echo=False, **_engine_kwargs())
@@ -121,6 +132,26 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("documents", "source_snapshot_id", "VARCHAR(36)"),
     ("agents", "voice_rag_enabled", "BOOLEAN"),
     ("agents", "chat_rag_enabled", "BOOLEAN"),
+
+    # Products & Product QR (M1A)
+    ("products", "is_active", "BOOLEAN NOT NULL DEFAULT true"),
+    ("products", "short_description", "TEXT"),
+    ("products", "support_disclaimer", "TEXT"),
+    ("products", "status", "VARCHAR(16) NOT NULL DEFAULT 'active'"),
+    ("product_qr_links", "label", "VARCHAR(200)"),
+    ("product_qr_links", "public_token_hash", "VARCHAR(64)"),
+    ("product_qr_links", "active", "BOOLEAN NOT NULL DEFAULT true"),
+    ("product_qr_links", "revoked_at", "TIMESTAMP WITH TIME ZONE"),
+    ("product_qr_links", "updated_at", "TIMESTAMP WITH TIME ZONE"),
+    ("product_visitor_sessions", "qr_link_id", "VARCHAR(36)"),
+    ("product_visitor_sessions", "session_token_hash", "VARCHAR(64)"),
+    ("product_visitor_sessions", "last_seen_at", "TIMESTAMP WITH TIME ZONE"),
+    ("product_visitor_sessions", "expires_at", "TIMESTAMP WITH TIME ZONE"),
+    ("product_visitor_sessions", "revoked_at", "TIMESTAMP WITH TIME ZONE"),
+    # Voice calls created from Product QR have no named contact. Preserve a
+    # human-readable product/model label so owners can identify them in Inbox.
+    ("voice_calls", "context_label", "VARCHAR(240)"),
+    ("voice_calls", "voice_consent_at", "TIMESTAMP WITH TIME ZONE"),
 ]
 
 
@@ -148,6 +179,11 @@ _ADDED_INDEXES: list[tuple[str, str]] = [
     # list_contact_sessions, count_sessions_since (the per-day cap, on the
     # unauthenticated /contacts/open path), and the overview aggregation
     ("ix_sessions_contact_started", "contact_sessions (contact_id, started_at DESC)"),
+    # Product QR lookups (M1A)
+    ("ix_products_tenant_created", "products (tenant_id, created_at DESC)"),
+    ("ix_product_documents_product", "product_documents (product_id, document_id)"),
+    ("ix_product_links_product_created", "product_qr_links (product_id, created_at DESC)"),
+    ("ix_product_sessions_link_created", "product_visitor_sessions (qr_link_id, created_at DESC)"),
 ]
 
 
@@ -200,6 +236,20 @@ def _apply_added_columns(connection) -> None:
 async def init_db():
     # Import models so their tables are registered on Base.metadata before create_all.
     from app.models import db_models  # noqa: F401
+
+    # Do not silently fall back to SQLite when running outside DEBUG. A missing
+    # or mis-typed DATABASE_URL that quietly creates ./rag.db is a data-loss
+    # trap (ephemeral disk, no backup) that looks healthy until the next deploy.
+    import os as _os
+
+    allow_sqlite = _os.getenv("SCRIBE_ALLOW_SQLITE", "").lower() in ("1", "true", "yes")
+    if not _is_production_db() and not settings.DEBUG and not allow_sqlite:
+        raise RuntimeError(
+            "DATABASE_URL is not postgresql:// — refusing to boot with SQLite in "
+            "non-DEBUG mode. Set DATABASE_URL to your Compose Postgres "
+            "(postgresql+asyncpg://...@postgres:5432/...) or export "
+            "SCRIBE_ALLOW_SQLITE=true for a throwaway local test."
+        )
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

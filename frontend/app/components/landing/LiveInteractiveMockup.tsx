@@ -276,7 +276,7 @@ export function LiveInteractiveMockup() {
             style={{ color: "var(--claude-muted)" }}
           >
             <Sparkle size={9} weight="fill" className="text-[var(--claude-accent)] animate-spin" />
-            24 kHz neural turn · verified
+            Illustrative conversation preview
           </p>
         </div>
 
@@ -382,10 +382,10 @@ export function LiveInteractiveMockup() {
                 className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold"
               >
                 <CheckCircle size={10} weight="fill" className="text-emerald-600" />
-                Verified
+                Example
               </motion.span>
               <span style={{ color: "var(--claude-muted)" }}>
-                {current.retrievalMs} retrieval · {current.totalMs} total
+                Sample conversation, not a live call
               </span>
             </div>
           </div>

@@ -24,14 +24,25 @@ class VectorStoreService:
 
     def __init__(self, host: str = "localhost", port: int = 6333,
                  collection_name: str = "documents", vector_size: int = 384,
-                 api_key: str = ""):
-        if api_key:
-            # An API key means Qdrant Cloud — those endpoints are TLS-only.
-            # Plain HTTP against a cloud host returns a bare 404 (from the
-            # front proxy, not Qdrant itself) and crashes startup.
-            self.client = QdrantClient(host=host, port=port, api_key=api_key, https=True, timeout=60.0)
-        else:
-            self.client = QdrantClient(host=host, port=port, timeout=60.0)
+                 api_key: str = "", https: Optional[bool] = None):
+        # Cloud installations normally have an API key and require TLS. Local
+        # hybrid mode explicitly passes https=False. That explicit value must
+        # win over a stale cloud key inherited from backend/.env, otherwise the
+        # client sends a TLS handshake to Qdrant's plain HTTP port and raises
+        # SSL: WRONG_VERSION_NUMBER.
+        local_host = host.strip().lower() in {"localhost", "127.0.0.1", "::1"}
+        use_https = (bool(api_key) and not local_host) if https is None else https
+        client_args: Dict[str, Any] = {
+            "host": host,
+            "port": port,
+            "https": use_https,
+            "timeout": 60.0,
+        }
+        # Never transmit a cloud credential over an explicitly non-TLS local
+        # connection. The self-hosted development service has no API key.
+        if api_key and use_https:
+            client_args["api_key"] = api_key
+        self.client = QdrantClient(**client_args)
         self.collection_name = collection_name
         self.vector_size = vector_size
         self._ready = False

@@ -40,9 +40,10 @@ import {
   X,
 } from "lucide-react";
 
-import { ownerFetch } from "../lib/ownerFetch";
+import { ownerFetch, invalidateOwnerCache } from "../lib/ownerFetch";
 import { OwnerShell } from "../components/owner/OwnerShell";
 import { getWorkspaceCache, setWorkspaceCache } from "../lib/workspaceCache";
+import { extractApiErrorMessage, formatClientError } from "../lib/apiErrors";
 
 interface Contact {
   contact_id: string;
@@ -196,13 +197,16 @@ export default function LinksPage() {
         setError("Sign in as the owner to view people & call links.");
         return;
       }
-      if (!response.ok) throw new Error();
+      if (!response.ok) {
+        const errMsg = await extractApiErrorMessage(response, "Could not load contact links.");
+        throw new Error(errMsg);
+      }
       const list: Contact[] = await response.json();
       setContacts(list);
       setWorkspaceCache({ contactsData: list });
       setError("");
-    } catch {
-      if (contacts.length === 0) setError("Could not load contact links.");
+    } catch (err) {
+      if (contacts.length === 0) setError(formatClientError(err, "Could not load contact links."));
     } finally {
       setLoading(false);
     }
@@ -264,6 +268,7 @@ export default function LinksPage() {
     if (!name.trim()) return;
 
     setCreating(true);
+    setCreateError("");
     try {
       const response = await ownerFetch("/api/v1/contacts", {
         method: "POST",
@@ -276,18 +281,19 @@ export default function LinksPage() {
       });
 
       if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body?.detail || "Could not generate access link.");
+        const errMsg = await extractApiErrorMessage(response, "Could not generate access link.");
+        throw new Error(errMsg);
       }
 
       const data = await response.json();
+      invalidateOwnerCache("/api/v1/contacts");
       setFreshLink({ name: data.name, url: linkFor(data.token) });
       setName("");
       setPin("");
       setShowCreateModal(false);
       await loadContacts();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create link.");
+      setCreateError(formatClientError(err, "Could not create link."));
     } finally {
       setCreating(false);
     }
@@ -344,10 +350,16 @@ export default function LinksPage() {
         credentials: "include",
       });
       if (res.ok) {
+        invalidateOwnerCache("/api/v1/contacts");
         const data = await res.json();
         setFreshLink({ name: contactName, url: linkFor(data.token) });
         await loadContacts();
+      } else {
+        const errMsg = await extractApiErrorMessage(res, "Could not rotate link token.");
+        setError(errMsg);
       }
+    } catch (err) {
+      setError(formatClientError(err, "Could not rotate token."));
     } finally {
       setBusy((b) => ({ ...b, [contactId]: "" }));
     }
@@ -356,11 +368,19 @@ export default function LinksPage() {
   const toggleBlock = async (contactId: string, blocked: boolean) => {
     setBusy((b) => ({ ...b, [contactId]: "block" }));
     try {
-      await ownerFetch(`/api/v1/contacts/${contactId}/${blocked ? "block" : "unblock"}`, {
+      const res = await ownerFetch(`/api/v1/contacts/${contactId}/${blocked ? "block" : "unblock"}`, {
         method: "POST",
         credentials: "include",
       });
-      await loadContacts();
+      if (res.ok) {
+        invalidateOwnerCache("/api/v1/contacts");
+        await loadContacts();
+      } else {
+        const errMsg = await extractApiErrorMessage(res, "Could not update contact status.");
+        setError(errMsg);
+      }
+    } catch (err) {
+      setError(formatClientError(err, "Could not update contact status."));
     } finally {
       setBusy((b) => ({ ...b, [contactId]: "" }));
     }
@@ -370,12 +390,22 @@ export default function LinksPage() {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      await ownerFetch(`/api/v1/contacts/${deleteTarget.contact_id}`, {
+      const res = await ownerFetch(`/api/v1/contacts/${deleteTarget.contact_id}`, {
         method: "DELETE",
         credentials: "include",
       });
+      if (res.ok) {
+        invalidateOwnerCache("/api/v1/contacts");
+        setDeleteTarget(null);
+        await loadContacts();
+      } else {
+        const errMsg = await extractApiErrorMessage(res, "Could not delete contact.");
+        setError(errMsg);
+        setDeleteTarget(null);
+      }
+    } catch (err) {
+      setError(formatClientError(err, "Could not delete contact."));
       setDeleteTarget(null);
-      await loadContacts();
     } finally {
       setDeleting(false);
     }
@@ -863,6 +893,11 @@ export default function LinksPage() {
               </div>
 
               <form onSubmit={createLink} style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
+                {createError && (
+                  <div style={{ padding: "8px 12px", borderRadius: 8, background: "rgba(220, 38, 38, 0.1)", color: "var(--color-danger, #dc2626)", fontSize: 13 }}>
+                    {createError}
+                  </div>
+                )}
                 <div>
                   <label style={S.label}>Caller / Customer Name</label>
                   <input

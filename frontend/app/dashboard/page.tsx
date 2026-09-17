@@ -26,6 +26,7 @@ import {
 import { ownerFetch } from "../lib/ownerFetch";
 import { OwnerShell } from "../components/owner/OwnerShell";
 import { UsageCard } from "../components/owner/UsageCard";
+import { WorkspaceGuide } from "../components/owner/WorkspaceGuide";
 
 interface SessionItem {
   session_id: string;
@@ -94,6 +95,7 @@ function initials(name: string): string {
 }
 
 import { getWorkspaceCache, setWorkspaceCache, useWorkspace } from "../lib/workspaceCache";
+import { extractApiErrorMessage, formatClientError } from "../lib/apiErrors";
 
 const ITEMS_PER_PAGE = 5;
 
@@ -119,13 +121,17 @@ export default function DashboardPage() {
         setError("Sign in as the owner to view your console.");
         return;
       }
-      if (overviewRes.ok) {
-        const fresh = await overviewRes.json();
-        setData(fresh);
-        setWorkspaceCache({ overviewData: fresh });
+      if (!overviewRes.ok) {
+        const detail = await extractApiErrorMessage(overviewRes, "Could not load dashboard data.");
+        if (!data) setError(detail);
+        return;
       }
-    } catch {
-      if (!data) setError("Could not load dashboard data.");
+      const fresh = await overviewRes.json();
+      setData(fresh);
+      setError("");
+      setWorkspaceCache({ overviewData: fresh });
+    } catch (err: any) {
+      if (!data) setError(formatClientError(err, "Could not load dashboard data."));
     } finally {
       setLoading(false);
     }
@@ -205,6 +211,8 @@ export default function DashboardPage() {
           </div>
         )}
 
+        <WorkspaceGuide />
+
         {/* ── Analytics Stat Cards Grid ────────────────────────── */}
         <div style={S.statsGrid} className="dash-stats-grid">
           {/* Total Conversations */}
@@ -214,12 +222,12 @@ export default function DashboardPage() {
                 <BarChart3 size={18} />
               </div>
               <span style={{ ...S.statValue, color: "var(--claude-text)" }}>
-                {data ? data.totals.total_sessions : 0}
+                {data ? data.totals.total_sessions : "..."}
               </span>
             </div>
             <span style={S.statLabel}>Total Completed Talks</span>
             <span style={S.statSub}>
-              {data ? `${data.totals.conversations_this_week} this week` : "0 this week"}
+              {data ? `${data.totals.conversations_this_week} this week` : "Loading activity"}
             </span>
           </div>
 
@@ -230,11 +238,11 @@ export default function DashboardPage() {
                 <Phone size={18} />
               </div>
               <span style={{ ...S.statValue, color: "var(--claude-text)" }}>
-                {data ? data.totals.voice_calls : 0}
+                {data ? data.totals.voice_calls : "..."}
               </span>
             </div>
             <span style={S.statLabel}>Voice Calls Completed</span>
-            <span style={S.statSub}>Live audio calls</span>
+            <span style={S.statSub}>{data ? "Live audio calls" : "Loading activity"}</span>
           </div>
 
           {/* Chat Conversations */}
@@ -244,11 +252,11 @@ export default function DashboardPage() {
                 <MessageSquare size={18} />
               </div>
               <span style={{ ...S.statValue, color: "var(--claude-text)" }}>
-                {data ? data.totals.chat_sessions : 0}
+                {data ? data.totals.chat_sessions : "..."}
               </span>
             </div>
             <span style={S.statLabel}>Chat Conversations</span>
-            <span style={S.statSub}>Text interactions</span>
+            <span style={S.statSub}>{data ? "Text interactions" : "Loading activity"}</span>
           </div>
 
           {/* Unique Callers */}
@@ -258,11 +266,11 @@ export default function DashboardPage() {
                 <Users size={18} />
               </div>
               <span style={{ ...S.statValue, color: "var(--claude-text)" }}>
-                {data ? data.totals.unique_users : 0}
+                {data ? data.totals.unique_users : "..."}
               </span>
             </div>
             <span style={S.statLabel}>Unique Callers</span>
-            <span style={S.statSub}>Distinct customer contacts</span>
+            <span style={S.statSub}>{data ? "Distinct customer contacts" : "Loading activity"}</span>
           </div>
         </div>
 

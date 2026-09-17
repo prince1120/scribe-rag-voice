@@ -55,6 +55,8 @@ def call_public(call, *, include_transcript=False):
         "contact_id": call.contact_id, "duration_seconds": call.duration_seconds,
         "completed": call.completed, "summary_status": call.summary_status,
         "intelligence": call.summary, "transcript_source": call.transcript_source,
+        "context_label": call.context_label,
+        "voice_consent_recorded": call.voice_consent_at is not None,
         "created_at": call.created_at.isoformat(),
     }
     if include_transcript:

@@ -63,14 +63,24 @@ class SessionParams:
     conversation_id: Optional[str] = None
     contact_id: Optional[str] = None
     call_id: Optional[str] = None
+    # Product QR voice scoping: assigned document ids from dispatch metadata.
+    document_ids: Optional[list] = None
+    # Product QR voice marker (non-sensitive product id only). Enables the
+    # deterministic product-safety classifier for this session's turns.
+    product_id: Optional[str] = None
 
 
-def _params_for_job(ctx: JobContext) -> SessionParams:
+def _params_for_job(ctx: JobContext, server_creds: Optional[dict] = None) -> SessionParams:
     """Parse the token endpoint's agent-dispatch metadata into this
     session's settings + behavior. Falls back to plain defaults (no RAG,
     the default persona, our own keys) on any missing/malformed metadata —
     a bad token payload should degrade to "plain voice bot", not crash the
-    job."""
+    job.
+
+    Key precedence per field: dispatch metadata (legacy tokens only — new
+    tokens carry no key material) > `server_creds` resolved server-side via
+    POST /voice/credentials > process environment defaults.
+    """
     raw = getattr(ctx.job, "metadata", "") or ""
     data: dict = {}
     if raw:
@@ -79,30 +89,33 @@ def _params_for_job(ctx: JobContext) -> SessionParams:
         except (ValueError, TypeError):
             logger.warning("Ignoring unparseable job metadata")
 
+    server_creds = server_creds or {}
     overrides: dict = {}
     if data.get("groq_api_key"):
         logger.info("Using caller-supplied Groq key for this session")
         overrides["GROQ_API_KEY"] = data["groq_api_key"]
+    elif server_creds.get("groq_api_key"):
+        overrides["GROQ_API_KEY"] = server_creds["groq_api_key"]
     if data.get("sarvam_api_key"):
         logger.info("Using caller-supplied Sarvam key for this session")
         overrides["SARVAM_API_KEY"] = data["sarvam_api_key"]
+    elif server_creds.get("sarvam_api_key"):
+        overrides["SARVAM_API_KEY"] = server_creds["sarvam_api_key"]
     if data.get("tts_speaker"):
         logger.info("Using caller-selected TTS voice: %s", data["tts_speaker"])
         overrides["VOICE_TTS_SPEAKER"] = data["tts_speaker"]
     if data.get("llm_model"):
         logger.info("Using caller-selected LLM model: %s", data["llm_model"])
         overrides["VOICE_LLM_MODEL"] = data["llm_model"]
-        # Route Mistral models to the Mistral provider (free 1B tokens/month)
-        # so Groq isn't billed and tight voice caps still apply.
-        if isinstance(data["llm_model"], str) and data["llm_model"].startswith("mistral"):
+    if data.get("llm_provider"):
+        logger.info("Using caller-selected LLM provider: %s", data["llm_provider"])
+        overrides["VOICE_LLM_PROVIDER"] = data["llm_provider"]
+    elif data.get("llm_model"):
+        m = str(data["llm_model"]).lower()
+        if m.startswith("mistral"):
             overrides["VOICE_LLM_PROVIDER"] = "mistral"
-        elif isinstance(data["llm_model"], str) and data["llm_model"].startswith("llama"):
-            # llama/mistral confusion guard — Groq hosts llama, Mistral hosts mistral
-            if overrides.get("VOICE_LLM_PROVIDER") == "mistral":
-                # keep mistral if explicitly requested, otherwise groq
-                pass
-            else:
-                overrides["VOICE_LLM_PROVIDER"] = "groq"
+        else:
+            overrides["VOICE_LLM_PROVIDER"] = "groq"
     if data.get("stt_language"):
         # The token endpoint has always sent this for business agents; nothing
         # here read it, so an owner who picked a language got auto-detect
@@ -116,7 +129,10 @@ def _params_for_job(ctx: JobContext) -> SessionParams:
         logger.info("Using caller-configured custom LLM endpoint: %s", data["custom_llm_base_url"])
         overrides["VOICE_LLM_PROVIDER"] = "custom_openai"
         overrides["CUSTOM_LLM_BASE_URL"] = data["custom_llm_base_url"]
-        overrides["CUSTOM_LLM_API_KEY"] = data.get("custom_llm_api_key") or ""
+        overrides["CUSTOM_LLM_API_KEY"] = (
+            data.get("custom_llm_api_key") or server_creds.get("custom_llm_api_key") or ""
+        )
+
     if "greet_on_connect" in data:
         logger.info("Using caller-selected Greet on Connect: %s", data["greet_on_connect"])
         overrides["VOICE_GREET_ON_CONNECT"] = bool(data["greet_on_connect"])
@@ -158,6 +174,13 @@ def _params_for_job(ctx: JobContext) -> SessionParams:
         overrides["VOICE_LLM_MAX_TOKENS"] = cap
     settings = voice_settings.model_copy(update=overrides) if overrides else voice_settings
 
+    raw_doc_ids = data.get("document_ids")
+    document_ids = (
+        [d for d in raw_doc_ids if isinstance(d, str) and d]
+        if isinstance(raw_doc_ids, list)
+        else None
+    )
+
     return SessionParams(
         settings=settings,
         instructions=data.get("instructions") or voice_settings.VOICE_AGENT_INSTRUCTIONS,
@@ -166,7 +189,40 @@ def _params_for_job(ctx: JobContext) -> SessionParams:
         conversation_id=data.get("conversation_id"),
         contact_id=data.get("contact_id"),
         call_id=data.get("call_id"),
+        document_ids=document_ids,
+        product_id=data.get("product_id") or None,
     )
+
+
+async def _resolve_voice_credentials(params: SessionParams) -> dict:
+    """Stored provider keys for this call via the internal credentials
+    endpoint. Bounded (5s) and fail-open to {} — the caller then falls back
+    to environment defaults, or the entrypoint ends the call loudly when
+    nothing usable exists. Values are never logged."""
+    try:
+        return await rag_client.fetch_credentials(
+            params.tenant_id,
+            backend_url=params.settings.VOICE_BACKEND_URL,
+            api_key=params.settings.INTERNAL_API_KEY or params.settings.API_KEY,
+        )
+    except Exception as exc:
+        logger.warning("Voice credential fetch failed (%s)", type(exc).__name__)
+        return {}
+
+
+def _voice_provider_keys_available(settings: VoiceSettings) -> bool:
+    """Whether the active voice pipeline can authenticate: the selected LLM
+    provider has a key and Sarvam (STT+TTS) has one. Mirrors the provider
+    factories' own requirements (groq_llm, mistral_llm with its Groq
+    fallback, openai_compatible_llm, sarvam_stt/tts)."""
+    provider = (settings.VOICE_LLM_PROVIDER or "groq").lower()
+    if provider == "custom_openai":
+        llm_ok = bool(settings.CUSTOM_LLM_BASE_URL and settings.CUSTOM_LLM_API_KEY)
+    elif provider == "mistral":
+        llm_ok = bool(settings.MISTRAL_API_KEY or settings.GROQ_API_KEY)
+    else:
+        llm_ok = bool(settings.GROQ_API_KEY)
+    return bool(llm_ok and settings.SARVAM_API_KEY)
 
 
 async def _seed_chat_context(params: SessionParams) -> Optional[llm.ChatContext]:
@@ -221,6 +277,30 @@ async def entrypoint(ctx: JobContext) -> None:
 
     params = _params_for_job(ctx)
 
+    # Stored provider keys are resolved server-side (never from dispatch
+    # metadata, which carries no key material). Bounded and fail-open: on
+    # failure the environment defaults still apply below.
+    server_creds = await _resolve_voice_credentials(params)
+    if server_creds:
+        params = _params_for_job(ctx, server_creds=server_creds)
+
+    if not _voice_provider_keys_available(params.settings):
+        # Fail loud, not silent: without provider keys the session build
+        # below would raise and leave the caller in a dead room until the
+        # idle watchdog fires. End the room at once instead so the client
+        # sees Call Ended rather than endless connecting.
+        logger.warning(
+            "[CREDENTIALS %s] voice provider keys unavailable for tenant; "
+            "ending call without a silent room",
+            ctx.room.name,
+        )
+        try:
+            if ctx.room and hasattr(ctx.room, "disconnect"):
+                await ctx.room.disconnect()
+        except Exception:
+            pass
+        return
+
     # History fetch and session construction are independent, and the history
     # fetch is a network round trip to the API server (which then queries the
     # database). Serialising them put that whole round trip in front of the
@@ -266,6 +346,8 @@ async def entrypoint(ctx: JobContext) -> None:
         rag_enabled=params.rag_enabled,
         tenant_id=params.tenant_id,
         chat_ctx=chat_ctx,
+        document_ids=params.document_ids,
+        product_voice=params.product_id is not None,
     )
     assistant.room = ctx.room
     assistant._contact_id = params.contact_id

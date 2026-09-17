@@ -32,17 +32,29 @@ _session_lock = asyncio.Lock()
 # are never cached.
 _CONTEXT_CACHE_TTL_S = 20.0
 _CONTEXT_CACHE_MAX_ENTRIES = 64
-_context_cache: OrderedDict[tuple[str, str, int, str], tuple[float, list[str]]] = OrderedDict()
+_context_cache: OrderedDict[tuple, tuple[float, list[str]]] = OrderedDict()
 _context_cache_lock = asyncio.Lock()
 
 
-def _context_cache_key(query: str, tenant_id: str, backend_url: str, top_k: int) -> tuple[str, str, int, str]:
+def _context_cache_key(
+    query: str,
+    tenant_id: str,
+    backend_url: str,
+    top_k: int,
+    document_ids: Optional[tuple[str, ...]] = None,
+) -> tuple:
     """Normalize only whitespace; retrieval still receives the caller's text."""
     normalized_query = " ".join(query.casefold().split())
-    return (tenant_id, backend_url.rstrip("/").casefold(), top_k, normalized_query)
+    return (
+        tenant_id,
+        backend_url.rstrip("/").casefold(),
+        top_k,
+        normalized_query,
+        document_ids or (),
+    )
 
 
-async def _get_cached_context(key: tuple[str, str, int, str]) -> Optional[list[str]]:
+async def _get_cached_context(key: tuple) -> Optional[list[str]]:
     now = time.monotonic()
     async with _context_cache_lock:
         entry = _context_cache.get(key)
@@ -57,7 +69,7 @@ async def _get_cached_context(key: tuple[str, str, int, str]) -> Optional[list[s
         return list(chunks)
 
 
-async def _cache_context(key: tuple[str, str, int, str], chunks: list[str]) -> None:
+async def _cache_context(key: tuple, chunks: list[str]) -> None:
     async with _context_cache_lock:
         _context_cache[key] = (time.monotonic() + _CONTEXT_CACHE_TTL_S, list(chunks))
         _context_cache.move_to_end(key)
@@ -102,23 +114,29 @@ async def fetch_context(
     api_key: str,
     top_k: int,
     timeout_s: float = 8.0,
+    document_ids: Optional[list[str]] = None,
 ) -> list[str]:
     """Top-k document chunk texts relevant to `query`, or [] on any failure
     — RAG being briefly unavailable should degrade the answer, not crash
-    the call."""
+    the call. `document_ids` scopes retrieval to a product's assigned
+    documents; None means the owner's whole enabled set."""
     if not query.strip():
         return []
-    cache_key = _context_cache_key(query, tenant_id, backend_url, top_k)
+    scope = tuple(sorted(document_ids)) if document_ids else None
+    cache_key = _context_cache_key(query, tenant_id, backend_url, top_k, scope)
     cached = await _get_cached_context(cache_key)
     if cached is not None:
         logger.debug("Voice RAG cache hit for tenant %s", tenant_id)
         return cached
     headers = {"X-Internal-Key": api_key} if api_key else {}
+    payload: dict = {"query": query, "tenant_id": tenant_id, "top_k": top_k}
+    if document_ids:
+        payload["document_ids"] = list(document_ids)
     try:
         session = await _get_session()
         async with session.post(
             f"{backend_url.rstrip('/')}/api/v1/voice/retrieve",
-            json={"query": query, "tenant_id": tenant_id, "top_k": top_k},
+            json=payload,
             headers=headers,
             timeout=aiohttp.ClientTimeout(total=timeout_s),
         ) as resp:
@@ -133,6 +151,51 @@ async def fetch_context(
     except Exception:
         logger.warning("Voice RAG retrieve failed", exc_info=True)
         return []
+
+
+async def fetch_credentials(
+    tenant_id: str,
+    *,
+    backend_url: str,
+    api_key: str,
+    timeout_s: float = 5.0,
+) -> dict:
+    """Stored provider credentials for a voice session, resolved server-side.
+
+    Lets dispatch metadata stay free of key material: the token endpoint
+    selects the provider, and the worker fetches the actual keys here over
+    the internal API (X-Internal-Key). {} on any failure — the caller then
+    falls back to environment defaults, or ends the call loudly when nothing
+    usable exists. Values are never logged.
+    """
+    if not tenant_id.strip():
+        return {}
+    headers = {"X-Internal-Key": api_key} if api_key else {}
+    try:
+        session = await _get_session()
+        async with session.post(
+            f"{backend_url.rstrip('/')}/api/v1/voice/credentials",
+            json={"tenant_id": tenant_id},
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=timeout_s),
+        ) as resp:
+            if resp.status != 200:
+                logger.warning(
+                    "Voice credential fetch failed: HTTP %s", resp.status
+                )
+                return {}
+            data = await resp.json()
+            return {
+                key: (data.get(key) or "")
+                for key in (
+                    "groq_api_key",
+                    "sarvam_api_key",
+                    "custom_llm_api_key",
+                )
+            }
+    except Exception as exc:
+        logger.warning("Voice credential fetch failed (%s)", type(exc).__name__)
+        return {}
 
 
 async def fetch_history(

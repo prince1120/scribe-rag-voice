@@ -25,7 +25,13 @@
 .business-status { border-radius: 5px; padding: 4px 7px; background: var(--claude-surface-2); color: var(--claude-text-2); font-size: 11px; font-weight: 600; text-transform: capitalize; }
 .business-status.is-open { background: #f6eacb; color: #714900; }
 .business-status.is-in_progress { background: var(--claude-accent-soft); color: var(--claude-accent); }
+.business-status.is-contacted { background: #dee2f2; color: #3730a3; }
 .business-status.is-resolved { background: #e1eee5; color: #225738; }
+.business-badge-qr { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; background: #dee2f2; color: #4854a8; border: 1px solid rgba(72, 84, 168, 0.25); }
+.business-trigger-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+.business-trigger-badge.is-safety { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+.business-trigger-badge.is-abstention { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+.business-trigger-badge.is-manual { background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb; }
 .business-request-message { font-size: 15px; line-height: 1.7; margin: 14px 0 8px; max-width: 80ch; white-space: pre-wrap; overflow-wrap: anywhere; }
 .business-muted { font-size: 12px; color: var(--claude-text-2); line-height: 1.6; margin: 8px 0; }
 .business-contact-value { font-weight: 500; overflow-wrap: anywhere; }

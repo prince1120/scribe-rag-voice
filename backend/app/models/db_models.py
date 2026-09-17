@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from sqlalchemy import (
-    Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, text,
+    Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -418,6 +418,8 @@ class VoiceCallRecord(Base):
     tenant_id: Mapped[str] = mapped_column(String(128), index=True)
     contact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     conversation_id: Mapped[str] = mapped_column(String(36), unique=True)
+    context_label: Mapped[Optional[str]] = mapped_column(String(240), nullable=True)
+    voice_consent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     transcript: Mapped[list] = mapped_column(JSON, default=list)
     transcript_source: Mapped[str] = mapped_column(String(16), default="none")
     duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
@@ -451,3 +453,129 @@ class CalendarSettingsRecord(Base):
     __tablename__ = "calendar_settings"
     tenant_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     timezone_name: Mapped[str] = mapped_column(String(64), default="UTC")
+
+
+# ============================================================================
+# Product QR Models (Milestone M1A)
+# ============================================================================
+
+class ProductRecord(Base):
+    """A physical or hardware product (appliance, device) managed by a brand owner."""
+    __tablename__ = "products"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    product_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    model_number: Mapped[str] = mapped_column(String(100), index=True)
+    category: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    short_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    support_disclaimer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active")  # draft/active/archived
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+    @property
+    def description(self) -> Optional[str]:
+        return self.short_description
+
+
+class ProductDocumentRecord(Base):
+    """Links an uploaded document (manual, error guide, warranty doc) to a product."""
+    __tablename__ = "product_documents"
+    __table_args__ = (
+        UniqueConstraint("product_id", "document_id", name="uq_product_document"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    product_id: Mapped[str] = mapped_column(ForeignKey("products.product_id", ondelete="CASCADE"), index=True)
+    document_id: Mapped[str] = mapped_column(ForeignKey("documents.document_id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class ProductQrLinkRecord(Base):
+    """A shareable/printable QR link for a product.
+
+    IMPORTANT: Product QRs are printed on packaging and scanned by many users.
+    They NEVER bind a visitor device, unlike private contacts.
+    """
+    __tablename__ = "product_qr_links"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    link_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    product_id: Mapped[str] = mapped_column(ForeignKey("products.product_id", ondelete="CASCADE"), index=True)
+    label: Mapped[Optional[str]] = mapped_column(String(200), default="Product Support QR")
+    public_token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    scan_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+    @property
+    def name(self) -> str:
+        return self.label or "Product Support QR"
+
+    @property
+    def token_hash(self) -> str:
+        return self.public_token_hash
+
+    @property
+    def is_active(self) -> bool:
+        return bool(self.active)
+
+
+class ProductVisitorSessionRecord(Base):
+    """A visitor browser session created when opening a Product QR link.
+
+    Decoupled from link identity so multiple concurrent customers can scan the
+    same physical QR code without locking each other out.
+    """
+    __tablename__ = "product_visitor_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    product_id: Mapped[str] = mapped_column(ForeignKey("products.product_id", ondelete="CASCADE"), index=True)
+    qr_link_id: Mapped[str] = mapped_column(ForeignKey("product_qr_links.link_id", ondelete="CASCADE"), index=True)
+    session_token_hash: Mapped[str] = mapped_column(String(64), index=True)
+    conversation_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    message_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ProductSupportRequestRecord(Base):
+    """A human-support request filed by a Product QR visitor (Milestone M1B).
+
+    Stored as a first-class row — never as transcript text — so the owner
+    can triage it and the visitor cannot read or alter another session's
+    requests. Created by Base.metadata.create_all like every other table
+    here, so no migration step is required.
+    """
+    __tablename__ = "product_support_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    # Client-generated UUID: retries of the same submission reuse the row.
+    request_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    product_id: Mapped[str] = mapped_column(ForeignKey("products.product_id", ondelete="CASCADE"), index=True)
+    session_id: Mapped[str] = mapped_column(String(36), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    reply_to: Mapped[str] = mapped_column(String(320))
+    preferred_time: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    message: Mapped[str] = mapped_column(Text)
+    trigger: Mapped[str] = mapped_column(String(16), default="manual")
+    consent: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)
+    owner_note: Mapped[str] = mapped_column(String(2000), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)

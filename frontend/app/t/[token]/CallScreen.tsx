@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 
 import "../../styles/callscreen.css";
+import { extractApiErrorMessage, formatClientError } from "../../lib/apiErrors";
 
 type Phase = "idle" | "connecting" | "live" | "ended" | "error";
 
@@ -52,7 +53,13 @@ function formatDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export function CallScreen({ name }: { name?: string }) {
+export function CallScreen({
+  name,
+  onSwitchToChat,
+}: {
+  name?: string;
+  onSwitchToChat?: () => void;
+}) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState("");
   const [muted, setMuted] = useState(false);
@@ -72,6 +79,7 @@ export function CallScreen({ name }: { name?: string }) {
   const [copied, setCopied] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const callIdRef = useRef<string | null>(null);
+  const persistedRef = useRef<string | null>(null);
 
   const transcriptListRef = useRef<HTMLDivElement>(null);
 
@@ -120,7 +128,8 @@ export function CallScreen({ name }: { name?: string }) {
   }, [transcripts, name]);
 
   const persistSession = useCallback(async () => {
-    if (!callIdRef.current) return;
+    if (!callIdRef.current || persistedRef.current === callIdRef.current) return;
+    persistedRef.current = callIdRef.current;
     const currentCall = callIdRef.current;
     setSaveState("saving");
     try {
@@ -137,12 +146,14 @@ export function CallScreen({ name }: { name?: string }) {
       if (!res.ok) throw new Error("Could not confirm the saved transcript.");
       if (callIdRef.current === currentCall) setSaveState("saved");
     } catch {
+      persistedRef.current = null;
       if (callIdRef.current === currentCall) setSaveState("error");
     }
   }, []);
 
   const persistBeacon = useCallback(() => {
-    if (!callIdRef.current) return;
+    if (!callIdRef.current || persistedRef.current === callIdRef.current) return;
+    persistedRef.current = callIdRef.current;
     const body = JSON.stringify({
       call_id: callIdRef.current,
       messages: transcriptsRef.current.filter(m => m.isFinal && m.text.trim()).map(m => ({ role: m.role, content: m.text })),
@@ -165,6 +176,7 @@ export function CallScreen({ name }: { name?: string }) {
 
   const start = useCallback(async () => {
     callIdRef.current = null;
+    persistedRef.current = null;
     setSaveState("idle");
     setLiveBooking(null);
     setError("");
@@ -189,8 +201,18 @@ export function CallScreen({ name }: { name?: string }) {
       });
 
       if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body?.detail || "Could not start the call.");
+        if (response.status === 403) {
+          throw new Error("Voice is unavailable for this link or the assistant is not currently deployed.");
+        }
+        if (response.status === 429) {
+          throw new Error("Voice service is currently rate limited. Please wait a moment before trying again.");
+        }
+        if (response.status === 502 || response.status === 503) {
+          const detail = await extractApiErrorMessage(response, "Voice service is temporarily offline.");
+          throw new Error(detail);
+        }
+        const errDetail = await extractApiErrorMessage(response, "Could not start the call.");
+        throw new Error(errDetail);
       }
 
       const { token, url, call_id } = await response.json();
@@ -349,9 +371,13 @@ export function CallScreen({ name }: { name?: string }) {
         rafRef.current = requestAnimationFrame(tick);
       };
       rafRef.current = requestAnimationFrame(tick);
-    } catch (err) {
+    } catch (err: any) {
       setPhase("error");
-      setError(err instanceof Error ? err.message : "Could not start the call.");
+      if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError" || err?.message?.toLowerCase().includes("permission")) {
+        setError("Microphone permission was denied. Please allow microphone access in your browser settings to speak.");
+      } else {
+        setError(formatClientError(err, "Could not start the call."));
+      }
       teardown();
     }
   }, [persistSession, teardown]);
@@ -495,9 +521,21 @@ export function CallScreen({ name }: { name?: string }) {
             </p>
 
             {error && (
-              <p className="text-xs text-rose-700 bg-rose-50 p-2.5 rounded-xl border border-rose-200 m-0 w-full">
-                {error}
-              </p>
+              <div className="w-full max-w-xs space-y-2">
+                <p className="text-xs text-rose-700 bg-rose-50 p-2.5 rounded-xl border border-rose-200 m-0 w-full text-center">
+                  {error}
+                </p>
+                {onSwitchToChat && (
+                  <button
+                    type="button"
+                    onClick={onSwitchToChat}
+                    className="w-full flex items-center justify-center gap-1.5 py-2 px-4 rounded-xl bg-white border border-[var(--claude-border)] text-xs font-semibold text-[var(--claude-text)] hover:bg-[var(--claude-surface-2)] transition shadow-xs cursor-pointer"
+                  >
+                    <MessageSquare size={14} className="text-[var(--claude-accent)]" />
+                    <span>Type in text chat instead</span>
+                  </button>
+                )}
+              </div>
             )}
 
             <button

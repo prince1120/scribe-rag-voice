@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from app.services.vector_store import VectorStoreService
 
@@ -40,3 +41,55 @@ class TestFuseRRF:
         fused = VectorStoreService._fuse_rrf(dense, sparse, limit=10)
         scores = {r["id"]: r["score"] for r in fused}
         assert scores["a"] > scores["z"]
+
+
+class TestQdrantTransport:
+    @patch.object(VectorStoreService, "_init_collection")
+    @patch("app.services.vector_store.QdrantClient")
+    def test_local_host_is_http_even_when_cloud_key_is_stale(self, client, _init):
+        VectorStoreService(
+            host="127.0.0.1",
+            port=6433,
+            api_key="stale-cloud-key",
+        )
+
+        client.assert_called_once_with(
+            host="127.0.0.1",
+            port=6433,
+            https=False,
+            timeout=60.0,
+        )
+
+    @patch.object(VectorStoreService, "_init_collection")
+    @patch("app.services.vector_store.QdrantClient")
+    def test_explicit_local_http_overrides_stale_cloud_key(self, client, _init):
+        VectorStoreService(
+            host="127.0.0.1",
+            port=6433,
+            api_key="stale-cloud-key",
+            https=False,
+        )
+
+        client.assert_called_once_with(
+            host="127.0.0.1",
+            port=6433,
+            https=False,
+            timeout=60.0,
+        )
+
+    @patch.object(VectorStoreService, "_init_collection")
+    @patch("app.services.vector_store.QdrantClient")
+    def test_cloud_key_still_enables_tls_by_default(self, client, _init):
+        VectorStoreService(
+            host="cloud.qdrant.io",
+            port=6333,
+            api_key="cloud-key",
+        )
+
+        client.assert_called_once_with(
+            host="cloud.qdrant.io",
+            port=6333,
+            https=True,
+            timeout=60.0,
+            api_key="cloud-key",
+        )

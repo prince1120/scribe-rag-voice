@@ -1,6 +1,6 @@
 import os
 from pydantic_settings import BaseSettings
-from typing import List
+from typing import List, Optional
 
 # Without Windows Developer Mode enabled, huggingface_hub's symlink-based
 # cache fails with WinError 1314 ("required privilege not held") when
@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     QDRANT_HOST: str = "localhost"
     QDRANT_PORT: int = 6333
     QDRANT_API_KEY: str = ""
+    # None preserves cloud auto-detection (API key => TLS). Hybrid local mode
+    # explicitly sets false so a stale cloud key in backend/.env cannot turn
+    # http://127.0.0.1:6433 into an invalid HTTPS connection.
+    QDRANT_HTTPS: Optional[bool] = None
     QDRANT_COLLECTION_NAME: str = "documents"
     
     # Redis Configuration
@@ -45,6 +49,9 @@ class Settings(BaseSettings):
     RETRIEVAL_TOP_K: int = 10
     MAX_TOP_K: int = 50
 
+    # Milestone M1A: Product QR Feature Flag (default False)
+    PRODUCT_QR_ENABLED: bool = False
+
     # Demo mode (visitors who paste their own Groq key via X-User-Groq-Key)
     DEMO_MAX_DOCUMENTS: int = 4
     DEMO_TOP_K: int = 3
@@ -54,8 +61,19 @@ class Settings(BaseSettings):
     # stays a self-contained, independently deployable unit — see
     # app/services/voice/config.py)
     LIVEKIT_URL: str = ""
+    # Public URL returned to the browser in the token response. When running
+    # self-hosted LiveKit behind Docker, the browser must receive
+    # ws://localhost:<host-port> while backend/worker use ws://livekit:7880
+    # over the private Compose network. If empty, LIVEKIT_URL is returned.
+    LIVEKIT_PUBLIC_URL: str = ""
     LIVEKIT_API_KEY: str = ""
     LIVEKIT_API_SECRET: str = ""
+    # When true (local `python run_backend.py` without Docker) the API will
+    # auto-spawn a voice worker if none is running.  When false (Docker
+    # Compose production) the API must NEVER spawn/kill a worker — a dedicated
+    # `voice-worker` container owns that lifecycle.  Token requests then
+    # health-check the dedicated worker and return 503 if it is down.
+    VOICE_WORKER_AUTO_START: bool = True
     SARVAM_API_KEY: str = ""
     MISTRAL_API_KEY: str = ""
     # Best model for prompt generation — large is ~3x better than small at grounding & not hallucinating.
@@ -225,3 +243,17 @@ if not settings.SESSION_SECRET and not settings.DEBUG:
         "\"import secrets; print(secrets.token_urlsafe(48))\"  "
         "(set DEBUG=true for local development only.)"
     )
+
+# Production hardening: refuse obvious placeholder secrets that would be
+# committed if .env.selfhost.example were copied without editing.  Local
+# DEBUG=true is allowed to keep them for infra-only bring-up.
+if not settings.DEBUG:
+    _placeholders = ("change_me", "scribe_dev", "devkey", "devsecret")
+    for _k in ("SESSION_SECRET", "LIVEKIT_API_SECRET"):
+        _v = getattr(settings, _k, "") or ""
+        if any(p in _v for p in _placeholders):
+            raise RuntimeError(
+                f"{_k} still contains a placeholder value ({_v[:20]}…); "
+                "replace it in .env with a real secret (see .env.selfhost.example). "
+                "Refusing to boot in production with placeholder secrets."
+            )

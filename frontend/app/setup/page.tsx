@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ScribeMark } from "../Logo";
 import { defaultTemplate, templateForCategory } from "../agent/templates";
+import { extractApiErrorMessage, formatClientError } from "../lib/apiErrors";
 
 interface Category {
   id: string;
@@ -62,10 +63,8 @@ export default function SetupPage() {
         });
 
         if (!response.ok) {
-          const body = await response.json().catch(() => ({}));
-          // The server writes these messages for the person reading them, so
-          // they are shown as-is rather than replaced with something generic.
-          throw new Error(body?.detail || "Could not save that.");
+          const detail = await extractApiErrorMessage(response, "Could not save workspace mode.");
+          throw new Error(detail);
         }
 
         // For business, seed the agent with a category template so the editor
@@ -110,8 +109,8 @@ export default function SetupPage() {
         // Business goes to the agent editor, because a business with no agent
         // has nothing to share yet. Personal goes straight to the app.
         router.replace(chosen === "business" ? "/agent" : "/");
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Could not save that.");
+      } catch (err: any) {
+        setError(formatClientError(err, "Could not save that."));
       } finally {
         setSaving(false);
       }

@@ -220,15 +220,27 @@ async def get_identity(
     x_user_groq_key: Optional[str] = Header(default=None, alias="X-User-Groq-Key"),
     x_user_sarvam_key: Optional[str] = Header(default=None, alias="X-User-Sarvam-Key"),
     x_client_id: Optional[str] = Header(default=None, alias="X-Client-Id"),
+    x_owner_console: Optional[str] = Header(default=None, alias="X-Owner-Console"),
 ) -> Identity:
     """FastAPI dependency — use this in routes."""
+    owner_console = (x_owner_console or "").strip() == "1"
     identity = resolve_identity(
         session_cookie=scribe_session,
-        contact_cookie=scribe_contact_session,
+        # A browser can retain a customer-link cookie after its owner returns
+        # to the console. On owner-console API calls, the signed owner cookie
+        # is authoritative and a contact cookie must not downgrade it to a
+        # read-only visitor from another workspace.
+        contact_cookie=None if owner_console else scribe_contact_session,
         groq_key=x_user_groq_key,
         sarvam_key=x_user_sarvam_key,
         client_id=x_client_id,
     )
+
+    if owner_console and not identity.is_owner:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Owner sign-in required",
+        )
 
     # Local-development convenience: resolve the placeholder "default" tenant to
     # whichever real business owner exists, so seeded data shows up in the

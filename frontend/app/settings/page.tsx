@@ -18,10 +18,11 @@ import {
   Sparkles,
 } from "lucide-react";
 
-import { ownerFetch } from "../lib/ownerFetch";
+import { ownerFetch, invalidateOwnerCache } from "../lib/ownerFetch";
 import { OwnerShell } from "../components/owner/OwnerShell";
 import { DirectoryHandle } from "../components/owner/DirectoryHandle";
 import { getWorkspaceCache, setWorkspaceCache, useWorkspace } from "../lib/workspaceCache";
+import { extractApiErrorMessage, formatClientError } from "../lib/apiErrors";
 
 export default function SettingsPage() {
   const ws = useWorkspace();
@@ -77,14 +78,15 @@ export default function SettingsPage() {
     let cancelled = false;
     void (async () => {
       try {
-        const [wsRes, provRes, catRes] = await Promise.all([
+        const [wsResResult, provResResult, catResResult] = await Promise.allSettled([
           ownerFetch("/api/v1/workspace"),
           ownerFetch("/api/v1/workspace/providers"),
           ownerFetch("/api/v1/workspace/categories"),
         ]);
         if (cancelled) return;
-        if (wsRes.ok) {
-          const wsData = await wsRes.json();
+
+        if (wsResResult.status === "fulfilled" && wsResResult.value.ok) {
+          const wsData = await wsResResult.value.json();
           setBusinessName(wsData.business_name || "");
           setCategory(wsData.business_category || "");
           if (wsData.email) setEmail(wsData.email);
@@ -94,15 +96,15 @@ export default function SettingsPage() {
             email: wsData.email,
           });
         }
-        if (provRes.ok) {
-          const data = await provRes.json();
+        if (provResResult.status === "fulfilled" && provResResult.value.ok) {
+          const data = await provResResult.value.json();
           setProviders(data);
           setCustomUrl(data.custom_llm_base_url || "");
           setModel(data.llm_model || "");
           setWorkspaceCache({ providersData: data });
         }
-        if (catRes.ok) {
-          const catData = await catRes.json();
+        if (catResResult.status === "fulfilled" && catResResult.value.ok) {
+          const catData = await catResResult.value.json();
           setCategories(catData.categories || []);
           setWorkspaceCache({ categoriesData: catData.categories || [] });
         }
@@ -129,13 +131,18 @@ export default function SettingsPage() {
         }),
       });
       if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body?.detail || "Could not update business profile.");
+        const errMsg = await extractApiErrorMessage(response, "Could not update business profile.");
+        throw new Error(errMsg);
       }
+      invalidateOwnerCache("/api/v1/workspace");
+      setWorkspaceCache({
+        businessName: businessName.trim(),
+        businessCategory: category,
+      });
       setProfileSaved(true);
       setTimeout(() => setProfileSaved(false), 2500);
     } catch (err) {
-      setProfileError(err instanceof Error ? err.message : "Could not update profile.");
+      setProfileError(formatClientError(err, "Could not update profile."));
     } finally {
       setSavingProfile(false);
     }
@@ -162,16 +169,18 @@ export default function SettingsPage() {
       });
 
       if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body?.detail || "Could not save credentials.");
+        const errMsg = await extractApiErrorMessage(response, "Could not save credentials.");
+        throw new Error(errMsg);
       }
 
+      invalidateOwnerCache("/api/v1/workspace");
+      setWorkspaceCache({ email: email.trim() });
       setDone(true);
       setPassword("");
       setConfirm("");
       setTimeout(() => setDone(false), 3000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save credentials.");
+      setError(formatClientError(err, "Could not save credentials."));
     } finally {
       setBusy(false);
     }
@@ -194,17 +203,20 @@ export default function SettingsPage() {
         }),
       });
       if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body?.detail || "Could not save API keys.");
+        const errMsg = await extractApiErrorMessage(response, "Could not save API keys.");
+        throw new Error(errMsg);
       }
-      setProviders(await response.json());
+      const updated = await response.json();
+      invalidateOwnerCache("/api/v1/workspace");
+      setProviders(updated);
+      setWorkspaceCache({ providersData: updated });
       setGroqKey("");
       setSarvamKey("");
       setCustomKey("");
       setKeysSaved(true);
       setTimeout(() => setKeysSaved(false), 2500);
     } catch (err) {
-      setKeyError(err instanceof Error ? err.message : "Could not save API keys.");
+      setKeyError(formatClientError(err, "Could not save API keys."));
     } finally {
       setSavingKeys(false);
     }
@@ -212,7 +224,7 @@ export default function SettingsPage() {
 
   return (
     <OwnerShell businessName={businessName}>
-      <main style={S.page}>
+      <main style={S.page} className="owner-business-page settings-page">
         {/* Header */}
         <header style={S.header}>
           <div>

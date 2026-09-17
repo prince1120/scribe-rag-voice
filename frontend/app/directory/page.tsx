@@ -16,6 +16,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { ScribeMark } from "../Logo";
+import { extractApiErrorMessage, formatClientError } from "../lib/apiErrors";
 
 interface AgentCard {
   handle: string;
@@ -61,6 +62,7 @@ export default function DirectoryPage() {
   const [agents, setAgents] = useState<AgentCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
 
@@ -86,7 +88,8 @@ export default function DirectoryPage() {
       try {
         const res = await fetch("/api/v1/directory/agents");
         if (!res.ok) {
-          throw new Error("Failed to load business directory.");
+          const errMsg = await extractApiErrorMessage(res, "Failed to load business directory.");
+          throw new Error(errMsg);
         }
         const data = await res.json();
         if (!cancelled) {
@@ -108,7 +111,7 @@ export default function DirectoryPage() {
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load directory.");
+          setError(formatClientError(err, "Failed to load directory."));
         }
       } finally {
         if (!cancelled) {
@@ -120,7 +123,7 @@ export default function DirectoryPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadKey]);
 
   const categories = [
     "all",
@@ -176,8 +179,8 @@ export default function DirectoryPage() {
       });
 
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.detail || "Could not connect to this assistant.");
+        const errMsg = await extractApiErrorMessage(res, "Could not connect to this assistant.");
+        throw new Error(errMsg);
       }
 
       const data = await res.json();
@@ -186,7 +189,7 @@ export default function DirectoryPage() {
         setGeneratedLink({ url: fullUrl, token: data.token });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to connect.");
+      setError(formatClientError(err, "Failed to connect."));
     } finally {
       setConnectingId(null);
     }
@@ -298,6 +301,7 @@ export default function DirectoryPage() {
             <input
               type="text"
               placeholder="Search by business name, doctor, clinic, or service…"
+              aria-label="Search businesses"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full bg-transparent border-none outline-none text-sm placeholder:text-[var(--claude-muted)]"
@@ -339,9 +343,10 @@ export default function DirectoryPage() {
       </section>
 
       {/* Directory Grid */}
-      <main className="directory-main px-4 sm:px-8 pb-16 max-w-5xl mx-auto w-full flex-1">
+      <main id="main-content" className="directory-main px-4 sm:px-8 pb-16 max-w-5xl mx-auto w-full flex-1" tabIndex={-1}>
         {error && (
           <div
+            role="alert"
             className="p-4 rounded-xl border mb-6 text-center text-xs font-medium"
             style={{
               borderColor: "var(--color-danger-soft)",
@@ -349,7 +354,8 @@ export default function DirectoryPage() {
               color: "var(--color-danger)",
             }}
           >
-            {error}
+            {agents.length === 0 ? "The directory could not load. Please try again." : error}
+            <button type="button" className="ml-3 underline min-h-11" onClick={() => setReloadKey(value => value + 1)}>Try again</button>
           </div>
         )}
 
@@ -371,7 +377,7 @@ export default function DirectoryPage() {
               </div>
             ))}
           </div>
-        ) : filteredAgents.length === 0 ? (
+        ) : error && agents.length === 0 ? null : filteredAgents.length === 0 ? (
           <div
             className="rounded-2xl border p-12 text-center max-w-lg mx-auto flex flex-col items-center gap-3"
             style={{

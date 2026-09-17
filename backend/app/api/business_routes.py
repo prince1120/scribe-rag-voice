@@ -140,7 +140,13 @@ async def calls(limit: int = Query(30, ge=1, le=100), offset: int = Query(0, ge=
                  identity: Identity = Depends(get_identity)):
     _require_owner(identity)
     rows, total = await business.list_calls(identity.tenant_id, limit, offset)
-    return {"items": [call_public(r) | {"name": name or "Test call"} for r, name in rows], "total": total}
+    return {
+        "items": [
+            call_public(r) | {"name": name or r.context_label or "Test call"}
+            for r, name in rows
+        ],
+        "total": total,
+    }
 
 
 @router.get("/bookings/mine")

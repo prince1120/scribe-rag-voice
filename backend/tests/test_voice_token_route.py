@@ -9,9 +9,24 @@ These are deliberately shallow: they call the endpoint and assert it does not
 500. That is the entire class of failure that shipped.
 """
 import pytest
+from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 
+from app.api import voice_routes
+from app.config import settings
+from app.identity import Identity
 from app.main import app
+from app.models.schemas import VoiceTokenRequest
+
+
+@pytest.fixture(autouse=True)
+def healthy_worker(monkeypatch):
+    """Route tests must never launch the real background voice process."""
+    async def healthy():
+        return True
+
+    monkeypatch.setattr(voice_routes, "ensure_worker_running", healthy)
+    monkeypatch.setattr(voice_routes, "is_worker_available", healthy)
 
 
 @pytest.fixture(scope="module")
@@ -30,6 +45,15 @@ class TestItRuns:
     def test_a_missing_key_is_explained_not_crashed(self, client, monkeypatch):
         from app.config import settings
         monkeypatch.setattr(settings, "GROQ_API_KEY", "")
+        # Deterministic regardless of suite order or shared database state:
+        # no stored credential may satisfy the key check from cache or rows
+        # written by other tests.
+        async def no_stored(*args, **kwargs):
+            return {}
+
+        monkeypatch.setattr(
+            voice_routes.owner_service, "resolve_credentials", no_stored
+        )
         response = client.post("/api/v1/voice/token", json={})
         assert response.status_code == 400
         # The message should say where to fix it, not restate the rule.
@@ -64,3 +88,40 @@ class TestSupportingEndpoints:
         response = client.get("/api/v1/voice/health")
         assert response.status_code == 200
         assert "available" in response.json()
+
+
+class TestWorkerAdmission:
+    async def test_token_endpoint_returns_503_when_host_worker_is_unhealthy(
+        self, monkeypatch
+    ):
+        """Exercise the real endpoint function through its worker gate.
+
+        No credentials or LiveKit token should be evaluated after a failed
+        worker check; the browser must receive an actionable 503 instead of
+        joining a room whose assistant never arrives.
+        """
+        monkeypatch.setattr(settings, "VOICE_WORKER_AUTO_START", True)
+
+        async def unavailable():
+            return False
+
+        async def no_record(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(voice_routes, "ensure_worker_running", unavailable)
+        monkeypatch.setattr(voice_routes.owner_service, "cached_agent", no_record)
+        monkeypatch.setattr(voice_routes.owner_service, "cached_owner", no_record)
+
+        request = Request({"type": "http", "method": "POST", "path": "/api/v1/voice/token", "headers": []})
+        with pytest.raises(HTTPException) as raised:
+            await voice_routes.create_voice_token(
+                request=request,
+                body=VoiceTokenRequest(),
+                identity=Identity(tenant_id="test-owner", is_owner=True),
+                x_user_groq_key=None,
+                x_user_sarvam_key=None,
+                x_user_custom_llm_key=None,
+            )
+
+        assert raised.value.status_code == 503
+        assert "temporarily unavailable" in raised.value.detail.lower()

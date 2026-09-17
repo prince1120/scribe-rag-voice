@@ -29,6 +29,8 @@ from app.api.session_routes import router as session_router  # noqa: E402
 from app.api.voice_routes import router as voice_router  # noqa: E402
 from app.api.calendar_routes import router as calendar_router  # noqa: E402
 from app.api.business_routes import router as business_router  # noqa: E402
+from app.api.product_qr_owner_routes import router as product_qr_owner_router  # noqa: E402
+from app.api.product_qr_public_routes import router as product_qr_public_router  # noqa: E402
 from app.services.business_calls import run_summary_loop  # noqa: E402
 from app.database import init_db  # noqa: E402
 from app.services.cleanup import run_cleanup_loop  # noqa: E402
@@ -161,7 +163,18 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    """Keep SlowAPI's response shape and expose a retry hint where the
+    Product QR client has a defined countdown/retry experience."""
+    response = _rate_limit_exceeded_handler(request, exc)
+    if request.url.path == "/api/v1/product-qr/public/service-requests":
+        response.headers["Retry-After"] = "60"
+    return response
+
+
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
 from app.api.middleware.security_headers import SecurityHeadersMiddleware  # noqa: E402
@@ -203,6 +216,8 @@ app.include_router(calendar_router, prefix="/api/v1/calendar", tags=["calendar"]
 app.include_router(business_router, prefix="/api/v1/business", tags=["business"])
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(voice_router, prefix="/api/v1/voice", tags=["voice"])
+app.include_router(product_qr_owner_router)
+app.include_router(product_qr_public_router)
 
 # NOTE: uploaded files are intentionally NOT mounted as static files here —
 # that would bypass auth. Use the authenticated

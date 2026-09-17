@@ -1,6 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, Header, HTTPException, Depends, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from typing import List, Optional
 import asyncio
 import os
@@ -46,6 +46,18 @@ import time as _cache_time
 _answer_cache: dict = {}  # key -> (answer, citations, expires_at)
 _prompt_prefix_cache: dict = {}
 
+# Ceiling for the chat retrieval path (embeddings + vector search). A slow or
+# hung dependency must degrade to a prompt-only answer, never fail the turn
+# with a 500 — the caller already waited, and an answer from the agent's
+# prompt beats an error page. Matches the voice RAG client timeout (8s).
+#
+# Known limitation: the timeout stops *awaiting* the work, it does not kill
+# it — a hung embedding/search thread keeps running until the dependency
+# answers or its own client timeout fires. This cannot accumulate without
+# bound: the calls run on the shared bounded worker threadpool, whose
+# threads are reused, so at most pool-size strays can ever be in flight.
+_RAG_TIMEOUT_S = 8.0
+
 def _query_aware_top_k(query: str, requested: Optional[int], is_demo: bool, has_images: bool) -> int:
     if requested is not None:
         return requested
@@ -85,7 +97,8 @@ vector_store = VectorStoreService(
     port=settings.QDRANT_PORT,
     collection_name=settings.QDRANT_COLLECTION_NAME,
     vector_size=embedding_service.dimension,
-    api_key=settings.QDRANT_API_KEY
+    api_key=settings.QDRANT_API_KEY,
+    https=settings.QDRANT_HTTPS,
 )
 rag_pipeline = RAGPipeline(
     groq_api_key=settings.GROQ_API_KEY,
@@ -322,13 +335,24 @@ async def _resolve_image_paths(results: List[dict]) -> None:
             payload["file_path"] = path
 
 
-@router.get("/health", response_model=HealthResponse)
-async def health_check():
-    """Health check / readiness probe. Checks every real dependency this
-    service needs: vector store, LLM client, DB, and cache. `redis` is
-    reported `degraded` rather than `unhealthy` because ConversationService
-    transparently falls back to in-memory storage — the app still works,
-    just without durable multi-instance conversation memory.
+@router.get("/health/live", response_model=HealthResponse)
+async def health_live():
+    """Liveness probe – proves the FastAPI process is alive.
+
+    Must not contact PostgreSQL, Redis, Qdrant, embedding services, or an LLM.
+    Returns immediately (<50 ms) with a small stable JSON payload.
+    """
+    return HealthResponse(status="healthy", components={"api": "healthy"})
+
+
+async def _readiness_components() -> dict:
+    """Dependency-aware readiness check.
+
+    Checks the same dependencies as the legacy /health endpoint:
+    vector_store, llm_client (tokenizer), database, redis.
+    Redis degradation does not make the service unhealthy (in-memory fallback).
+    Component values are sanitized – no exception traces, credentials, or env
+    values are returned to the caller (they are logged server-side).
     """
     components = {
         "api": "healthy",
@@ -339,11 +363,15 @@ async def health_check():
         "redis": "unknown",
     }
 
+    # Dependency name + exception class only: exception strings here have
+    # carried database URLs, API keys, and connection strings, which must
+    # never reach logs, let alone responses.
     try:
         await run_in_threadpool(vector_store.get_collection_info)
         components["vector_store"] = "healthy"
-    except Exception as e:
-        components["vector_store"] = f"unhealthy: {str(e)}"
+    except Exception as exc:
+        logger.warning("Readiness: vector_store unhealthy (%s)", type(exc).__name__)
+        components["vector_store"] = "unhealthy"
 
     try:
         # Verifies the Groq SDK client + tokenizer are usable. A full
@@ -351,25 +379,86 @@ async def health_check():
         # on every health check / liveness probe.
         await run_in_threadpool(rag_pipeline.count_tokens, "test")
         components["llm_client"] = "healthy"
-    except Exception as e:
-        components["llm_client"] = f"unhealthy: {str(e)}"
+    except Exception as exc:
+        logger.warning("Readiness: llm_client unhealthy (%s)", type(exc).__name__)
+        components["llm_client"] = "unhealthy"
 
     try:
         async with repositories.async_session() as session:
             await session.execute(repositories.select(1))
         components["database"] = "healthy"
-    except Exception as e:
-        components["database"] = f"unhealthy: {str(e)}"
+    except Exception as exc:
+        logger.warning("Readiness: database unhealthy (%s)", type(exc).__name__)
+        components["database"] = "unhealthy"
 
-    redis_ok = await run_in_threadpool(conversation_service.ping)
-    components["redis"] = "healthy" if redis_ok else "degraded (using in-memory fallback)"
+    try:
+        redis_ok = await run_in_threadpool(conversation_service.ping)
+        components["redis"] = "healthy" if redis_ok else "degraded (using in-memory fallback)"
+    except Exception as exc:
+        logger.warning("Readiness: redis check failed (%s)", type(exc).__name__)
+        components["redis"] = "degraded (using in-memory fallback)"
 
-    unhealthy = any(v.startswith("unhealthy") for v in components.values())
-    status = "unhealthy" if unhealthy else (
-        "degraded" if any(v.startswith("degraded") for v in components.values()) else "healthy"
+    # Voice-worker credential configuration. The worker resolves stored
+    # tenant keys via POST /voice/credentials, which requires
+    # INTERNAL_API_KEY; without it only environment defaults are usable.
+    if settings.INTERNAL_API_KEY:
+        components["voice_credentials"] = "healthy"
+    elif settings.GROQ_API_KEY and settings.SARVAM_API_KEY:
+        components["voice_credentials"] = (
+            "degraded (INTERNAL_API_KEY not configured; "
+            "stored tenant credentials unavailable to the voice worker)"
+        )
+    else:
+        components["voice_credentials"] = "unhealthy"
+
+    return components
+
+
+@router.get("/health/ready", response_model=HealthResponse)
+async def health_ready():
+    """Readiness probe – dependency-aware.
+
+    Preserves the existing rule that Redis degradation does not make the
+    service unavailable. Returns clear component status without exposing secrets.
+    Returns HTTP 503 when a required dependency is unhealthy so orchestrators
+    (Docker HEALTHCHECK, load balancers) detect unready; liveness stays 200.
+    """
+    components = await _readiness_components()
+
+    # Voice-scoped outage must not topple the whole service: chat, docs, and
+    # booking stay servable while voice cannot authenticate, exactly like the
+    # Redis rule above. The component still reports unhealthy so consoles can
+    # render it; only required dependencies drive HTTP 503.
+    required_unhealthy = any(
+        v.startswith("unhealthy")
+        for k, v in components.items()
+        if k != "voice_credentials"
     )
+    if required_unhealthy:
+        status = "unhealthy"
+    elif components["voice_credentials"].startswith("unhealthy") or any(
+        v.startswith("degraded") for v in components.values()
+    ):
+        status = "degraded"
+    else:
+        status = "healthy"
 
-    return HealthResponse(status=status, components=components)
+    body = HealthResponse(status=status, components=components)
+    if status == "unhealthy":
+        return JSONResponse(
+            status_code=503, content=body.model_dump()
+        )
+    return body
+
+
+@router.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Legacy health endpoint – preserved for backward compatibility.
+
+    Delegates to the readiness implementation so existing clients (Docker
+    HEALTHCHECK, frontend, infra scripts) continue to work without change.
+    """
+    return await health_ready()
 
 
 def _remove_quiet(path: str):
@@ -620,29 +709,47 @@ async def query_documents(
         # RAG Fallback: only execute retrieval if chat_rag_enabled is ON
         if overrides.get("chat_rag_enabled"):
             _t = time.time()
-            query_embedding, sparse_query = await asyncio.gather(
-                run_in_threadpool(embedding_service.encode_query, body.query),
-                run_in_threadpool(sparse_encoder.encode_query, body.query),
-            )
-            has_images_q = bool(body.attached_images)
-            final_top_k = _query_aware_top_k(body.query, body.top_k, bool(x_user_groq_key), has_images_q)
-
             try:
-                allowed_documents = await selected_document_ids(
-                    tenant_id, body.document_ids
+                query_embedding, sparse_query = await asyncio.wait_for(
+                    asyncio.gather(
+                        run_in_threadpool(embedding_service.encode_query, body.query),
+                        run_in_threadpool(sparse_encoder.encode_query, body.query),
+                    ),
+                    timeout=_RAG_TIMEOUT_S,
                 )
-                raw_results = await run_in_threadpool(
-                    vector_store.search,
-                    query_vector=query_embedding,
-                    sparse_vector=sparse_query,
-                    limit=final_top_k,
-                    tenant_id=tenant_id,
-                    filters=body.filters,
-                    document_ids=allowed_documents,
+                has_images_q = bool(body.attached_images)
+                final_top_k = _query_aware_top_k(body.query, body.top_k, bool(x_user_groq_key), has_images_q)
+
+                try:
+                    allowed_documents = await selected_document_ids(
+                        tenant_id, body.document_ids
+                    )
+                    raw_results = await asyncio.wait_for(
+                        run_in_threadpool(
+                            vector_store.search,
+                            query_vector=query_embedding,
+                            sparse_vector=sparse_query,
+                            limit=final_top_k,
+                            tenant_id=tenant_id,
+                            filters=body.filters,
+                            document_ids=allowed_documents,
+                        ),
+                        timeout=_RAG_TIMEOUT_S,
+                    )
+                    results = assign_display_numbers(raw_results)
+                    await _resolve_image_paths(results)
+                except NoDocumentsSelected:
+                    results = []
+                    allowed_documents = []
+            except (asyncio.TimeoutError, Exception) as exc:
+                # Slow or failed retrieval degrades to a prompt-only answer,
+                # never a 500: the agent's prompt plus an honest "I couldn't
+                # verify" beats an error page for a turn that already waited.
+                # Class name only — retrieval errors can carry hosts and keys.
+                logger.warning(
+                    "Chat retrieval timed out or failed (%s); continuing prompt-only",
+                    type(exc).__name__,
                 )
-                results = assign_display_numbers(raw_results)
-                await _resolve_image_paths(results)
-            except NoDocumentsSelected:
                 results = []
                 allowed_documents = []
 
@@ -757,7 +864,12 @@ async def query_stream(
         if inj_s.is_injection:
             logger.warning("blocked injection stream tenant=%s reason=%s", tenant_id, inj_s.reason)
             msg = json.dumps({"text": "I can help with your documents, but I can't follow instructions to ignore my guidelines."})
-            return StreamingResponse(iter([f"data: {msg}\n\n"]), media_type="text/event-stream")
+            # The terminal [DONE] frame is required: without it useChat-style
+            # clients wait for more events and the UI spins forever.
+            return StreamingResponse(
+                iter([f"data: {msg}\n\n", "data: [DONE]\n\n"]),
+                media_type="text/event-stream",
+            )
 
         # Get conversation history
         _t = time.time()
@@ -783,29 +895,42 @@ async def query_stream(
         # RAG Fallback: only execute retrieval if chat_rag_enabled is ON (default OFF for prompt-first)
         if overrides.get("chat_rag_enabled"):
             _t = time.time()
-            query_embedding, sparse_query = await asyncio.gather(
-                run_in_threadpool(embedding_service.encode_query, body.query),
-                run_in_threadpool(sparse_encoder.encode_query, body.query),
-            )
-            has_images_s = bool(body.attached_images)
-            final_top_k = _query_aware_top_k(body.query, body.top_k, bool(x_user_groq_key), has_images_s)
-
             try:
-                allowed_documents = await selected_document_ids(
-                    tenant_id, body.document_ids
+                query_embedding, sparse_query = await asyncio.wait_for(
+                    asyncio.gather(
+                        run_in_threadpool(embedding_service.encode_query, body.query),
+                        run_in_threadpool(sparse_encoder.encode_query, body.query),
+                    ),
+                    timeout=_RAG_TIMEOUT_S,
                 )
-                raw_results = await run_in_threadpool(
-                    vector_store.search,
-                    query_vector=query_embedding,
-                    sparse_vector=sparse_query,
-                    limit=final_top_k,
-                    tenant_id=tenant_id,
-                    filters=body.filters,
-                    document_ids=allowed_documents,
+                has_images_s = bool(body.attached_images)
+                final_top_k = _query_aware_top_k(body.query, body.top_k, bool(x_user_groq_key), has_images_s)
+
+                try:
+                    allowed_documents = await selected_document_ids(
+                        tenant_id, body.document_ids
+                    )
+                    raw_results = await asyncio.wait_for(
+                        run_in_threadpool(
+                            vector_store.search,
+                            query_vector=query_embedding,
+                            sparse_vector=sparse_query,
+                            limit=final_top_k,
+                            tenant_id=tenant_id,
+                            filters=body.filters,
+                            document_ids=allowed_documents,
+                        ),
+                        timeout=_RAG_TIMEOUT_S,
+                    )
+                    results = assign_display_numbers(raw_results)
+                    await _resolve_image_paths(results)
+                except NoDocumentsSelected:
+                    results = []
+            except (asyncio.TimeoutError, Exception) as exc:
+                logger.warning(
+                    "Chat stream retrieval timed out or failed (%s); continuing prompt-only",
+                    type(exc).__name__,
                 )
-                results = assign_display_numbers(raw_results)
-                await _resolve_image_paths(results)
-            except NoDocumentsSelected:
                 results = []
 
             retrieval_ms = int((time.time() - _t) * 1000)

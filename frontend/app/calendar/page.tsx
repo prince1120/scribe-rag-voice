@@ -19,7 +19,8 @@ import {
   Save,
 } from "lucide-react";
 import { OwnerShell } from "../components/owner/OwnerShell";
-import { ownerFetch } from "../lib/ownerFetch";
+import { ownerFetch, invalidateOwnerCache } from "../lib/ownerFetch";
+import { extractApiErrorMessage, formatClientError } from "../lib/apiErrors";
 import { CalendarTimezone } from "../components/business/CalendarTimezone";
 
 interface ServiceItem {
@@ -101,20 +102,20 @@ export default function CalendarPage() {
   const loadData = async (fresh = false) => {
     setLoading(true);
     try {
-      const [sRes, aRes, bRes, rRes, nRes] = await Promise.all([
+      const [sResResult, aResResult, bResResult, rResResult, nResResult] = await Promise.allSettled([
         ownerFetch("/api/v1/calendar/services", fresh ? { cache: "no-store" } : {}),
         ownerFetch("/api/v1/calendar/availability", fresh ? { cache: "no-store" } : {}),
         ownerFetch("/api/v1/calendar/bookings", fresh ? { cache: "no-store" } : {}),
         ownerFetch("/api/v1/calendar/reports", fresh ? { cache: "no-store" } : {}),
         ownerFetch("/api/v1/calendar/notifications", fresh ? { cache: "no-store" } : {}),
       ]);
-      if (sRes.ok) setServices(await sRes.json());
-      if (aRes.ok) setAvailability(await aRes.json());
-      if (bRes.ok) setBookings(await bRes.json());
-      if (rRes.ok) setReports(await rRes.json());
-      if (nRes.ok) setNotifications(await nRes.json());
-    } catch {
-      showToast("Could not load calendar data", "error");
+      if (sResResult.status === "fulfilled" && sResResult.value.ok) setServices(await sResResult.value.json());
+      if (aResResult.status === "fulfilled" && aResResult.value.ok) setAvailability(await aResResult.value.json());
+      if (bResResult.status === "fulfilled" && bResResult.value.ok) setBookings(await bResResult.value.json());
+      if (rResResult.status === "fulfilled" && rResResult.value.ok) setReports(await rResResult.value.json());
+      if (nResResult.status === "fulfilled" && nResResult.value.ok) setNotifications(await nResResult.value.json());
+    } catch (err) {
+      showToast(formatClientError(err, "Could not load calendar data"), "error");
     } finally {
       setLoading(false);
     }
@@ -133,12 +134,14 @@ export default function CalendarPage() {
         body: JSON.stringify(availability),
       });
       if (res.ok) {
+        invalidateOwnerCache("/api/v1/calendar");
         showToast("Weekly working hours updated ✓");
       } else {
-        showToast("Failed to save working hours", "error");
+        const errMsg = await extractApiErrorMessage(res, "Failed to save working hours");
+        showToast(errMsg, "error");
       }
-    } catch {
-      showToast("Error updating hours", "error");
+    } catch (err) {
+      showToast(formatClientError(err, "Error updating hours"), "error");
     } finally {
       setSavingHours(false);
     }
@@ -159,17 +162,18 @@ export default function CalendarPage() {
         }),
       });
       if (res.ok) {
+        invalidateOwnerCache("/api/v1/calendar");
         showToast("New service added ✓");
         setShowAddService(false);
         setNewServiceName("");
         setNewServiceDuration(30);
         void loadData();
       } else {
-        const err = await res.json().catch(() => ({}));
-        showToast(err.detail || "Could not add service", "error");
+        const errMsg = await extractApiErrorMessage(res, "Could not add service");
+        showToast(errMsg, "error");
       }
-    } catch {
-      showToast("Error creating service", "error");
+    } catch (err) {
+      showToast(formatClientError(err, "Error creating service"), "error");
     } finally {
       setSubmittingAction(false);
     }
@@ -185,15 +189,16 @@ export default function CalendarPage() {
         body: JSON.stringify({ date: rescheduleDate, time: rescheduleTime }),
       });
       if (res.ok) {
+        invalidateOwnerCache("/api/v1/calendar");
         showToast("Appointment rescheduled successfully ✓");
         setReschedulingBooking(null);
         void loadData();
       } else {
-        const err = await res.json().catch(() => ({}));
-        showToast(err.detail || "Could not reschedule booking", "error");
+        const errMsg = await extractApiErrorMessage(res, "Could not reschedule booking");
+        showToast(errMsg, "error");
       }
-    } catch {
-      showToast("Error rescheduling appointment", "error");
+    } catch (err) {
+      showToast(formatClientError(err, "Error rescheduling appointment"), "error");
     } finally {
       setSubmittingAction(false);
     }
@@ -209,31 +214,39 @@ export default function CalendarPage() {
         body: JSON.stringify({ reason: cancelReason }),
       });
       if (res.ok) {
+        invalidateOwnerCache("/api/v1/calendar");
         showToast("Appointment cancelled ✓");
         setCancellingBooking(null);
         setCancelReason("");
         void loadData();
       } else {
-        const err = await res.json().catch(() => ({}));
-        showToast(err.detail || "Could not cancel booking", "error");
+        const errMsg = await extractApiErrorMessage(res, "Could not cancel booking");
+        showToast(errMsg, "error");
       }
-    } catch {
-      showToast("Error cancelling appointment", "error");
+    } catch (err) {
+      showToast(formatClientError(err, "Error cancelling appointment"), "error");
     } finally {
       setSubmittingAction(false);
     }
   };
 
   const markNotifRead = async (nid: string) => {
-    await ownerFetch(`/api/v1/calendar/notifications/${nid}/read`, { method: "POST" });
-    setNotifications((prev) => prev.map((n) => (n.notification_id === nid ? { ...n, read: true } : n)));
+    try {
+      const res = await ownerFetch(`/api/v1/calendar/notifications/${nid}/read`, { method: "POST" });
+      if (res.ok) {
+        invalidateOwnerCache("/api/v1/calendar");
+        setNotifications((prev) => prev.map((n) => (n.notification_id === nid ? { ...n, read: true } : n)));
+      }
+    } catch {
+      /* ignore read toggle error */
+    }
   };
 
   const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
   return (
     <OwnerShell>
-      <main className="flex flex-col gap-5 max-w-6xl w-full pb-20 px-3 sm:px-0">
+      <main className="owner-business-page calendar-page flex flex-col gap-5 max-w-6xl w-full pb-20 px-3 sm:px-0">
         {/* Toast */}
         {toast && (
           <div

@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 
 import "./studio.css";
-import { ownerFetch } from "../lib/ownerFetch";
+import { ownerFetch, invalidateOwnerCache } from "../lib/ownerFetch";
 import { OwnerLoading } from "../components/owner/OwnerLoading";
 import { AgentDocuments } from "./AgentDocuments";
 import { SiteAgentModal } from "./SiteAgentModal";
@@ -36,6 +36,7 @@ import { AgentTest } from "./AgentTest";
 import { ChannelModelPicker, type ModelOption } from "./ChannelModelPicker";
 import { GuidedSetup } from "./GuidedSetup";
 import { OwnerShell } from "../components/owner/OwnerShell";
+import { extractApiErrorMessage, formatClientError } from "../lib/apiErrors";
 
 type Channel = "voice" | "chat";
 
@@ -206,34 +207,49 @@ export default function AgentPage() {
     let cancelled = false;
     async function loadData() {
       try {
-        const [agentRes, voicesRes, langsRes] = await Promise.all([
+        const [agentResResult, voicesResResult, langsResResult] = await Promise.allSettled([
           ownerFetch("/api/v1/workspace/agent"),
           ownerFetch("/api/v1/voice/speakers"),
           ownerFetch("/api/v1/voice/languages"),
         ]);
 
         if (cancelled) return;
-        if (agentRes.ok) {
-          const cfg = await agentRes.json();
-          setConfig(cfg);
-          setInitialConfig(cfg);
-          setWorkspaceCache({ agentConfig: cfg, status: cfg.status });
-          if (cfg.voice_base_url || cfg.voice_api_key) setIsVoiceCustom(true);
-          if (cfg.chat_base_url || cfg.chat_api_key) setIsChatCustom(true);
+
+        if (agentResResult.status === "fulfilled") {
+          const agentRes = agentResResult.value;
+          if (agentRes.ok) {
+            const cfg = await agentRes.json();
+            setConfig(cfg);
+            setInitialConfig(cfg);
+            setWorkspaceCache({ agentConfig: cfg, status: cfg.status });
+            if (cfg.voice_base_url || cfg.voice_api_key) setIsVoiceCustom(true);
+            if (cfg.chat_base_url || cfg.chat_api_key) setIsChatCustom(true);
+          } else if (!config) {
+            const err = await extractApiErrorMessage(agentRes, "Could not load assistant configuration.");
+            setError(err);
+          }
+        } else if (!config) {
+          setError(formatClientError(agentResResult.reason, "Could not load assistant configuration."));
         }
-        if (voicesRes.ok) {
-          const vData = await voicesRes.json();
-          setVoices(vData);
-          setWorkspaceCache({ voices: vData });
+
+        if (voicesResResult.status === "fulfilled" && voicesResResult.value.ok) {
+          try {
+            const vData = await voicesResResult.value.json();
+            setVoices(vData);
+            setWorkspaceCache({ voices: vData });
+          } catch {}
         }
-        if (langsRes.ok) {
-          const lData = (await langsRes.json()).languages || [];
-          setLanguages(lData);
-          setWorkspaceCache({ languages: lData });
+
+        if (langsResResult.status === "fulfilled" && langsResResult.value.ok) {
+          try {
+            const lData = (await langsResResult.value.json()).languages || [];
+            setLanguages(lData);
+            setWorkspaceCache({ languages: lData });
+          } catch {}
         }
         await loadChannels();
       } catch (err) {
-        if (!config && !cancelled) setError("Could not load assistant configuration.");
+        if (!config && !cancelled) setError(formatClientError(err, "Could not load assistant configuration."));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -292,10 +308,11 @@ export default function AgentPage() {
         body: JSON.stringify(payload),
       });
       if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body?.detail || "Could not save assistant.");
+        const errMsg = await extractApiErrorMessage(response, "Could not save assistant.");
+        throw new Error(errMsg);
       }
       const updated = await response.json();
+      invalidateOwnerCache("/api/v1/workspace/agent");
       setConfig(updated);
       setInitialConfig(updated);
       setWorkspaceCache({ agentConfig: updated, status: updated.status });
@@ -307,7 +324,7 @@ export default function AgentPage() {
       showToast(hasUnsaved ? "Changes saved ✓" : "Assistant saved ✓", "success");
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Could not save assistant.";
+      const msg = formatClientError(err, "Could not save assistant.");
       setError(msg);
       showToast(msg, "error");
     } finally {
@@ -323,16 +340,17 @@ export default function AgentPage() {
         method: "POST",
       });
       if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body?.detail || "Could not update deployment status.");
+        const errMsg = await extractApiErrorMessage(response, "Could not update deployment status.");
+        throw new Error(errMsg);
       }
       const data = await response.json();
+      invalidateOwnerCache("/api/v1/workspace/agent");
       setConfig((prev) => (prev ? { ...prev, status: data.status } : prev));
       setWorkspaceCache({ status: data.status } as any);
       showToast(live ? "Agent deployed live ✓ — links now active" : "Agent taken offline — links paused", live ? "success" : "info");
       await loadChannels();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Could not update status.";
+      const msg = formatClientError(err, "Could not update status.");
       setError(msg);
       showToast(msg, "error");
     } finally {
@@ -348,15 +366,16 @@ export default function AgentPage() {
         method: "DELETE",
       });
       if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body?.detail || "Could not reset assistant.");
+        const errMsg = await extractApiErrorMessage(response, "Could not reset assistant.");
+        throw new Error(errMsg);
       }
+      invalidateOwnerCache("/api/v1/workspace/agent");
       const fresh = await ownerFetch("/api/v1/workspace/agent");
       if (fresh.ok) setConfig(await fresh.json());
       setConfirmDelete(false);
       await loadChannels();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not reset assistant.");
+      setError(formatClientError(err, "Could not reset assistant."));
     } finally {
       setDeleting(false);
     }
@@ -1166,7 +1185,7 @@ color: "var(--claude-text-2)",
         />
 
         {/* ── Card 4: Knowledge Documents (RAG fallback) — always visible, fallback OFF by default (prompt-first) */}
-        <div style={{ ...S.card, background: "var(--claude-bg)" }}>
+        <div id="assistant-knowledge" style={{ ...S.card, background: "var(--claude-bg)" }}>
           <div className="flex items-center gap-2 text-[12px] font-bold" style={{ color: "var(--claude-text-2)" }}>
             <FileText size={14} /> Knowledge Base (RAG fallback) — optional
           </div>
@@ -1175,6 +1194,18 @@ color: "var(--claude-text-2)",
           </p>
           <AgentDocuments purpose="rag" />
         </div>
+
+        <section id="assistant-test" aria-label="Test your assistant" className="workspace-test-section">
+          <h2>Try your assistant</h2>
+          <p>Save your changes, then ask a real customer question to check the response.</p>
+          <AgentTest
+            deployed={isLive}
+            voiceAvailable={Boolean(channels?.voice)}
+            chatAvailable={Boolean(channels?.chat)}
+            voiceBlockedReason={channels?.voice_blocked_reason || "Save a voice prompt and configure your voice providers to test this channel."}
+            chatBlockedReason={channels?.chat_blocked_reason || "Save your chat configuration to test this channel."}
+          />
+        </section>
 
         {/* ── Card 5: Danger Zone / Reset ─────────────────────── */}
         <div style={{ ...S.card, borderColor: "var(--color-danger-soft)", background: "var(--color-danger-soft)" }}>

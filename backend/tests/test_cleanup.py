@@ -149,6 +149,15 @@ class TestResilience:
         async def fake_delete_record(document_id, tenant_id):
             deleted_rows.append(document_id)
 
+        # Hermetic: the vector step is not what this test exercises, and it
+        # must not require a live Qdrant — only the file-failure path matters.
+        from app.api import routes as api_routes
+
+        monkeypatch.setattr(
+            api_routes.vector_store,
+            "delete_by_document",
+            lambda *args, **kwargs: None,
+        )
         monkeypatch.setattr(cleanup.storage, "delete", failing_delete)
         monkeypatch.setattr(
             cleanup.repositories, "delete_document_record", fake_delete_record

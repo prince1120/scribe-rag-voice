@@ -16,6 +16,7 @@ export interface WorkspaceCacheData {
   /** False until the first successful load (from localStorage or the network).
    *  Consumers render a skeleton rather than placeholder values while false. */
   loaded: boolean;
+  syncError?: string | null;
   agentConfig?: any;
   voices?: any;
   languages?: any;
@@ -36,6 +37,7 @@ const EMPTY_CACHE: WorkspaceCacheData = {
   status: null,
   isBusiness: false,
   loaded: false,
+  syncError: null,
   lastUpdated: 0,
 };
 
@@ -108,7 +110,9 @@ export function setWorkspaceCache(patch: Partial<WorkspaceCacheData>) {
 
   if (typeof window !== "undefined") {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(memoryCache));
+      // Exclude sensitive provider data / API keys from persistent browser storage
+      const { providersData, ...safeCache } = memoryCache;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(safeCache));
     } catch {
       /* ignore */
     }
@@ -132,6 +136,11 @@ export async function revalidateWorkspace(force = false): Promise<WorkspaceCache
 
     const patch: Partial<WorkspaceCacheData> = {};
 
+    if (wsRes.status === 401) {
+      clearWorkspaceCache();
+      return memoryCache;
+    }
+
     if (wsRes.ok) {
       const ws = await wsRes.json();
       // Assigned unconditionally, not behind `if (value)`. Guarding on
@@ -142,6 +151,9 @@ export async function revalidateWorkspace(force = false): Promise<WorkspaceCache
       patch.email = ws.email ?? null;
       patch.isBusiness = ws.is_business ?? false;
       patch.loaded = true;
+      patch.syncError = null;
+    } else {
+      patch.syncError = `Could not synchronize workspace (status ${wsRes.status})`;
     }
 
     if (agRes.ok) {
@@ -153,8 +165,8 @@ export async function revalidateWorkspace(force = false): Promise<WorkspaceCache
     if (Object.keys(patch).length > 0) {
       setWorkspaceCache(patch);
     }
-  } catch {
-    /* keep cached data on error */
+  } catch (err: any) {
+    setWorkspaceCache({ syncError: err?.message || "Failed to reach workspace service" });
   }
 
   return memoryCache;
@@ -183,6 +195,7 @@ export function useWorkspace() {
     isLive: data.status === "deployed",
     /** False until real data has arrived — render a skeleton, not a fallback. */
     loaded: data.loaded,
+    syncError: data.syncError,
     agentConfig: data.agentConfig,
     overviewData: data.overviewData,
     contactsData: data.contactsData,

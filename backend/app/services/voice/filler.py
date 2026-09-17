@@ -22,16 +22,20 @@ _RAG_FILLER_PHRASES = [
 ]
 _RAG_FILLER_DELAY_S = 0.35
 
+# Short by contract (see test_the_filler_is_short): a filler sits in front
+# of the real answer, so anything long delays what the caller asked for —
+# and risks talking over a reply that starts mid-filler. Human mouth
+# noises, not sentences: an acknowledgement, never a status report.
 _THINKING_FILLERS_BY_LANG: dict[str, list[str]] = {
     "hi-IN": [
-        "Main check kar raha hoon, aap baat karte rahiye.",
-        "Ek pal, main iski details dekh raha hoon.",
-        "Main aapke liye confirm karta hoon.",
+        "Ek pal.",
+        "Dekh raha hoon.",
+        "Aap boliye.",
     ],
     "en-IN": [
-        "I’m checking that now — please keep talking.",
-        "One moment while I look into that for you.",
-        "I’m on it. Please go ahead.",
+        "One moment.",
+        "Just a second.",
+        "Go ahead.",
     ],
 }
 _THINKING_FILLERS = _THINKING_FILLERS_BY_LANG["en-IN"]

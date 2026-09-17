@@ -172,7 +172,7 @@ export default function Home() {
   }
 
   return (
-    <div className="flex overflow-hidden" style={{ background: "var(--claude-bg)", height: "100dvh" }}>
+    <div id="main-content" tabIndex={-1} className="flex overflow-hidden" style={{ background: "var(--claude-bg)", height: "100dvh" }}>
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-30 md:hidden ds-animate-fade"

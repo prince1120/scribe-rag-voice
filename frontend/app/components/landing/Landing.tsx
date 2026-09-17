@@ -20,14 +20,11 @@ import {
   Robot,
 } from "@phosphor-icons/react";
 import { motion, useReducedMotion, useScroll, useTransform, useSpring } from "motion/react";
-import { Geist } from "next/font/google";
 import { ScribeMark } from "../../Logo";
 import type { KeyPair } from "../../lib/personalSession";
 import { LiveInteractiveMockup } from "./LiveInteractiveMockup";
 import { ScrollTextReveal } from "./ScrollTextReveal";
 import { ScrollFloatingControl } from "./ScrollFloatingControl";
-
-const geist = Geist({ subsets: ["latin"], display: "swap" });
 
 interface AgentCard {
   handle: string;
@@ -54,7 +51,7 @@ interface LandingProps {
   onForgetPair: (groqKey: string) => void;
 }
 
-export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: LandingProps) {
+export function Landing({ keyHistory, onStart, onForgetPair }: LandingProps) {
   const [agents, setAgents] = useState<AgentCard[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(true);
   const [groqInput, setGroqInput] = useState("");
@@ -115,10 +112,7 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
   };
 
   return (
-    <div className={`${geist.className} studio-landing min-h-[100dvh] flex flex-col antialiased selection:bg-[var(--claude-accent-soft)] overflow-x-hidden`} style={{ background: "var(--claude-bg)" }}>
-      <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 z-[60] px-4 py-2 rounded-full text-xs font-semibold bg-[var(--claude-accent)] text-white">
-        Skip to content
-      </a>
+    <div id="main-content" tabIndex={-1} className="studio-landing min-h-[100dvh] flex flex-col antialiased selection:bg-[var(--claude-accent-soft)] overflow-x-hidden" style={{ background: "var(--claude-bg)" }}>
       {/* Grain — fixed, pointer-events-none, never on scroll container */}
       <div
         aria-hidden
@@ -358,7 +352,7 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
                   Instant Knowledge Grounding
                 </h3>
                 <p className="text-[13px] leading-relaxed mt-2 max-w-[48ch]" style={{ color: "var(--claude-muted)" }}>
-                  Drop price sheets or FAQs. Documents are chunked, indexed, and verified before any answer.
+                  Add price sheets, manuals, or FAQs so your assistant can search your business knowledge when it needs an answer.
                 </p>
                 <div className="mt-5 rounded-xl border p-3 flex items-center gap-3" style={{ borderColor: "var(--claude-border)", background: "var(--claude-bg)" }}>
                   <div className="flex-1 flex flex-col gap-1.5">
@@ -418,10 +412,10 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
                   <Microphone size={16} weight="light" style={{ color: "var(--claude-muted)" }} />
                 </div>
                 <h3 className="font-editorial font-bold text-lg tracking-tight" style={{ color: "var(--claude-text)" }}>
-                  Sub-Second Neural Voice
+                  A natural voice, in your browser
                 </h3>
                 <p className="text-[13px] leading-relaxed mt-2" style={{ color: "var(--claude-muted)" }}>
-                  Natural cadence in English, Hindi, and regional accents. Built for fluid phone calls.
+                  Speak in English, Hindi, and supported regional languages. Start a web conversation from a shared link.
                 </p>
                 <div className="mt-5 rounded-xl border p-3 flex items-center gap-3" style={{ borderColor: "var(--claude-border)", background: "var(--claude-bg)" }}>
                   <div className="flex items-end gap-1.5 h-7">
@@ -462,7 +456,7 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
                   <SpeakerHigh size={14} weight="regular" className="text-[var(--claude-accent)]" />
                   Voice: Anushka
                 </span>
-                <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">&lt;600ms latency</span>
+                <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">Web voice</span>
               </div>
             </motion.div>
 
@@ -477,7 +471,7 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
                   </h3>
                 </div>
                 <p className="text-[13px] leading-relaxed sm:pl-11" style={{ color: "var(--claude-muted)" }}>
-                  Every call produces a full audio recording and verified transcript with citations — full oversight, zero extra work.
+                  Share a link, review conversation transcripts, and follow up on customer requests from your business console.
                 </p>
               </div>
               <div className="relative overflow-hidden rounded-2xl px-5 py-3 border font-mono text-xs flex items-center justify-center sm:justify-start gap-3 shrink-0 tabular-nums w-full sm:w-auto shadow-xs" style={{ background: "var(--claude-bg)", borderColor: "var(--claude-border)" }}>
@@ -503,7 +497,7 @@ export function Landing({ keyHistory, onStart, onSelectPair, onForgetPair }: Lan
                 Live Business Assistants
               </h2>
               <p className="text-xs sm:text-sm mt-2 max-w-[52ch]" style={{ color: "var(--claude-muted)" }}>
-                Verified assistants available to test — zero sign-up required.
+                Explore published business assistants and start a conversation.
               </p>
             </div>
             <Link href="/directory" className="hidden sm:inline-flex items-center gap-2 text-xs font-semibold pl-4 pr-1.5 py-1.5 rounded-full border bg-white will-change-transform transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:border-[var(--claude-border-strong)] active:scale-[0.98]" style={{ borderColor: "var(--claude-border)", color: "var(--claude-accent)" }}>

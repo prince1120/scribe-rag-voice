@@ -164,59 +164,34 @@ def _spawn_worker() -> None:
     logger.info("Spawned voice worker pid=%s (logs: %s)", _spawned.pid, _LOG_PATH)
 
 
-def _free_stale_port(port: int) -> bool:
-    """Terminate any stale process holding the worker health port so a fresh worker can bind it."""
-    import os
-    import subprocess
-    killed = False
-    if sys.platform == "win32":
-        try:
-            out = subprocess.check_output(["netstat", "-ano", "-p", "tcp"], text=True, errors="replace")
-            pids = set()
-            for line in out.splitlines():
-                parts = line.strip().split()
-                if len(parts) >= 5 and parts[3] == "LISTENING":
-                    if parts[1].endswith(f":{port}"):
-                        try:
-                            pid = int(parts[4])
-                            if pid > 0 and pid != os.getpid():
-                                pids.add(pid)
-                        except ValueError:
-                            pass
-            for pid in pids:
-                logger.warning("Auto-clearing stale process %d occupying voice worker port %d", pid, port)
-                subprocess.run(["taskkill", "/F", "/PID", str(pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-                killed = True
-        except Exception as exc:
-            logger.warning("Failed to auto-kill stale process on port %d: %s", port, exc)
-    else:
-        try:
-            out = subprocess.check_output(["lsof", "-t", f"-i:{port}"], text=True, errors="replace")
-            for line in out.strip().split():
-                pid = int(line.strip())
-                if pid > 0 and pid != os.getpid():
-                    logger.warning("Auto-clearing stale process %d occupying voice worker port %d", pid, port)
-                    os.kill(pid, 9)
-                    killed = True
-        except Exception as exc:
-            logger.warning("Failed to auto-kill stale process on port %d: %s", port, exc)
-    return killed
+async def is_worker_available() -> bool:
+    """Pure health-check — never spawns. Used in dedicated-worker mode."""
+    return await _worker_alive()
 
 
-async def ensure_worker_running(wait_for_ready_s: float = 8.0) -> None:
-    """Best-effort: if the worker isn't answering its health check, start
+async def ensure_worker_running(wait_for_ready_s: float = 8.0) -> bool:
+    """If the worker isn't answering its health check, start
     one and wait briefly for it to finish registering with LiveKit before
     returning — so the token this request is about to issue has an agent
     actually available to pick up the dispatched job, instead of racing it.
 
-    Never raises — a call should still be attempted (and fail with the
-    existing "assistant isn't responding" path) even if this can't launch
-    the worker for some reason (e.g. permissions, missing venv)."""
+    In dedicated-worker mode (VOICE_WORKER_AUTO_START=false) this function
+    MUST NOT spawn, kill or replace any process. It may only health-check
+    and return True/False — token issuance will 503 on False.
+
+    Never raises. Returns True only after a worker actually reports healthy;
+    callers must refuse to create a session when False is returned. This keeps
+    a missing worker from becoming a connected room with a silent assistant.
+    """
+    if not settings.VOICE_WORKER_AUTO_START:
+        # Dedicated mode: never spawn. One probe only.
+        return await _worker_alive()
+
     global _last_spawn_attempt, _last_seen_alive
 
     started = time.monotonic()
     if await _worker_alive():
-        return
+        return True
 
     just_spawned = False
     async with _spawn_lock:
@@ -224,36 +199,35 @@ async def ensure_worker_running(wait_for_ready_s: float = 8.0) -> None:
         # Ignore the cache here: we already failed two probes to get this far,
         # so the question is whether the *other* request's spawn has come up.
         if await _worker_alive(trust_cache=False):
-            return
+            return True
 
-        # If something holds the port but is unresponsive, auto-clear the stale process
+        # Never terminate a process based only on its port. It may be unrelated
+        # to this repository, and even a stale repo worker is safer to diagnose
+        # explicitly than to kill from an HTTP request handler.
         if await asyncio.to_thread(_port_is_occupied):
-            logger.warning(
-                "Voice worker port %d is occupied by an unresponsive process; auto-clearing stale process...",
+            logger.error(
+                "Voice worker health port %d is occupied but not healthy; "
+                "no agent is available. Stop the owning process manually or "
+                "configure a different VOICE_WORKER_HEALTH_URL.",
                 _health_port(),
             )
-            await asyncio.to_thread(_free_stale_port, _health_port())
-            await asyncio.sleep(0.5)
+            return False
 
-            if await asyncio.to_thread(_port_is_occupied):
-                logger.error(
-                    "Port %d remains occupied after clearing attempt. No agent will answer calls. Worker log: %s",
-                    _health_port(),
-                    _LOG_PATH,
-                )
-                return
-
-        # A previous spawn that is still running gets time to finish coming up
-        # rather than being stacked on top of.
+        # A previous spawn is still running — do not stack, but wait for it
+        # to become healthy instead of assuming it is.
+        waiting_for_existing = False
         if _spawned is not None and _spawned.poll() is None:
-            logger.info("A voice worker spawn is still starting; not spawning another.")
-            return
+            logger.info("A voice worker spawn is still starting; waiting for it.")
+            waiting_for_existing = True
 
         now = time.monotonic()
-        if now - _last_spawn_attempt < _SPAWN_COOLDOWN_S:
-            # A spawn is already in flight from a near-simultaneous request —
-            # fall through to the wait loop below instead of spawning again.
-            pass
+        if waiting_for_existing:
+            just_spawned = True
+        elif now - _last_spawn_attempt < _SPAWN_COOLDOWN_S:
+            # Cool-down: a spawn was just attempted from another request.
+            # Do not spawn again; report not yet healthy.
+            logger.info("Voice worker spawn cool-down active; not spawning another.")
+            return False
         else:
             _last_spawn_attempt = now
             try:
@@ -261,34 +235,28 @@ async def ensure_worker_running(wait_for_ready_s: float = 8.0) -> None:
                 just_spawned = True
             except Exception:
                 logger.exception("Could not auto-start the voice worker")
-                return
+                return False
 
-    if not just_spawned:
-        return
+        if not just_spawned and not waiting_for_existing:
+            return False
 
-    deadline = time.monotonic() + wait_for_ready_s
-    while time.monotonic() < deadline:
-        # Poll fast and without the cache. This loop is the caller waiting to
-        # hear a voice, so the cost of each extra 0.5s here is paid by a person
-        # staring at a "Connecting…" spinner.
-        if await _probe(1.0):
-            _last_seen_alive = time.monotonic()
-            logger.info(
-                "Voice worker is up and registered (%.1fs)", time.monotonic() - started
-            )
-            return
+        deadline = time.monotonic() + wait_for_ready_s
+        while time.monotonic() < deadline:
+            if await _probe(1.0):
+                _last_seen_alive = time.monotonic()
+                logger.info(
+                    "Voice worker is up and registered (%.1fs)", time.monotonic() - started
+                )
+                return True
 
-        # A worker that has already exited is never going to answer, so waiting
-        # out the rest of the deadline only delays the caller and buries the
-        # reason. The previous code waited the full 8s and logged "still not
-        # ready", which described the symptom and named nothing.
-        if _spawned is not None and _spawned.poll() is not None:
-            logger.error(
-                "The voice worker exited immediately (code %s). Calls will "
-                "connect to a room with no agent in it — no speech, no reply. "
-                "The reason is at the end of %s.",
-                _spawned.returncode, _LOG_PATH,
-            )
-            return
-        await asyncio.sleep(0.2)
-    logger.warning("Voice worker still not ready after %.0fs — proceeding anyway", wait_for_ready_s)
+            if _spawned is not None and _spawned.poll() is not None:
+                logger.error(
+                    "The voice worker exited immediately (code %s). Calls will "
+                    "connect to a room with no agent in it — no speech, no reply. "
+                    "The reason is at the end of %s.",
+                    _spawned.returncode, _LOG_PATH,
+                )
+                return False
+            await asyncio.sleep(0.2)
+        logger.warning("Voice worker still not ready after %.0fs — not healthy", wait_for_ready_s)
+        return False

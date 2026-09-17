@@ -178,6 +178,10 @@ class VoiceRetrieveRequest(BaseModel):
     query: str = Field(..., max_length=4000)
     tenant_id: str = "default"
     top_k: Optional[int] = Field(default=None, ge=1, le=20)
+    # Optional product scoping for Product QR voice calls. When supplied, the
+    # worker restricts retrieval to exactly these documents (intersected with
+    # the owner's enabled set) instead of the whole tenant.
+    document_ids: Optional[List[str]] = None
 
 
 class VoiceTokenResponse(BaseModel):

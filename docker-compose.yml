@@ -1,116 +1,218 @@
-version: '3.8'
+name: scribe
+
+# Port-safe self-hosted stack.
+# - postgres / redis / qdrant are PRIVATE to the scribe_net network (no host ports)
+#   unless you add: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# - host-exposed ports are all configurable via ${SCRIBE_*_PORT:-default}
+# - no container_name so Compose namespaces safely (scribe-<service>-1)
+# - never run `docker compose down -v` — it deletes named volumes
 
 services:
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: rag_qdrant
-    ports:
-      - "6333:6333"
-      - "6334:6334"
-    volumes:
-      - qdrant_data:/qdrant/storage
-    environment:
-      - QDRANT__SERVICE__HTTP_PORT=6333
+  postgres:
+    image: postgres:16-alpine
     restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-scribe}
+      POSTGRES_USER: ${POSTGRES_USER:-scribe}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scribe_secret_change_me}
+      # Tune for small VM / laptop; not a cloud-managed instance.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=C"
+    volumes:
+      - scribe_postgres_data:/var/lib/postgresql/data
+    networks:
+      - scribe_net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-scribe} -d ${POSTGRES_DB:-scribe}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   redis:
     image: redis:7-alpine
-    container_name: rag_redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
     restart: unless-stopped
+    # Single Redis reused by backend (conversation cache) and LiveKit.
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - scribe_redis_data:/data
+    networks:
+      - scribe_net
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  qdrant:
+    image: qdrant/qdrant:v1.15.1
+    restart: unless-stopped
+    # If you need an API key, set QDRANT_API_KEY in .env and add it here.
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    volumes:
+      - scribe_qdrant_storage:/qdrant/storage
+    networks:
+      - scribe_net
+    healthcheck:
+      # Proven on qdrant:v1.15.1 — image contains bash + timeout + /dev/tcp.
+      test: ["CMD-SHELL", "timeout 2 bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  livekit:
+    image: livekit/livekit-server:v1.9.1
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Config is version-controlled (no secrets). Keys come from env.
+    volumes:
+      - ./infra/livekit/livekit.yaml:/etc/livekit.yaml:ro
+    environment:
+      # LiveKit server reads LIVEKIT_KEYS as "API_KEY: API_SECRET" with a space after colon.
+      # Default secret is 32+ chars to satisfy LiveKit's security validation.
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-scribe_dev_secret_32_chars_min_12345}"
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-scribe_dev_secret_32_chars_min_12345}
+    command: ["--config", "/etc/livekit.yaml"]
+    ports:
+      - "127.0.0.1:${SCRIBE_LIVEKIT_HTTP_PORT:-7880}:7880/tcp"
+      - "127.0.0.1:${SCRIBE_LIVEKIT_TCP_PORT:-7881}:7881/tcp"
+      - "127.0.0.1:${SCRIBE_LIVEKIT_UDP_PORT:-7882}:7882/udp"
+    networks:
+      - scribe_net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:7880"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
   backend:
     build:
       context: ./backend
-    container_name: rag_backend
+    restart: unless-stopped
+    profiles: ["docker-app"]
     env_file:
-      - ./backend/.env
+      - path: .env
+        required: false
     environment:
-      - QDRANT_HOST=qdrant
-      - QDRANT_PORT=6333
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - DATABASE_URL=sqlite+aiosqlite:///./data/rag.db
-      - VOICE_WORKER_HEALTH_URL=http://voice-worker:8081
+      # Local self-host defaults — override via .env for real keys.
+      DEBUG: ${DEBUG:-true}
+      SESSION_SECRET: ${SESSION_SECRET:-scribe_dev_session_secret_64_chars_long_for_local_only_change_me}
+      GROQ_API_KEY: ${GROQ_API_KEY:-gsk_dummy_for_local_infra_test}
+      SARVAM_API_KEY: ${SARVAM_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      # Dedicated worker mode: Docker backend must NEVER spawn a worker.
+      # Local `python run_backend.py` without Docker keeps default true.
+      VOICE_WORKER_AUTO_START: "false"
+      # Internal service names — never localhost inside Compose.
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      QDRANT_HTTPS: "false"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-scribe}:${POSTGRES_PASSWORD:-scribe_secret_change_me}@postgres:5432/${POSTGRES_DB:-scribe}}
+      LIVEKIT_URL: ${LIVEKIT_URL:-ws://livekit:7880}
+      LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:-ws://localhost:${SCRIBE_LIVEKIT_HTTP_PORT:-7880}}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-scribe_dev_secret_32_chars_min_12345}
+      VOICE_WORKER_HEALTH_URL: http://voice-worker:8081
+      VOICE_BACKEND_URL: http://backend:8000
     ports:
-      - "8000:8000"
+      - "127.0.0.1:${SCRIBE_BACKEND_PORT:-8100}:8000"
     volumes:
-      - backend_uploads:/app/uploads
-      - backend_data:/app/data
+      - scribe_backend_uploads:/app/uploads
     depends_on:
-      qdrant:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    restart: unless-stopped
+      qdrant:
+        condition: service_healthy
+    networks:
+      - scribe_net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
-      interval: 30s
+      interval: 15s
       timeout: 10s
-      retries: 3
+      retries: 10
       start_period: 60s
 
   voice-worker:
     build:
       context: ./backend
-    container_name: rag_voice_worker
-    # Same image as the API server, different entrypoint: the LiveKit Agents
-    # worker is a long-lived registered process (job dispatch), not a
-    # request/response server, so it runs as its own service rather than a
-    # thread inside uvicorn. This is what makes voice actually reliable —
-    # previously it only ran if someone remembered to start it by hand, and
-    # a crash meant every voice call failed with no visible cause.
-    command: ["python", "-m", "app.services.voice.worker", "start"]
+    restart: unless-stopped
+    profiles: ["docker-app"]
     env_file:
-      - ./backend/.env
+      - path: .env
+        required: false
     environment:
-      # Reach the API server (RAG retrieval, conversation history) over the
-      # docker network, not localhost.
-      - VOICE_BACKEND_URL=http://backend:8000
-    ports:
-      - "8081:8081"
+      DEBUG: ${DEBUG:-true}
+      SESSION_SECRET: ${SESSION_SECRET:-scribe_dev_session_secret_64_chars_long_for_local_only_change_me}
+      GROQ_API_KEY: ${GROQ_API_KEY:-gsk_dummy_for_local_infra_test}
+      LIVEKIT_URL: ${LIVEKIT_URL:-ws://livekit:7880}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-scribe_dev_secret_32_chars_min_12345}
+      VOICE_BACKEND_URL: http://backend:8000
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      QDRANT_HTTPS: "false"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-scribe}:${POSTGRES_PASSWORD:-scribe_secret_change_me}@postgres:5432/${POSTGRES_DB:-scribe}}
+    command: ["python", "-m", "app.services.voice.worker", "start"]
     depends_on:
       backend:
         condition: service_healthy
-    restart: unless-stopped
+      livekit:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    networks:
+      - scribe_net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/"]
-      interval: 30s
+      interval: 15s
       timeout: 10s
-      retries: 3
+      retries: 10
       start_period: 30s
 
   frontend:
     build:
       context: ./frontend
-    container_name: rag_frontend
-    environment:
-      - BACKEND_ORIGIN=http://backend:8000
-    ports:
-      - "3000:3000"
-    depends_on:
-      - backend
     restart: unless-stopped
+    profiles: ["docker-app"]
+    environment:
+      BACKEND_ORIGIN: http://backend:8000
+      # If you set BACKEND_API_KEY in .env it is forwarded server-side only.
+      BACKEND_API_KEY: ${BACKEND_API_KEY:-}
+      # Next needs to know its public origin for absolute URLs; not required locally.
+      NEXT_PUBLIC_LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:-ws://localhost:${SCRIBE_LIVEKIT_HTTP_PORT:-7880}}
+    ports:
+      - "127.0.0.1:${SCRIBE_FRONTEND_PORT:-3100}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - scribe_net
 
 volumes:
-  qdrant_data:
-    driver: local
-  redis_data:
-    driver: local
-  backend_uploads:
-    driver: local
-  backend_data:
-    driver: local
+  scribe_postgres_data:
+    name: scribe_postgres_data
+  scribe_redis_data:
+    name: scribe_redis_data
+  scribe_qdrant_storage:
+    name: scribe_qdrant_storage
+  scribe_backend_uploads:
+    name: scribe_backend_uploads
+
+networks:
+  scribe_net:
+    name: scribe_net

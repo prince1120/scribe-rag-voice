@@ -12,6 +12,7 @@ import { useParams } from "next/navigation";
 
 import { CallScreen } from "./CallScreen";
 import { CallerChat } from "../../components/business/CallerChat";
+import { extractApiErrorMessage, formatClientError } from "../../lib/apiErrors";
 import "../../styles/business.css";
 
 type State = "opening" | "pin" | "ready" | "error";
@@ -65,9 +66,9 @@ export default function ContactLinkPage() {
         }
 
         if (!response.ok) {
-          const body = await response.json().catch(() => ({}));
+          const errDetail = await extractApiErrorMessage(response, "This link could not be opened.");
           setState("error");
-          setMessage(body?.detail || "This link could not be opened.");
+          setMessage(errDetail);
           return;
         }
 
@@ -80,9 +81,9 @@ export default function ContactLinkPage() {
         // on a link that has already been redeemed.
         // A voice-only link stays on this page and renders the call screen.
         setChannel(data.mode === "chat" ? "chat" : "voice");
-      } catch {
+      } catch (err: any) {
         setState("error");
-        setMessage("Could not reach the server. Check your connection and try again.");
+        setMessage(formatClientError(err, "Could not reach the server. Check your connection and try again."));
       } finally {
         clearTimeout(timeout);
         setSubmitting(false);
@@ -131,7 +132,7 @@ export default function ContactLinkPage() {
   // the full app, which would show a document sidebar they cannot use.
   if (state === "ready") return <div className="customer-workspace">
     {mode === "both" && <nav className="customer-channel-switch" aria-label="Choose conversation channel"><div className="business-tabs"><button type="button" aria-pressed={channel === "voice"} onClick={() => setChannel("voice")}>Talk to the assistant</button><button type="button" aria-pressed={channel === "chat"} onClick={() => setChannel("chat")}>Type instead</button></div><small>Switching to text ends an active voice call.</small></nav>}
-    {channel === "voice" ? <CallScreen name={name} /> : <CallerChat name={name} />}
+    {channel === "voice" ? <CallScreen name={name} onSwitchToChat={mode === "both" || mode === "voice" ? () => setChannel("chat") : undefined} /> : <CallerChat name={name} />}
   </div>;
 
   return (

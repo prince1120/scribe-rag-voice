@@ -32,7 +32,7 @@ class VoiceSettings(BaseSettings):
     # Mistral uses the OpenAI-compatible API and is the default for voice.
     # It avoids the very small Groq TPM allowance that can leave an active
     # caller waiting with no response when a burst of turns exhausts it.
-    VOICE_LLM_PROVIDER: str = "mistral"
+    VOICE_LLM_PROVIDER: str = "groq"
 
     # Sarvam
     SARVAM_API_KEY: str = ""
@@ -56,7 +56,7 @@ class VoiceSettings(BaseSettings):
     # trade latency for the larger model's reasoning.
     GROQ_API_KEY: str = ""
     MISTRAL_API_KEY: str = ""
-    VOICE_LLM_MODEL: str = "mistral-small-latest"
+    VOICE_LLM_MODEL: str = "openai/gpt-oss-20b"
     # Deliberately lower than text chat's rag_pipeline.py default (800): a
     # spoken answer needs to stay short to be listenable (800 tokens is
     # roughly a minute of TTS) and short is also cheap. The Settings panel's

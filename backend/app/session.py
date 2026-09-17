@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 COOKIE_NAME = "scribe_session"
 CONTACT_COOKIE_NAME = "scribe_contact_session"
+PRODUCT_COOKIE_NAME = "scribe_product_session"
 
 # The owner's tenant. Kept as the literal "default" that pre-session data was
 # written under, so enabling the passcode gate doesn't orphan an existing
@@ -55,6 +56,22 @@ def issue(kind: str = "owner") -> str:
     token cannot be extended by editing it — the signature covers it."""
     payload = json.dumps(
         {"kind": kind, "iat": int(time.time())}, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
+    return f"{_b64encode(payload)}.{_sign(payload)}"
+
+
+def issue_product_session(session_id: str, tenant_id: str, product_id: str) -> str:
+    """Mint a signed session token for a Product QR visitor."""
+    payload = json.dumps(
+        {
+            "kind": "product_visitor",
+            "session_id": session_id,
+            "tenant_id": tenant_id,
+            "product_id": product_id,
+            "iat": int(time.time()),
+        },
+        separators=(",", ":"),
+        sort_keys=True,
     ).encode("utf-8")
     return f"{_b64encode(payload)}.{_sign(payload)}"
 
@@ -121,6 +138,17 @@ def contact_cookie_params() -> dict:
     """Cookie flags for contact guest session cookies, keeping owner and contact separate."""
     return {
         "key": CONTACT_COOKIE_NAME,
+        "httponly": True,
+        "samesite": "lax",
+        "secure": not settings.DEBUG,
+        "path": "/",
+    }
+
+
+def product_cookie_params() -> dict:
+    """Cookie flags for Product QR visitor session cookies."""
+    return {
+        "key": PRODUCT_COOKIE_NAME,
         "httponly": True,
         "samesite": "lax",
         "secure": not settings.DEBUG,

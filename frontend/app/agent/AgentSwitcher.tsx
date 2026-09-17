@@ -25,6 +25,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { ownerFetch } from "../lib/ownerFetch";
+import { extractApiErrorMessage, formatClientError } from "../lib/apiErrors";
 
 export interface SnapshotItem {
   snapshot_id: string;
@@ -80,13 +81,16 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
     setLoading(true);
     try {
       const r = await ownerFetch("/api/v1/workspace/agents", fresh ? { cache: "no-store" } : {});
-      if (r.ok) {
-        const j = await r.json();
-        setSnapshots(j.snapshots || []);
-        if (j.active_agent) setActiveAgent(j.active_agent);
+      if (!r.ok) {
+        const detail = await extractApiErrorMessage(r, "Could not load agents");
+        showToast(detail, "error");
+        return;
       }
-    } catch {
-      showToast("Could not load agents", "error");
+      const j = await r.json();
+      setSnapshots(j.snapshots || []);
+      if (j.active_agent) setActiveAgent(j.active_agent);
+    } catch (err: any) {
+      showToast(formatClientError(err, "Could not load agents"), "error");
     } finally {
       setLoading(false);
     }
@@ -101,14 +105,14 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
     try {
       const res = await ownerFetch(`/api/v1/workspace/agents/${id}/activate`, { method: "POST" });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.detail || `Failed to activate`);
+        const detail = await extractApiErrorMessage(res, `Failed to activate`);
+        throw new Error(detail);
       }
       showToast(`✓ "${name}" is now live!`, "success");
       onSwitch?.();
       void load();
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : "Failed to make live", "error");
+    } catch (e: any) {
+      showToast(formatClientError(e, "Failed to make live"), "error");
     } finally {
       setActivating(null);
     }
@@ -119,12 +123,13 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
     try {
       const res = await ownerFetch(`/api/v1/workspace/agents/${id}/duplicate`, { method: "POST" });
       if (!res.ok) {
-        throw new Error("Could not duplicate agent");
+        const detail = await extractApiErrorMessage(res, "Could not duplicate agent");
+        throw new Error(detail);
       }
       showToast("Agent cloned successfully ✓", "success");
       void load();
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : "Failed to duplicate", "error");
+    } catch (e: any) {
+      showToast(formatClientError(e, "Failed to duplicate"), "error");
     } finally {
       setDuplicating(null);
     }
@@ -135,12 +140,15 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
     setDeleting(true);
     try {
       const res = await ownerFetch(`/api/v1/workspace/agents/${deleteId}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Could not delete agent");
+      if (!res.ok) {
+        const detail = await extractApiErrorMessage(res, "Could not delete agent");
+        throw new Error(detail);
+      }
       showToast("Agent snapshot removed", "success");
       setDeleteId(null);
       void load();
-    } catch (e) {
-      showToast("Delete failed", "error");
+    } catch (e: any) {
+      showToast(formatClientError(e, "Delete failed"), "error");
     } finally {
       setDeleting(false);
     }
@@ -172,10 +180,11 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
         setEditing(null);
         void load();
       } else {
-        showToast("Update failed", "error");
+        const detail = await extractApiErrorMessage(res, "Update failed");
+        showToast(detail, "error");
       }
-    } catch {
-      showToast("Error updating agent", "error");
+    } catch (err: any) {
+      showToast(formatClientError(err, "Error updating agent"), "error");
     } finally {
       setSavingEdit(false);
     }

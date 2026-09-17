@@ -1,141 +1,56 @@
-# Start Backend Script for Production RAG System
-# Run this script from the project root: .\start_backend.ps1
-
-Write-Host "=== Production RAG System - Backend Startup ===" -ForegroundColor Cyan
-Write-Host ""
-
-# Check Python
-Write-Host "Checking Python..." -ForegroundColor Yellow
-try {
-    $pythonVersion = python --version 2>&1
-    Write-Host "Found: $pythonVersion" -ForegroundColor Green
-} catch {
-    Write-Host "Python not found! Please install Python 3.9+" -ForegroundColor Red
+# Start Backend - Windows host (hybrid: Docker infra only)
+# Run from repo root: .\start_backend.ps1
+# Backend runs on Windows (127.0.0.1:8000), infra (postgres/redis/qdrant/livekit) in Docker.
+Write-Host "=== Scribe Backend - Windows host ===" -ForegroundColor Cyan
+try { $v = python --version 2>&1; Write-Host "Found: $v" -ForegroundColor Green } catch { Write-Host "Python not found!" -ForegroundColor Red; exit 1 }
+Set-Location -Path (Join-Path $PSScriptRoot "backend")
+$venvPath = Join-Path $PSScriptRoot "venv"
+if (-not (Test-Path $venvPath)) { Write-Host "Creating venv..." -ForegroundColor Yellow; python -m venv $venvPath }
+Write-Host "Activating venv..." -ForegroundColor Yellow
+& (Join-Path $venvPath "Scripts\Activate.ps1")
+Write-Host "Installing deps (cached)..." -ForegroundColor Yellow
+pip install -r requirements.txt --quiet
+if (-not (Test-Path ".env")) {
+    if (Test-Path ".env.hybrid.example") {
+        Copy-Item ".env.hybrid.example" ".env"
+        Write-Host "Created .env from .env.hybrid.example - edit CHANGE_ME!" -ForegroundColor Yellow
+    } elseif (Test-Path ".env.example") {
+        Copy-Item ".env.example" ".env"
+        Write-Host "Created .env from .env.example" -ForegroundColor Yellow
+    }
+}
+. (Join-Path $PSScriptRoot "infra\Set-HybridEnvironment.ps1")
+Set-ScribeHybridEnvironment -RepoRoot $PSScriptRoot
+if (Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue) {
+    Write-Host "Port 8000 is already in use. Free it or change port. Not killing unknown process." -ForegroundColor Red
+    Get-NetTCPConnection -LocalPort 8000 | Format-Table LocalAddress,LocalPort,OwningProcess
     exit 1
 }
-
-# Setup backend — relative to this script's own location, so it works
-# regardless of where the repo is cloned.
-Set-Location -Path (Join-Path $PSScriptRoot "backend")
-
-# The venv lives at the repo root, not under backend/. This used to look for
-# ".\venv" *after* switching into backend/, never find it, and helpfully build a
-# second environment there — then install every dependency into it and run the
-# server from the wrong one.
-$venvPath = Join-Path $PSScriptRoot "venv"
-if (-not (Test-Path -Path $venvPath)) {
-    Write-Host "Creating virtual environment..." -ForegroundColor Yellow
-    python -m venv $venvPath
+Write-Host "Checking infra (hybrid)..." -ForegroundColor Yellow
+$checks = @(
+    @{ Name="Postgres 127.0.0.1:55432"; Test={ Test-NetConnection 127.0.0.1 -Port 55432 -WarningAction SilentlyContinue | Select-Object -ExpandProperty TcpTestSucceeded } },
+    @{ Name="Redis 127.0.0.1:6479"; Test={ try { $c=New-Object System.Net.Sockets.TcpClient; $c.Connect("127.0.0.1",6479); $c.Connected } catch { $false } } },
+    @{ Name="Qdrant http://127.0.0.1:6433/healthz"; Test={ try { Invoke-RestMethod http://127.0.0.1:6433/healthz -TimeoutSec 2 | Out-Null; $true } catch { $false } } },
+    @{ Name="LiveKit ws://127.0.0.1:7880"; Test={ Test-NetConnection 127.0.0.1 -Port 7880 -WarningAction SilentlyContinue | Select-Object -ExpandProperty TcpTestSucceeded } }
+)
+foreach ($c in $checks) {
+    $ok = & $c.Test
+    Write-Host ("  {0}: {1}" -f $c.Name, $(if ($ok) { "OK" } else { "NOT REACHABLE - start infra: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis qdrant livekit" })) -ForegroundColor $(if ($ok) { "Green" } else { "Yellow" })
 }
-
-# Activate virtual environment
-Write-Host "Activating virtual environment..." -ForegroundColor Yellow
-& (Join-Path $venvPath "Scripts\Activate.ps1")
-
-# Install requirements
-Write-Host "Installing Python dependencies..." -ForegroundColor Yellow
-pip install -r requirements.txt
-
-# Check .env file
-if (-not (Test-Path -Path ".env")) {
-    Write-Host "Creating .env file from example..." -ForegroundColor Yellow
-    Copy-Item ".env.example" ".env"
-    Write-Host "IMPORTANT: Edit .env and add your MISTRAL_API_KEY!" -ForegroundColor Red
-    Write-Host "Get your key at: https://console.mistral.ai/api-keys" -ForegroundColor Cyan
-}
-
-# Check if Qdrant is accessible
-Write-Host "Checking Qdrant connection..." -ForegroundColor Yellow
-try {
-    $response = Invoke-RestMethod -Uri "http://localhost:6333/health" -Method GET -TimeoutSec 5
-    Write-Host "Qdrant is running!" -ForegroundColor Green
-} catch {
-    Write-Host "Qdrant not detected at localhost:6333" -ForegroundColor Yellow
-    Write-Host "To install Qdrant:" -ForegroundColor Cyan
-    Write-Host "  1. Install Docker Desktop: https://www.docker.com/products/docker-desktop/" -ForegroundColor Cyan
-    Write-Host "  2. Run: docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant" -ForegroundColor Cyan
-    Write-Host "Or use Qdrant Cloud (free tier): https://cloud.qdrant.io" -ForegroundColor Cyan
-}
-
-# Bring Redis up before the API server.
-#
-# Redis holds the working conversation context the LLM is given each turn.
-# Without it the app falls back to an in-process dictionary, which is not
-# durable, not shared between processes, and silently loses a caller's context
-# on every restart — so the assistant forgets what was just said and nothing
-# reports why. The compose service is `restart: unless-stopped` with a named
-# volume, so this is a no-op once it has been started.
-Write-Host "Checking Redis..." -ForegroundColor Yellow
-$redisUp = $false
-try {
-    $tcp = New-Object System.Net.Sockets.TcpClient
-    $tcp.Connect("127.0.0.1", 6379)
-    $redisUp = $tcp.Connected
-    $tcp.Close()
-} catch { $redisUp = $false }
-
-if ($redisUp) {
-    Write-Host "Redis is running!" -ForegroundColor Green
+Write-Host "Checking voice worker health port..." -ForegroundColor Yellow
+$repoPath = $PSScriptRoot
+$port8081 = Get-NetTCPConnection -LocalPort 8081 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($port8081) {
+    $owner = Get-CimInstance Win32_Process -Filter "ProcessId = $($port8081.OwningProcess)" -ErrorAction SilentlyContinue
+    if ($owner -and $owner.CommandLine -like "*$repoPath*" -and $owner.CommandLine -like "*voice*worker*") {
+        Write-Host "Existing Scribe voice worker found on 8081 (PID $($port8081.OwningProcess)); leaving it running." -ForegroundColor Green
+    } elseif ($owner) {
+        Write-Host "Port 8081 is occupied by PID $($port8081.OwningProcess) ($($owner.CommandLine)) - not our worker, not killing. Free it manually or change VOICE_WORKER_HEALTH_URL port." -ForegroundColor Yellow
+    } else {
+        Write-Host "Port 8081 is listening (PID $($port8081.OwningProcess)) - unknown owner, not killing." -ForegroundColor Yellow
+    }
 } else {
-    Write-Host "Redis not detected at localhost:6379 - starting it via docker compose..." -ForegroundColor Yellow
-    try {
-        docker compose up -d redis 2>&1 | Out-Null
-        if ($?) {
-            Start-Sleep -Seconds 3
-            Write-Host "Redis started." -ForegroundColor Green
-        } else {
-            throw "docker compose returned a failure"
-        }
-    } catch {
-        # Not fatal: the app runs without Redis, just degraded. Said plainly
-        # rather than left for someone to discover from /health.
-        Write-Host "Could not start Redis (is Docker Desktop running?)." -ForegroundColor Red
-        Write-Host "The app will still start, but conversation memory will be" -ForegroundColor Yellow
-        Write-Host "in-process only and lost on every restart." -ForegroundColor Yellow
-        Write-Host "  Start it manually with: docker compose up -d redis" -ForegroundColor Cyan
-    }
+    Write-Host "Port 8081 is free; the backend will start the worker on demand." -ForegroundColor Green
 }
-
-# Stop any voice worker left over from a previous run.
-#
-# The worker is spawned *detached* on purpose, so it survives uvicorn's
-# --reload restarts instead of dying with them (see worker_supervisor.py). The
-# cost of that is it also survives your code changes: an old worker keeps
-# serving calls with whatever prompt and turn-taking settings it started with,
-# which reads as "my fix did nothing". Clearing it here means the next call
-# spawns a fresh one on current code.
-#
-# This lives in the start script rather than the app's own startup hook
-# deliberately: with --reload, that hook runs again on every file save, and
-# killing the worker mid-call each time you touch a file would be worse than
-# the problem it solves. Starting the backend is a thing you do on purpose.
-Write-Host "Clearing any stale voice worker..." -ForegroundColor Yellow
-try {
-    $conn = Get-NetTCPConnection -LocalPort 8081 -State Listen -ErrorAction SilentlyContinue
-    if ($conn) {
-        $conn | ForEach-Object {
-            Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
-        }
-        Write-Host "Cleared stale process holding voice worker port 8081." -ForegroundColor Green
-    }
-} catch {}
-
-$stale = Get-CimInstance Win32_Process -Filter "Name like '%python%'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -like '*voice.worker*' -or $_.CommandLine -like '*worker_reload*' }
-if ($stale) {
-    $stale | ForEach-Object {
-        try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {}
-    }
-    Write-Host "Stopped $($stale.Count) stale worker process(es)." -ForegroundColor Green
-} else {
-    Write-Host "No stale worker processes found." -ForegroundColor Green
-}
-
-# Start the backend
-Write-Host ""
-Write-Host "Starting FastAPI backend..." -ForegroundColor Green
-Write-Host "API docs will be at: http://localhost:8000/docs" -ForegroundColor Cyan
-Write-Host "Press Ctrl+C to stop" -ForegroundColor Yellow
-Write-Host ""
-
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+Write-Host "`nStarting FastAPI on http://127.0.0.1:8000/docs (hybrid, VOICE_WORKER_AUTO_START=true)" -ForegroundColor Green
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000

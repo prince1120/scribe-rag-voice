@@ -1,0 +1,32 @@
+# Self-hosted LiveKit — local Docker development.
+# No secrets in this file. Keys come from env: LIVEKIT_KEYS=LIVEKIT_API_KEY:LIVEKIT_API_SECRET
+# See docker-compose.yml livekit service. Do not commit real keys here.
+port: 7880
+bind_addresses:
+  - ""
+
+rtc:
+  node_ip: 127.0.0.1
+  # TCP ICE fallback (port 7881) + UDP mux (7882). Both must be reachable on localhost.
+  tcp_port: 7881
+  udp_port: 7882
+  # Local Docker has no public IP; external IP auto-detect is fine for localhost.
+  use_external_ip: false
+
+redis:
+  # Single Redis reused by backend + LiveKit (no duplicate instance).
+  address: redis:6379
+  db: 0
+  # If REDIS_PASSWORD is set in .env, LiveKit will read it via env var substitution
+  # if the image supports it; otherwise leave empty for local dev.
+
+logging:
+  level: info
+
+# Do NOT set `keys:` here — it would commit secrets. Use env LIVEKIT_KEYS instead.
+# keys:
+#   devkey: devsecret
+
+room:
+  auto_create: true
+  empty_timeout: 300

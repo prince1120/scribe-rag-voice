@@ -20,7 +20,31 @@ const REFERENCE_PATHS = new Set([
   "/api/v1/voice/speakers", "/api/v1/voice/languages", "/api/v1/workspace/categories",
 ]);
 let requestGeneration = 0;
-const PAGE_PATHS = new Set(["/api/v1/contacts", "/api/v1/contacts/overview", "/api/v1/workspace/agents", "/api/v1/calendar/services", "/api/v1/calendar/availability", "/api/v1/calendar/bookings", "/api/v1/calendar/reports", "/api/v1/calendar/notifications"]);
+const PAGE_PATHS = new Set([
+  "/api/v1/contacts",
+  "/api/v1/contacts/overview",
+  "/api/v1/workspace/agents",
+  "/api/v1/calendar/services",
+  "/api/v1/calendar/availability",
+  "/api/v1/calendar/bookings",
+  "/api/v1/calendar/reports",
+  "/api/v1/calendar/notifications",
+  "/api/v1/product-qr/products",
+]);
+
+function sanitizeHeadersForCacheKey(headers: Headers): Array<[string, string]> {
+  const entries: Array<[string, string]> = [];
+  headers.forEach((value, name) => {
+    const lower = name.toLowerCase();
+    // Do not include complete secret header values in reusable cache keys
+    if (lower.includes("key") || lower.includes("auth") || lower.includes("cookie") || lower.includes("secret")) {
+      entries.push([lower, value ? "present" : "absent"]);
+    } else {
+      entries.push([lower, value]);
+    }
+  });
+  return entries.sort((a, b) => a[0].localeCompare(b[0]));
+}
 
 /** Clear response reuse when the account changes or business data is edited. */
 export function clearOwnerRequests() {
@@ -29,11 +53,29 @@ export function clearOwnerRequests() {
   referenceReads.clear();
 }
 
+/** Invalidate cached reads for a specific path or prefix after successful writes. */
+export function invalidateOwnerCache(pathPrefix?: string) {
+  if (!pathPrefix) {
+    clearOwnerRequests();
+    return;
+  }
+  requestGeneration += 1;
+  pendingReads.clear();
+  for (const k of Array.from(referenceReads.keys())) {
+    if (k.includes(pathPrefix)) {
+      referenceReads.delete(k);
+    }
+  }
+}
+
 /** Identity headers for the current browser, or nothing on the server. */
 export function ownerHeaders(): Record<string, string> {
   if (typeof window === "undefined") return {};
 
-  const headers: Record<string, string> = {};
+  // Owner-console requests must not inherit a lingering customer-link context.
+  // The backend still requires a valid signed owner session; this header only
+  // tells identity resolution which of the two signed cookies is intended.
+  const headers: Record<string, string> = { "X-Owner-Console": "1" };
   const groq = localStorage.getItem(GROQ_KEY);
   const sarvam = localStorage.getItem(SARVAM_KEY);
   const clientId = localStorage.getItem(CLIENT_ID);
@@ -71,7 +113,7 @@ export async function ownerFetch(path: string, init: RequestInit = {}): Promise<
     return fetch(path, options);
   }
   const generation = requestGeneration;
-  const key = JSON.stringify([path, Array.from(headers.entries()), generation]);
+  const key = JSON.stringify([path, sanitizeHeadersForCacheKey(headers), generation]);
   const cached = referenceReads.get(key);
   if (cached && cached.expires > Date.now()) return cached.response.clone();
   referenceReads.delete(key);

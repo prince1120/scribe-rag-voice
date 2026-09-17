@@ -7,7 +7,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   LayoutDashboard,
   Bot,
@@ -16,12 +16,11 @@ import {
   LogOut,
   Menu,
   X,
-  Radio,
   ExternalLink,
-  Sparkles,
   Calendar,
   Layers,
   Inbox,
+  QrCode,
 } from "lucide-react";
 import { clearWorkspaceCache, useWorkspace } from "../../lib/workspaceCache";
 import { NotificationBell } from "./NotificationBell";
@@ -30,39 +29,52 @@ import { ScribeMark } from "../../Logo";
 interface NavItem {
   href: string;
   label: string;
+  description: string;
   icon: React.ReactNode;
 }
 
 const NAV: NavItem[] = [
-  { href: "/inbox", label: "Inbox", icon: <Inbox size={18} /> },
+  { href: "/inbox", label: "Inbox", description: "Customer requests and follow-ups", icon: <Inbox size={18} /> },
   {
     href: "/dashboard",
     label: "Overview",
+    description: "Performance and recent activity",
     icon: <LayoutDashboard size={18} />,
   },
   {
     href: "/agent",
     label: "Assistant",
+    description: "Behavior, knowledge and voice",
     icon: <Bot size={18} />,
   },
   {
     href: "/agents",
     label: "My Agents",
+    description: "Manage deployed assistants",
     icon: <Layers size={18} />,
   },
   {
     href: "/calendar",
     label: "Calendar",
+    description: "Services, hours and appointments",
     icon: <Calendar size={18} />,
   },
   {
     href: "/links",
     label: "People & Calls",
+    description: "Access links and conversations",
     icon: <Users size={18} />,
+  },
+  {
+    href: "/products",
+    label: "Products & QRs",
+    description: "Hardware & QR support",
+    icon: <QrCode size={18} />,
   },
   {
     href: "/settings",
     label: "Account & Keys",
+    description: "Business profile and providers",
     icon: <Settings size={18} />,
   },
 ];
@@ -79,15 +91,49 @@ export function OwnerShell({
 }) {
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
+  const railRef = useRef<HTMLElement>(null);
   const workspace = useWorkspace();
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const rail = railRef.current;
+    const previous = document.activeElement as HTMLElement | null;
+    const focusable = () => Array.from(rail?.querySelectorAll<HTMLElement>(
+      'a[href], button:not(:disabled)'
+    ) || []).filter(element => element.getClientRects().length > 0);
+    focusable()[0]?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault(); last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault(); first?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    const desktop = window.matchMedia("(min-width: 861px)");
+    const onResize = () => { if (desktop.matches) setMenuOpen(false); };
+    desktop.addEventListener("change", onResize);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      desktop.removeEventListener("change", onResize);
+      if (previous?.isConnected) previous.focus();
+    };
+  }, [menuOpen]);
 
   const businessName = propBusinessName || workspace.businessName;
   const isLive = propStatus ? propStatus === "deployed" : workspace.isLive;
+  const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
+  const activeItem = NAV.find((item) => isActive(item.href)) || NAV[1];
 
   return (
     <div className="owner-shell">
       {/* ── Left Navigation Rail ─────────────────────────────── */}
-      <aside className={`owner-rail ${menuOpen ? "is-open" : ""}`}>
+      <aside ref={railRef} id="owner-navigation" aria-label="Workspace navigation" className={`owner-rail ${menuOpen ? "is-open" : ""}`}>
         {/* Brand Lockup */}
         <div className="owner-brand">
           <div className="owner-brand-mark" aria-hidden="true">
@@ -117,16 +163,16 @@ export function OwnerShell({
 
         {/* Navigation Items */}
         <nav className="owner-nav" aria-label="Console Navigation">
-          <div className="owner-nav-section-label">MAIN MENU</div>
+          <div className="owner-nav-section-label">Workspace</div>
           {NAV.map((item) => {
-            const isCurrent = pathname === item.href;
+            const isCurrent = isActive(item.href);
             const active = isCurrent;
 
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                prefetch={false}
+                prefetch={true}
                 className={`owner-nav-item ${active ? "is-active" : ""}`}
                 aria-current={active ? "page" : undefined}
                 onClick={() => {
@@ -141,7 +187,7 @@ export function OwnerShell({
           })}
 
           <div className="owner-nav-section-label" style={{ marginTop: "1rem" }}>
-            LINKS & ACTIONS
+            Share & account
           </div>
 
           <Link
@@ -211,7 +257,7 @@ export function OwnerShell({
       )}
 
       {/* ── Main Content Area ───────────────────────────────── */}
-      <div className="owner-main">
+      <div className="owner-main" inert={menuOpen || undefined}>
         {/* Mobile Top Bar */}
         <header className="owner-topbar">
           <button
@@ -219,14 +265,17 @@ export function OwnerShell({
             className="owner-menu"
             onClick={() => setMenuOpen(true)}
             aria-label="Open menu"
+            aria-controls="owner-navigation"
+            aria-expanded={menuOpen}
           >
             <Menu size={20} />
           </button>
           <div className="owner-topbar-info">
-            <span className="owner-topbar-name" suppressHydrationWarning>
+            <span className="owner-topbar-overline" suppressHydrationWarning>
               {businessName || "Your business"}
             </span>
-            <span className="owner-topbar-sub">Scribe Console</span>
+            <span className="owner-topbar-name">{activeItem.label}</span>
+            <span className="owner-topbar-sub">{activeItem.description}</span>
           </div>
           <div className="flex items-center gap-2">
             <NotificationBell />
@@ -238,7 +287,9 @@ export function OwnerShell({
         </header>
 
         {/* Scrollable Content Viewport */}
-        <div className="owner-content"><div key={pathname} className="studio-page-enter">{children}</div></div>
+        <div id="main-content" className="owner-content" role="main" tabIndex={-1}>
+          <div key={pathname} className="studio-page-enter">{children}</div>
+        </div>
       </div>
     </div>
   );

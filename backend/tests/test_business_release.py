@@ -20,7 +20,7 @@ from app.models.db_models import Base, ContactRecord, VoiceCallRecord, BusinessR
 from app.repositories import business
 from app.services import business_calls
 from app.services import calendar_service
-from app.identity import Identity, resolve_identity
+from app.identity import Identity, get_identity, resolve_identity
 
 
 @pytest.fixture(autouse=True)
@@ -58,6 +58,20 @@ async def test_db(monkeypatch):
 
 
 class TestCallPersistence:
+    @pytest.mark.asyncio
+    async def test_product_context_label_survives_call_creation(self):
+        label = "Product QR · PureFlow Pro · PF-RO-700"
+        call_id = await business.create_call(
+            "tenant-product", None, "127.0.0.1", "Browser", context_label=label,
+            voice_consent_at=datetime.now(timezone.utc),
+        )
+
+        call = await business.get_call(call_id, "tenant-product")
+        assert call is not None
+        assert call.context_label == label
+        assert business_calls.call_public(call)["context_label"] == label
+        assert business_calls.call_public(call)["voice_consent_recorded"] is True
+
     @pytest.mark.asyncio
     async def test_canonical_call_creation_and_save(self):
         tenant_id = "tenant-1"
@@ -168,6 +182,24 @@ class TestCallerIsolation:
         assert identity.contact_id == "contact-xyz"
         assert identity.is_owner is False
         assert identity.is_contact is True
+
+    @pytest.mark.asyncio
+    async def test_owner_console_ignores_lingering_contact_cookie(self):
+        """Returning from a customer link must not make the owner console read-only."""
+        from app.session import issue
+
+        identity = await get_identity(
+            scribe_session=issue(kind="owner:tenant-1"),
+            scribe_contact_session=issue(kind="contact:contact-xyz:tenant-2"),
+            x_user_groq_key=None,
+            x_user_sarvam_key=None,
+            x_client_id=None,
+            x_owner_console="1",
+        )
+
+        assert identity.tenant_id == "tenant-1"
+        assert identity.contact_id is None
+        assert identity.is_owner is True
 
 
 class TestBusinessRequests:
@@ -361,4 +393,3 @@ class TestCalendarHardening:
         )
         assert rebooked.booking_id == b1.booking_id
         assert rebooked.status == "confirmed"
-
