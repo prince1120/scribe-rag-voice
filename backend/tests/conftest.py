@@ -68,6 +68,9 @@ if not _INTEGRATION:
     os.environ["QDRANT_HTTPS"] = "false"
     os.environ["REDIS_HOST"] = "127.0.0.1"
     os.environ["REDIS_PORT"] = "6379"
+    os.environ["API_KEY"] = ""
+    os.environ["INTERNAL_API_KEY"] = ""
+    os.environ["APP_ACCESS_PASSCODE"] = ""
 
     # Fresh throwaway database per session. This filename belongs to tests
     # only; nothing else in the repo reads or writes it.

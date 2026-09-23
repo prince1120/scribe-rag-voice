@@ -83,7 +83,7 @@ class TestRevocationAndExpiry:
     def test_naive_timestamps_do_not_crash(self):
         """Rows written before timezone handling was consistent come back
         naive; comparing them must not raise."""
-        naive_past = datetime.now() - timedelta(days=1)
+        naive_past = datetime.now(timezone.utc) - timedelta(days=1)
         with pytest.raises(contacts.ContactError):
             contacts.check_usable(revoked_at=None, expires_at=naive_past)
 

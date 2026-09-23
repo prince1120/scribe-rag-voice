@@ -2,7 +2,7 @@ import redis
 from typing import List, Dict, Any, Optional
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -93,8 +93,8 @@ class ConversationService:
             "conversation_id": conversation_id,
             "tenant_id": tenant_id,
             "messages": [],
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat()
         }
         
         self._save_conversation(conversation)
@@ -106,14 +106,14 @@ class ConversationService:
         message = {
             "role": role,
             "content": content,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "citations": citations or []
         }
         
         conversation = self.get_conversation(conversation_id)
         if conversation:
             conversation["messages"].append(message)
-            conversation["updated_at"] = datetime.now().isoformat()
+            conversation["updated_at"] = datetime.now(timezone.utc).isoformat()
             self._save_conversation(conversation)
         
         return message

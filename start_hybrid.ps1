@@ -103,7 +103,7 @@ if (-not (Test-Path $venvPath)) {
     exit 1
 }
 Write-Host "Using existing venv (dependency installation skipped)." -ForegroundColor Green
-$backendCmd = "Set-Location '$backendPath'; & '$RepoRoot\venv\Scripts\Activate.ps1'; uvicorn app.main:app --host 127.0.0.1 --port $backendPort --reload"
+$backendCmd = "Set-Location '$backendPath'; `$env:PRODUCT_QR_ENABLED='true'; & '$RepoRoot\venv\Scripts\Activate.ps1'; uvicorn app.main:app --host 127.0.0.1 --port $backendPort --reload"
 Write-Host "Launching backend: $backendCmd" -ForegroundColor Cyan
 Start-Process -FilePath "powershell" -ArgumentList "-NoExit","-Command", $backendCmd -WorkingDirectory $RepoRoot
 # 7. Frontend on Windows (port 3100)

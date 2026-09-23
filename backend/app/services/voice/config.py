@@ -56,7 +56,7 @@ class VoiceSettings(BaseSettings):
     # trade latency for the larger model's reasoning.
     GROQ_API_KEY: str = ""
     MISTRAL_API_KEY: str = ""
-    VOICE_LLM_MODEL: str = "openai/gpt-oss-20b"
+    VOICE_LLM_MODEL: str = "mixtral-8x7b-32768"
     # Deliberately lower than text chat's rag_pipeline.py default (800): a
     # spoken answer needs to stay short to be listenable (800 tokens is
     # roughly a minute of TTS) and short is also cheap. The Settings panel's

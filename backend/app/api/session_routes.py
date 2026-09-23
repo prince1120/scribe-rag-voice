@@ -43,6 +43,11 @@ async def read_session(identity: Identity = Depends(get_identity)) -> SessionSta
 @router.post("/login", response_model=SessionStatus)
 @limiter.limit("5/minute")
 async def login(request: Request, body: LoginRequest, response: Response) -> SessionStatus:
+    if request.headers.get("x-requested-with") != "XMLHttpRequest":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="CSRF check failed"
+        )
+
     if not check_passcode(body.passcode):
         # Logged without the attempted value — passcode guesses in logs are a
         # liability, and near-misses reveal the real one.
@@ -61,7 +66,11 @@ async def login(request: Request, body: LoginRequest, response: Response) -> Ses
 
 
 @router.post("/logout")
-async def logout(response: Response) -> dict:
+async def logout(request: Request, response: Response) -> dict:
+    if request.headers.get("x-requested-with") != "XMLHttpRequest":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="CSRF check failed"
+        )
     params = cookie_params()
     response.delete_cookie(
         key=params.pop("key"), path=params["path"], samesite=params["samesite"]

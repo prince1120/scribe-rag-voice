@@ -47,6 +47,7 @@ function Set-ScribeHybridEnvironment {
     $env:VOICE_WORKER_HEALTH_URL = "http://127.0.0.1:8081"
     $env:VOICE_WORKER_AUTO_START = "true"
     $env:DEBUG = "true"
+    $env:PRODUCT_QR_ENABLED = Get-ScribeDotEnvValue -Path $rootEnv -Name "PRODUCT_QR_ENABLED" -Default "true"
 
     Write-Host "Hybrid process endpoints set to local Docker infrastructure (credentials hidden)." -ForegroundColor Green
 }

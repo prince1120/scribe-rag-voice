@@ -31,7 +31,11 @@ const HOP_BY_HOP = new Set([
 // proxy is public and attaches BACKEND_API_KEY to every request, which would
 // otherwise authenticate an anonymous visitor straight into them. The backend
 // also guards these with a separate internal key; this is the second lock.
-const INTERNAL_ONLY_PATHS = new Set(["voice/retrieve", "voice/history"]);
+const INTERNAL_ONLY_PATHS = new Set([
+  "voice/credentials",
+  "voice/retrieve",
+  "voice/history",
+]);
 
 async function proxy(
   req: NextRequest,
@@ -40,7 +44,11 @@ async function proxy(
   const { path } = await ctx.params;
   const joined = (path || []).join("/");
 
-  if (INTERNAL_ONLY_PATHS.has(joined)) {
+  if (
+    !path?.length ||
+    path.some((segment) => !segment || segment === "." || segment === "..") ||
+    INTERNAL_ONLY_PATHS.has(joined)
+  ) {
     return new Response(JSON.stringify({ error: "Not found" }), {
       status: 404,
       headers: { "content-type": "application/json" },
@@ -54,6 +62,9 @@ async function proxy(
   for (const [k, v] of req.headers.entries()) {
     if (!HOP_BY_HOP.has(k.toLowerCase())) headers.set(k, v);
   }
+  // Internal worker credentials must never be accepted from a browser and
+  // relayed through this public proxy.
+  headers.delete("X-Internal-Key");
   if (BACKEND_API_KEY) {
     headers.set("X-API-Key", BACKEND_API_KEY);
   }
@@ -79,8 +90,6 @@ async function proxy(
     return new Response(
       JSON.stringify({
         error: "Backend unreachable",
-        detail: (e as Error).message,
-        upstream,
       }),
       { status: 502, headers: { "content-type": "application/json" } }
     );

@@ -4,8 +4,11 @@ Fetches a site's main text (homepage + up to 4 linked pages), chunks via same
 pipeline as documents, and stores as docs for the agent. Reuses existing
 ingestion (no new infra) — each page becomes a DocumentRecord with source_url.
 """
+import asyncio
+import ipaddress
 import logging
 import re
+import socket
 from typing import List, Optional
 from urllib.parse import urljoin, urlparse
 
@@ -19,6 +22,108 @@ MAX_PAGES = 30
 MAX_BYTES = 500_000
 TIMEOUT = 8.0
 ALLOWED_SCHEMES = {"https", "http"}
+MAX_REDIRECTS = 4
+
+
+async def _resolve_host(hostname: str, port: int) -> set[str]:
+    """Resolve every address for a host without blocking the event loop."""
+    records = await asyncio.to_thread(
+        socket.getaddrinfo, hostname, port, type=socket.SOCK_STREAM
+    )
+    return {record[4][0] for record in records}
+
+
+async def _validate_public_url(url: str) -> str:
+    """Reject URLs that could make the server request a private network.
+
+    Hostname checks alone are not enough: names can resolve to loopback or be
+    rebound after validation. Every request and redirect goes through this
+    function, and all resolved addresses must be globally routable.
+    """
+    parsed = urlparse(url.strip())
+    if (
+        parsed.scheme not in ALLOWED_SCHEMES
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+    ):
+        raise ValueError("Enter a valid public http(s) URL")
+
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        addresses = await _resolve_host(parsed.hostname, port)
+    except (socket.gaierror, ValueError):
+        raise ValueError("That website address could not be resolved")
+
+    if not addresses:
+        raise ValueError("That website address could not be resolved")
+    for address in addresses:
+        try:
+            if not ipaddress.ip_address(address).is_global:
+                raise ValueError("That address is not crawlable")
+        except ValueError as exc:
+            if str(exc) == "That address is not crawlable":
+                raise
+            raise ValueError("That website address could not be resolved")
+    return url.strip()
+
+
+def _same_origin(url: str, origin: str) -> bool:
+    left, right = urlparse(url), urlparse(origin)
+    left_port = left.port or (443 if left.scheme == "https" else 80)
+    right_port = right.port or (443 if right.scheme == "https" else 80)
+    return (
+        left.scheme == right.scheme
+        and (left.hostname or "").lower() == (right.hostname or "").lower()
+        and left_port == right_port
+    )
+
+
+async def _fetch_public(
+    client: httpx.AsyncClient, url: str, *, origin: str
+) -> httpx.Response:
+    """Fetch one same-origin public URL, validating every redirect hop."""
+    current = url
+    for _ in range(MAX_REDIRECTS + 1):
+        parsed = urlparse(current)
+        if not parsed.hostname:
+            raise ValueError("Invalid URL")
+            
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        # Re-resolve and validate to get the safe IP right now
+        try:
+            addresses = await _resolve_host(parsed.hostname, port)
+        except (socket.gaierror, ValueError):
+            raise ValueError("That website address could not be resolved")
+            
+        safe_ip = None
+        for address in addresses:
+            try:
+                if ipaddress.ip_address(address).is_global:
+                    safe_ip = address
+                    break
+            except ValueError:
+                pass
+                
+        if not safe_ip:
+            raise ValueError("That address is not crawlable")
+            
+        if not _same_origin(current, origin):
+            raise ValueError("The website redirected outside the requested domain")
+            
+        # Pin the request to the safe IP we just resolved, but keep the 
+        # Host header so SNI and virtual hosting work.
+        safe_url = current.replace(parsed.hostname, safe_ip, 1)
+        headers = {"Host": parsed.hostname}
+        
+        response = await client.get(safe_url, headers=headers)
+        if response.status_code not in {301, 302, 303, 307, 308}:
+            return response
+        location = response.headers.get("location")
+        if not location:
+            return response
+        current = urljoin(current, location)
+    raise ValueError("Too many website redirects")
 
 
 def _clean_text(html: str) -> str:
@@ -107,7 +212,7 @@ async def _fetch_sitemap_urls(client: httpx.AsyncClient, base: str) -> List[str]
     candidates = [f"{base}/sitemap.xml", f"{base}/sitemap_index.xml", f"{base}/sitemap-index.xml"]
     # also try robots.txt
     try:
-        rr = await client.get(f"{base}/robots.txt")
+        rr = await _fetch_public(client, f"{base}/robots.txt", origin=base)
         if rr.status_code == 200:
             for line in rr.text.splitlines():
                 if line.lower().startswith("sitemap:"):
@@ -116,13 +221,13 @@ async def _fetch_sitemap_urls(client: httpx.AsyncClient, base: str) -> List[str]
         pass
     for cand in candidates:
         try:
-            r = await client.get(cand)
+            r = await _fetch_public(client, cand, origin=base)
             if r.status_code != 200 or not r.text.strip().startswith("<"):
                 continue
             # naive xml loc extraction without extra deps
             for m in re.finditer(r"<loc>\s*(https?://[^<\s]+)\s*</loc>", r.text, re.I):
                 u = m.group(1).strip()
-                if base in u or urlparse(u).netloc == urlparse(base).netloc:
+                if _same_origin(u, base):
                     urls.append(u)
                 if len(urls) >= MAX_PAGES:
                     break
@@ -134,17 +239,11 @@ async def _fetch_sitemap_urls(client: httpx.AsyncClient, base: str) -> List[str]
 
 async def fetch_site_pages(url: str) -> List[dict]:
     """Fetch homepage + sitemap/BFS up to MAX_PAGES (30) concurrently."""
-    parsed = urlparse(url.strip())
-    if parsed.scheme not in ALLOWED_SCHEMES or not parsed.netloc:
-        raise ValueError("Enter a valid https:// URL")
-    if parsed.hostname in {"localhost", "127.0.0.1"} or (parsed.hostname and parsed.hostname.startswith("192.168.")):
-        raise ValueError("That address is not crawlable")
+    start = await _validate_public_url(url)
+    parsed = urlparse(start)
     base = f"{parsed.scheme}://{parsed.netloc}"
-    start = url.strip()
 
-    import asyncio
-
-    async with httpx.AsyncClient(timeout=6.0, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (compatible; ScribeBot/1.0)"}) as client:
+    async with httpx.AsyncClient(timeout=6.0, follow_redirects=False, headers={"User-Agent": "Mozilla/5.0 (compatible; ScribeBot/1.0)"}) as client:
         # 1) Try sitemap
         sitemap_urls = await _fetch_sitemap_urls(client, base)
         queue: List[str] = sitemap_urls if sitemap_urls else [start]
@@ -154,12 +253,12 @@ async def fetch_site_pages(url: str) -> List[dict]:
         # If sitemap was empty, discover links from start page first
         if len(queue) == 1:
             try:
-                r0 = await client.get(start)
+                r0 = await _fetch_public(client, start, origin=base)
                 if r0.status_code == 200:
                     soup = BeautifulSoup(r0.text, "html.parser")
                     for a in soup.find_all("a", href=True)[:40]:
                         nxt = urljoin(base, a["href"])
-                        if urlparse(nxt).netloc == parsed.netloc and nxt not in queue:
+                        if _same_origin(nxt, base) and nxt not in queue:
                             queue.append(nxt)
             except Exception:
                 pass
@@ -174,7 +273,7 @@ async def fetch_site_pages(url: str) -> List[dict]:
         async def _fetch_one(href: str) -> Optional[dict]:
             async with sem:
                 try:
-                    r = await client.get(href)
+                    r = await _fetch_public(client, href, origin=base)
                     if r.status_code == 200 and len(r.content) <= MAX_BYTES:
                         text = _clean_text(r.text)
                         if len(text.split()) >= 15:
