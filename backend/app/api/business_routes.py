@@ -42,8 +42,8 @@ async def caller_chat(request: Request, body: CallerChatBody,
     from app.api.routes import query_documents
     from app.services.owner_service import cached_agent, available_channels
     from app.database import async_session
-    from app.models.db_models import ContactSessionRecord
-    from sqlalchemy import select, update
+    from app.models.db_models import ContactSessionRecord, MessageRecord
+    from sqlalchemy import select, update, func
     from uuid import uuid4
     contact = await repositories.get_contact(identity.contact_id, identity.tenant_id)
     agent = await cached_agent(identity.tenant_id)
@@ -66,10 +66,17 @@ async def caller_chat(request: Request, body: CallerChatBody,
     response = await query_documents(request=request, body=QueryRequest(query=body.query,
         conversation_id=conversation_id), identity=identity, x_custom_llm_base_url=None, x_custom_llm_key=None)
     async with async_session() as session:
+        # Derived from what was actually persisted: a guardrail turn saves 0
+        # rows and must not inflate the badge the way a blind +2 did.
+        persisted = await session.scalar(
+            select(func.count()).select_from(MessageRecord).where(
+                MessageRecord.conversation_id == conversation_id
+            )
+        ) or 0
         await session.execute(update(ContactSessionRecord).where(
             ContactSessionRecord.contact_id == identity.contact_id,
             ContactSessionRecord.conversation_id == conversation_id).values(
-                message_count=ContactSessionRecord.message_count + 2, last_activity_at=business.now()))
+                message_count=int(persisted), last_activity_at=business.now()))
         await session.commit()
     return response
 

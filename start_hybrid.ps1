@@ -110,11 +110,14 @@ Start-Process -FilePath "powershell" -ArgumentList "-NoExit","-Command", $backen
 Write-Host "`n[5/7] Starting frontend on Windows (host)..." -ForegroundColor Yellow
 $frontendPort = 3100
 if (Get-NetTCPConnection -LocalPort $frontendPort -ErrorAction SilentlyContinue) {
-    Write-Host "Port $frontendPort occupied - frontend not started. Free it and run .\start_frontend.ps1" -ForegroundColor Yellow
+    Write-Host "Port $frontendPort is already listening - opening browser..." -ForegroundColor Green
+    Start-Process "http://127.0.0.1:$frontendPort"
 } else {
     $frontendCmd = "Set-Location '$RepoRoot\frontend'; if (-not (Test-Path 'node_modules')) { npm install }; npm run dev -- --port $frontendPort --hostname 127.0.0.1"
     Start-Process -FilePath "powershell" -ArgumentList "-NoExit","-Command", $frontendCmd -WorkingDirectory $RepoRoot
     Write-Host "Launching frontend on http://127.0.0.1:$frontendPort" -ForegroundColor Cyan
+    Start-Sleep -Seconds 2
+    Start-Process "http://127.0.0.1:$frontendPort"
 }
 # 8. Worker - host auto-start via backend
 Write-Host "`n[6/7] Voice worker: host backend will auto-spawn one Windows worker when needed (VOICE_WORKER_AUTO_START=true)." -ForegroundColor Yellow

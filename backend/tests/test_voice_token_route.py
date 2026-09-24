@@ -125,3 +125,107 @@ class TestWorkerAdmission:
 
         assert raised.value.status_code == 503
         assert "temporarily unavailable" in raised.value.detail.lower()
+
+
+def _direct_request():
+    """Scope carries client + app so the slowapi rate-limit wrapper sees a
+    real request even when calling the endpoint function directly."""
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v1/voice/token",
+            "headers": [],
+            "client": ("127.0.0.1", 50000),
+            "app": app,
+        }
+    )
+
+
+async def _mint_room(body: VoiceTokenRequest):
+    return await voice_routes.create_voice_token(
+        request=_direct_request(),
+        body=body,
+        identity=Identity(tenant_id="t-room", is_owner=True),
+        x_user_groq_key=None,
+        x_user_sarvam_key=None,
+        x_user_custom_llm_key=None,
+    )
+
+
+class TestRoomIsolation:
+    """The room name is minted server-side, never taken from the request body.
+
+    A client-chosen room_name would let any caller mint a token into another
+    call's room (and have an agent dispatched into it). The schema keeps the
+    field only so older bodies still validate; the route must ignore it.
+    """
+
+    @pytest.fixture
+    def minted_rooms(self, monkeypatch):
+        """Run the real endpoint with every external dependency stubbed and
+        capture the room each token was minted for."""
+        rooms: list = []
+
+        class FakeAccessToken:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def with_identity(self, value):
+                return self
+
+            def with_name(self, value):
+                return self
+
+            def with_grants(self, grants):
+                rooms.append(grants.room)
+                return self
+
+            def with_room_config(self, config):
+                return self
+
+            def to_jwt(self):
+                return "test-jwt"
+
+        async def no_record(*args, **kwargs):
+            return None
+
+        async def stored_keys(*args, **kwargs):
+            return {"groq_api_key": "g-test", "sarvam_api_key": "s-test"}
+
+        async def new_call(*args, **kwargs):
+            return "call-test"
+
+        async def no_services(*args, **kwargs):
+            return []
+
+        from app.services import calendar_service
+
+        monkeypatch.setattr(voice_routes, "AccessToken", FakeAccessToken)
+        monkeypatch.setattr(voice_routes.owner_service, "cached_agent", no_record)
+        monkeypatch.setattr(voice_routes.owner_service, "cached_owner", no_record)
+        monkeypatch.setattr(
+            voice_routes.owner_service, "resolve_credentials", stored_keys
+        )
+        monkeypatch.setattr(voice_routes.business, "create_call", new_call)
+        monkeypatch.setattr(calendar_service, "list_services", no_services)
+        for attr, value in (
+            ("LIVEKIT_URL", "ws://test"),
+            ("LIVEKIT_API_KEY", "k-test"),
+            ("LIVEKIT_API_SECRET", "s-test"),
+            ("INTERNAL_API_KEY", "internal-test"),
+        ):
+            monkeypatch.setattr(voice_routes.settings, attr, value)
+        return rooms
+
+    async def test_a_client_supplied_room_name_is_never_joined(self, minted_rooms):
+        response = await _mint_room(VoiceTokenRequest(room_name="victim-room"))
+        assert minted_rooms, "the endpoint must mint a LiveKit token"
+        assert minted_rooms[0] != "victim-room"
+        assert minted_rooms[0].startswith("voice-")
+        assert response.room_name == minted_rooms[0]
+
+    async def test_every_session_mints_a_fresh_room(self, minted_rooms):
+        first = await _mint_room(VoiceTokenRequest())
+        second = await _mint_room(VoiceTokenRequest())
+        assert first.room_name != second.room_name

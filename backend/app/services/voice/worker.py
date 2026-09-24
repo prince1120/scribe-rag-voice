@@ -15,8 +15,9 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Coroutine
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 from livekit.agents import JobContext, WorkerOptions, cli, llm
 
@@ -52,6 +53,19 @@ _registry = default_registry()
 # Strong references to per-call background tasks. asyncio only holds weak ones,
 # so a task that is not kept here can be collected while still running.
 ctx_tasks: set = set()
+
+
+def _track_task(coro: Coroutine[Any, Any, Any]) -> asyncio.Task:
+    """Fire-and-forget a task without dropping the only strong reference.
+
+    asyncio's event loop keeps only a weak ref to a Task, so the result of a
+    bare create_task() can be garbage-collected mid-flight. Every fire-and-
+    forget task in this module goes through here instead.
+    """
+    task = asyncio.create_task(coro)
+    ctx_tasks.add(task)
+    task.add_done_callback(ctx_tasks.discard)
+    return task
 
 
 @dataclass
@@ -307,23 +321,33 @@ async def entrypoint(ctx: JobContext) -> None:
     # caller for no reason — the session does not need the history to be built,
     # only to be started.
     history_task = asyncio.create_task(_seed_chat_context(params))
-    session = build_agent_session(
-        params.settings,
-        _registry,
-        vad=ctx.proc.userdata.get("vad"),
-        # Constructed per job rather than prewarmed: the plugin requires a
-        # running job context. It is only a handle onto the process-wide
-        # inference executor, and the model file itself is already on disk, so
-        # this is cheap — the timing log below is there to keep us honest
-        # about that.
-        turn_detection=(
-            load_turn_detector()
-            if params.settings.VOICE_SEMANTIC_TURN_DETECTION
-            else None
-        ),
-    )
-    # Before start(), so the very first turn of the call is measured too.
-    turn_metrics.attach(session, room_name=ctx.room.name, room=ctx.room)
+    try:
+        session = build_agent_session(
+            params.settings,
+            _registry,
+            vad=ctx.proc.userdata.get("vad"),
+            # Constructed per job rather than prewarmed: the plugin requires a
+            # running job context. It is only a handle onto the process-wide
+            # inference executor, and the model file itself is already on disk, so
+            # this is cheap — the timing log below is there to keep us honest
+            # about that.
+            turn_detection=(
+                load_turn_detector()
+                if params.settings.VOICE_SEMANTIC_TURN_DETECTION
+                else None
+            ),
+        )
+        # Before start(), so the very first turn of the call is measured too.
+        turn_metrics.attach(session, room_name=ctx.room.name, room=ctx.room)
+    except BaseException:
+        # If the session build raises, the history fetch above must not be
+        # left running unawaited — cancel and reap it before propagating.
+        history_task.cancel()
+        try:
+            await history_task
+        except asyncio.CancelledError:
+            pass
+        raise
     chat_ctx = await history_task
     logger.info("[CONNECT %s] session built at %.2fs", ctx.room.name, _elapsed())
 
@@ -404,7 +428,7 @@ async def entrypoint(ctx: JobContext) -> None:
             except Exception:
                 logger.debug("[LLM %s] Could not speak recovery notice", ctx.room.name, exc_info=True)
 
-        asyncio.create_task(_notify_caller())
+        _track_task(_notify_caller())
 
     _last_interim_text = ""
 
@@ -413,24 +437,39 @@ async def entrypoint(ctx: JobContext) -> None:
     # can flush and mute its audio hardware sink immediately (<30ms) without waiting
     # for WebRTC track buffer draining.
     def _send_interrupt_signal(*_):
-        nonlocal _last_interim_text
-        if getattr(session, "current_speech", None) is not None:
-            from app.services.voice.speech_clean import is_backchannel
-            if _last_interim_text and is_backchannel(_last_interim_text):
-                logger.info("[BACKCHANNEL %s] Suppressing interruption for backchannel '%s'", ctx.room.name, _last_interim_text)
-                return
+        if getattr(session, "current_speech", None) is None:
+            return
+        from app.services.voice.speech_clean import is_backchannel
+        # Only current-utterance interims gate this packet — see
+        # _on_user_started_speaking, which clears the held text the moment a
+        # new utterance begins so a stale "yeah" from the previous exchange
+        # can never swallow a real barge-in.
+        if _last_interim_text and is_backchannel(_last_interim_text):
+            logger.info("[BACKCHANNEL %s] Suppressing interruption for backchannel '%s'", ctx.room.name, _last_interim_text)
+            return
 
-            if ctx.room and hasattr(ctx.room, "local_participant") and ctx.room.local_participant:
-                try:
-                    asyncio.create_task(
-                        ctx.room.local_participant.publish_data(
-                            VoiceDataPacket.INTERRUPT,
-                            reliable=True,
-                        )
+        if ctx.room and hasattr(ctx.room, "local_participant") and ctx.room.local_participant:
+            try:
+                _track_task(
+                    ctx.room.local_participant.publish_data(
+                        VoiceDataPacket.INTERRUPT,
+                        reliable=True,
                     )
-                    logger.info("[INTERRUPT %s] Dispatched instant hardware audio-flush signal to client", ctx.room.name)
-                except Exception:
-                    pass
+                )
+                logger.info("[INTERRUPT %s] Dispatched instant hardware audio-flush signal to client", ctx.room.name)
+            except Exception:
+                pass
+
+    def _on_user_started_speaking(*_):
+        # A fresh utterance has no interims yet: whatever text is held belongs
+        # to the *previous* one. Clear it before sending the instant packet —
+        # gating on it here suppressed real interruptions whenever the last
+        # exchange ended with a backchannel ("yeah"/"okay"). Server-side
+        # adaptive interruption still handles false positives; for the rest of
+        # this utterance the gate above sees only its own interim text.
+        nonlocal _last_interim_text
+        _last_interim_text = ""
+        _send_interrupt_signal()
 
     # Dynamic Syntactic End-Of-Thought (EOT) Predictor:
     # Analyzes trailing tokens of user speech. If sentence has terminal punctuation (? . ! ।),
@@ -478,10 +517,14 @@ async def entrypoint(ctx: JobContext) -> None:
                     }
                 )
         except Exception:
-            pass
+            logger.debug(
+                "[TRANSCRIPT %s] Transcript handling failed",
+                ctx.room.name,
+                exc_info=True,
+            )
 
     try:
-        session.on("user_started_speaking", _send_interrupt_signal)
+        session.on("user_started_speaking", _on_user_started_speaking)
         session.on("interrupted", _send_interrupt_signal)
         session.on("user_input_transcribed", _on_transcribed)
     except Exception:
@@ -612,6 +655,7 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> Opti
     async def _watch() -> None:
         started = time.monotonic()
         nudged = False
+        ended_by_max_duration = False
         while True:
             await asyncio.sleep(0.5)
             if not _caller_still_present():
@@ -628,6 +672,7 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> Opti
                     "[LIMIT %s] ending call: reached the %ds ceiling",
                     room_name, max_seconds,
                 )
+                ended_by_max_duration = True
                 break
 
             if idle_seconds > 0 and now - last_activity >= idle_seconds:
@@ -687,11 +732,20 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> Opti
         if not _caller_still_present():
             return
 
+        # Branch by which ceiling fired: the idle closing line ("I didn't
+        # hear anything…") is a wrong answer to "why did my 15-minute call
+        # end?" when the max-duration ceiling is what actually tripped.
+        closing_text = (
+            "We've reached the maximum length for this call, so I'm going "
+            "to end it now. Goodbye."
+            if ended_by_max_duration
+            else "I didn't hear anything from your side, so I'm going to end the "
+            "call. Goodbye."
+        )
         try:
             # Spoken before hanging up
             speech_handle = await session.say(
-                "I didn't hear anything from your side, so I'm going to end the "
-                "call. Goodbye.",
+                closing_text,
                 allow_interruptions=False,
             )
             if speech_handle is not None:
@@ -723,11 +777,9 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> Opti
         except Exception:
             pass
 
-    task = asyncio.create_task(_watch())
-    # Held so the task is not garbage collected mid-call, and cancelled with the
-    # job rather than outliving it.
-    ctx_tasks.add(task)
-    task.add_done_callback(ctx_tasks.discard)
+    # Held via _track_task so the task is not garbage collected mid-call, and
+    # cancelled with the job rather than outliving it.
+    task = _track_task(_watch())
     return task
 
 

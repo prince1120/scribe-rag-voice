@@ -54,7 +54,7 @@
 .owner-shell .dash-session-row { transition:background .2s; }
 .owner-shell .dash-session-row:hover { background:var(--claude-surface-2); }
 @media (hover:hover) { .owner-shell .dash-stat-card:hover { transform:translateY(-3px); box-shadow:0 12px 28px -20px #5b513f66; } }
-@keyframes studio-enter { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+@keyframes studio-enter { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
 @keyframes studio-wave { from { transform:scaleY(.55); opacity:.45; } to { transform:scaleY(1); opacity:.85; } }
 @media (max-width:800px) {
   .signin-page .signin-main { grid-template-columns:minmax(0,1fr); gap:28px; padding:32px 20px 48px; max-width:500px; }
@@ -116,3 +116,26 @@
 .setup-card { border-radius:20px !important; transition:transform .22s,box-shadow .22s,border-color .22s !important; }
 .setup-card:hover { transform:translateY(-4px); box-shadow:0 20px 34px -28px rgba(45,38,28,.5); }
 @media (max-width:767px) { .directory-hero { padding-top:50px; }.directory-card { min-height:0; }.live-hero-card { padding-top:34px; }.voice-orb-wrapper { width:160px; height:160px; }.voice-orb-3d { width:112px; height:112px; } }
+
+/* Universal Modal & Screen Scroll Fix across the entire site */
+body:has(.fixed.inset-0:not(.pointer-events-none)) {
+  overflow: hidden !important;
+}
+
+.owner-content:has(.fixed.inset-0:not(.pointer-events-none)) {
+  overflow: hidden !important;
+}
+
+.fixed.inset-0.z-50,
+.fixed.inset-0.z-\[70\],
+.fixed.inset-0.z-\[100\],
+.directory-modal {
+  position: fixed !important;
+  inset: 0 !important;
+}
+
+/* Ensure any modal card fits within the viewport and scrolls internally */
+.fixed.inset-0 > div:not([class*="pointer-events-none"]):not([class*="backdrop"]) {
+  max-height: min(92vh, 92dvh);
+  overflow-y: auto;
+}

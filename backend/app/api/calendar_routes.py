@@ -1,6 +1,7 @@
 """Calendar: services, availability, bookings, reports, and notifications — all in-app.
 Owner sets slots; AI and owner manage live bookings with collision prevention.
 """
+import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Header
@@ -11,6 +12,7 @@ from app.api.contact_routes import _require_owner
 from app.services import calendar_service as cal
 from app.services.notification_service import list_notifications, mark_read
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -218,7 +220,8 @@ async def create_booking(body: BookingBody, identity: Identity = Depends(get_ide
             "status": rec.status,
         }
     except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        logger.warning("Booking creation rejected for tenant %s: %s", identity.tenant_id, e)
+        raise HTTPException(status_code=409, detail="That time slot could not be booked. Please choose another slot.")
 
 
 @router.put("/bookings/{booking_id}/reschedule")
@@ -242,7 +245,8 @@ async def reschedule_booking_endpoint(
             "status": rec.status,
         }
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.warning("Reschedule rejected for booking %s: %s", booking_id, e)
+        raise HTTPException(status_code=400, detail="That time slot could not be booked. Please choose another slot.")
 
 
 @router.post("/bookings/{booking_id}/cancel")
@@ -265,7 +269,8 @@ async def cancel_booking_endpoint(
             "status": rec.status,
         }
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        logger.warning("Cancel rejected for booking %s: %s", booking_id, e)
+        raise HTTPException(status_code=404, detail="Booking not found or could not be cancelled.")
 
 
 # ---- Reports & Analytics ---------------------------------------------------

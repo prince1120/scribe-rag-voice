@@ -10,7 +10,6 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Any, Optional
 import logging
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

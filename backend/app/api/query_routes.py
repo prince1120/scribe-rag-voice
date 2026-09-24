@@ -24,6 +24,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["query"])
 
 
+async def _require_owned_conversation(conversation_id: str, identity: Identity) -> None:
+    """404 unless the conversation is this caller's to read/write.
+
+    Tenant ownership comes from the DB row (authoritative; Redis/memory keys
+    are `conv:{id}` only). Pure contacts must also hold a linked contact
+    session — tenant ownership alone would let any invite link open every
+    thread in the workspace by guessing an id.
+    """
+    if not await routes.repositories.conversation_exists_for_tenant(
+        conversation_id, identity.tenant_id
+    ):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if identity.is_contact:
+        session = await routes.repositories.get_contact_session_by_conversation(
+            conversation_id, identity.contact_id or ""
+        )
+        if session is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+
 @router.post(
     "/query",
     response_model=QueryResponse,
@@ -59,8 +79,11 @@ async def query_documents(
         # Get conversation history if available
         conversation_history = None
         if body.conversation_id:
+            await _require_owned_conversation(body.conversation_id, identity)
             conversation_history = await run_in_threadpool(
-                routes.conversation_service.get_conversation_history, body.conversation_id
+                routes.conversation_service.get_conversation_history,
+                body.conversation_id,
+                tenant_id=tenant_id,
             )
 
         overrides = await routes._chat_overrides(
@@ -176,12 +199,14 @@ async def query_documents(
             await asyncio.gather(
                 run_in_threadpool(
                     routes.conversation_service.add_message,
-                    body.conversation_id, "user", body.query
+                    body.conversation_id, "user", body.query,
+                    tenant_id=tenant_id,
                 ),
                 run_in_threadpool(
                     routes.conversation_service.add_message,
                     body.conversation_id, "assistant", answer,
-                    citations=[c.dict() for c in citations]
+                    citations=[c.dict() for c in citations],
+                    tenant_id=tenant_id,
                 ),
                 routes.repositories.append_message(
                     body.conversation_id, tenant_id, "user", body.query
@@ -240,8 +265,11 @@ async def query_stream(
         _t = time.time()
         conversation_history = None
         if body.conversation_id:
+            await _require_owned_conversation(body.conversation_id, identity)
             conversation_history = await run_in_threadpool(
-                routes.conversation_service.get_conversation_history, body.conversation_id
+                routes.conversation_service.get_conversation_history,
+                body.conversation_id,
+                tenant_id=tenant_id,
             )
         logger.info(f"[timing] conversation history fetch: {(time.time()-_t)*1000:.0f}ms")
 
@@ -326,7 +354,8 @@ async def query_stream(
             loop.run_in_executor(
                 None,
                 lambda: routes.conversation_service.add_message(
-                    body.conversation_id, role, content, citations=msg_citations
+                    body.conversation_id, role, content, citations=msg_citations,
+                    tenant_id=tenant_id,
                 )
             )
             try:

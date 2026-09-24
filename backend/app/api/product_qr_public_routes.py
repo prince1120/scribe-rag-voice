@@ -18,7 +18,8 @@ from app.config import settings
 from app.rate_limit import client_ip, limiter
 from app.repositories import business, product_qr as repo
 from app.repositories import append_message
-from app.services import owner_service
+from app.services import owner_service, usage
+from app.services.guardrails import is_prompt_injection
 from app.services.notification_service import notify
 from app.services.product_safety import (
     ABSTENTION_MESSAGE,
@@ -38,6 +39,13 @@ from app.session import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Rejection copy for the injection gate — same voice as /query's gate, kept
+# product-flavored so a consumer is never shown an empty or error reply.
+INJECTION_REJECTION_MESSAGE = (
+    "I can help with this product's official support material, but I can't "
+    "follow instructions to ignore my guidelines. Try rephrasing your question."
+)
 
 def _check_feature_enabled() -> None:
     if not settings.PRODUCT_QR_ENABLED:
@@ -274,6 +282,7 @@ async def public_chat(
     
     Server strictly derives product and document scope from session.
     Safety guardrails immediately catch hazardous intents.
+    Prompt-injection attempts are rejected before retrieval, same as /query.
     Ungrounded queries return authoritative abstention.
     Citations never expose internal document IDs.
     """
@@ -292,7 +301,23 @@ async def public_chat(
             "is_safety_escalation": True,
         }
 
-    # 2. Document Scoping: strictly resolve assigned documents owned by the same tenant
+    # 2. Prompt-injection guardrail — the same detector /query uses, before
+    # retrieval or the LLM ever sees the text.
+    inj = is_prompt_injection(query_text)
+    if inj.is_injection:
+        logger.warning(
+            "blocked injection product_session=%s reason=%s",
+            sess.session_id,
+            inj.reason,
+        )
+        await repo.touch_visitor_session(sess.session_id)
+        return {
+            "reply": INJECTION_REJECTION_MESSAGE,
+            "citations": [],
+            "is_safety_escalation": True,
+        }
+
+    # 3. Document Scoping: strictly resolve assigned documents owned by the same tenant
     allowed_doc_ids = await repo.list_product_document_ids(
         product_id=product.product_id, tenant_id=sess.tenant_id
     )
@@ -309,7 +334,7 @@ async def public_chat(
             "is_safety_escalation": False,
         }
 
-    # 3. Vector Retrieval strictly scoped to product documents
+    # 4. Vector Retrieval strictly scoped to product documents
     try:
         query_embedding = await run_in_threadpool(
             embedding_service.encode_query, query_text
@@ -337,7 +362,7 @@ async def public_chat(
             "is_safety_escalation": False,
         }
 
-    # 4. LLM Generation
+    # 5. LLM Generation
     workspace = await owner_service.cached_owner(sess.tenant_id)
     credentials = await owner_service.resolve_credentials(
         sess.tenant_id, record=workspace
@@ -370,7 +395,7 @@ async def public_chat(
         logger.warning("Product QR generation failed (%s)", type(exc).__name__)
         answer = ABSTENTION_MESSAGE
 
-    # 5. Extract safe citations (internal document_id withheld)
+    # 6. Extract safe citations (internal document_id withheld)
     citations = [
         {
             "filename": r["payload"].get("filename", "Support Manual"),
@@ -437,6 +462,25 @@ async def public_voice_token(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Voice processing and transcript consent is required.",
+        )
+
+    # The daily ceiling, checked before a room is created rather than after
+    # (the same bound as voice_routes): a product QR call spends the owner's
+    # keys just as a contact call does, so it spends under the same budget.
+    spend = await usage.usage_today(sess.tenant_id)
+    if spend.over_budget:
+        logger.warning(
+            "Refusing product voice call for %s: daily budget reached (%d calls, %d min)",
+            sess.tenant_id,
+            spend.calls,
+            spend.minutes,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                "This assistant has reached its limit for today. "
+                "Please try again tomorrow."
+            ),
         )
 
     # Load the same saved voice choices that power the owner's assistant.  The
@@ -517,6 +561,13 @@ async def public_voice_token(
         meta["custom_llm_base_url"] = voice_channel["base_url"]
     elif credentials.get("custom_llm_base_url") and not voice_channel.get("model"):
         meta["custom_llm_base_url"] = credentials["custom_llm_base_url"]
+
+    # Cost ceilings for this call. Product QR callers are unauthenticated
+    # strangers spending the owner's keys — the same profile as a directory
+    # visitor — so they take the directory ceilings (0 = no ceiling, the one
+    # way every call site treats a disabled limit).
+    meta["max_call_seconds"] = settings.DIRECTORY_MAX_CALL_SECONDS
+    meta["idle_timeout_seconds"] = settings.DIRECTORY_IDLE_TIMEOUT_SECONDS
 
     call_id = await business.create_call(
         sess.tenant_id,

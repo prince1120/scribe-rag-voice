@@ -18,7 +18,16 @@ let alreadyOpen = false;
 
 export default function SessionGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const publicEntry = pathname === "/signin" || pathname === "/directory" || pathname?.startsWith("/t/") || pathname?.startsWith("/link/");
+  // Public entries: sign-in, directory, invite links, and the landing +
+  // product-QR pages external customers reach before any session exists —
+  // they must never hit the owner passcode when gate_enabled.
+  const publicEntry =
+    pathname === "/" ||
+    pathname === "/signin" ||
+    pathname === "/directory" ||
+    pathname?.startsWith("/t/") ||
+    pathname?.startsWith("/link/") ||
+    pathname?.startsWith("/p/");
   const [state, setState] = useState<GateState>("open");
   const [passcode, setPasscode] = useState("");
   const [error, setError] = useState<string | null>(null);

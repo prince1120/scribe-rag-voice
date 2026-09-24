@@ -219,6 +219,18 @@ async def get_or_create_conversation(conversation_id: str, tenant_id: str) -> No
             await session.commit()
 
 
+async def conversation_exists_for_tenant(conversation_id: str, tenant_id: str) -> bool:
+    """Whether a conversation row exists and is owned by this tenant."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(ConversationRecord.conversation_id).where(
+                ConversationRecord.conversation_id == conversation_id,
+                ConversationRecord.tenant_id == tenant_id,
+            )
+        )
+        return result.scalar_one_or_none() is not None
+
+
 async def append_message(
     conversation_id: str, tenant_id: str, role: str, content: str,
     citations: Optional[list] = None,
@@ -232,6 +244,9 @@ async def append_message(
             conversation = ConversationRecord(conversation_id=conversation_id, tenant_id=tenant_id)
             session.add(conversation)
             await session.flush()
+        elif conversation.tenant_id != tenant_id:
+            # Defense-in-depth: never write into another workspace's thread.
+            return
 
         session.add(MessageRecord(
             conversation_id=conversation_id, role=role, content=content, citations=citations,
@@ -280,6 +295,25 @@ async def get_contact_session(
                 ContactSessionRecord.contact_id == contact_id,
             )
         )
+        return result.scalar_one_or_none()
+
+
+async def get_contact_session_by_conversation(
+    conversation_id: str, contact_id: Optional[str] = None
+) -> Optional[ContactSessionRecord]:
+    """A session linked to a conversation, optionally scoped to one contact.
+
+    Pure contacts may only touch conversations they have an open session for —
+    tenant ownership alone would let any invite link open every thread in the
+    workspace by guessing a conversation id.
+    """
+    async with async_session() as session:
+        query = select(ContactSessionRecord).where(
+            ContactSessionRecord.conversation_id == conversation_id
+        )
+        if contact_id is not None:
+            query = query.where(ContactSessionRecord.contact_id == contact_id)
+        result = await session.execute(query)
         return result.scalar_one_or_none()
 
 

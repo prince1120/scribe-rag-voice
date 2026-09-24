@@ -1,5 +1,6 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Globe, Sparkles, Loader2, X, Upload, Check, Mic, MessageSquare, ArrowLeft, CheckCircle2, Edit3, Volume2 } from "lucide-react";
 import { ownerFetch } from "../lib/ownerFetch";
 
@@ -12,6 +13,7 @@ interface GeneratedPreview {
 }
 
 export function SiteAgentModal({ onCreated, onClose }: { onCreated: () => void; onClose: () => void }) {
+  const [mounted, setMounted] = useState(false);
   const [step, setStep] = useState<"input" | "preview">("input");
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
@@ -158,34 +160,56 @@ export function SiteAgentModal({ onCreated, onClose }: { onCreated: () => void; 
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+  useEffect(() => {
+    setMounted(true);
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = originalOverflow;
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  if (!mounted) return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-2.5 sm:p-4 overflow-y-auto">
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity" onClick={onClose} />
       <div
-        className="relative bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-2xl max-h-[92dvh] overflow-y-auto p-5 sm:p-6 flex flex-col gap-4 shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Create voice and chat assistant"
+        className="relative bg-white rounded-2xl w-full sm:max-w-2xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden my-auto"
         style={{ border: "1px solid var(--claude-border)" }}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between gap-2 pb-3 border-b" style={{ borderColor: "var(--claude-border)" }}>
-          <div className="flex items-center gap-2.5">
+        {/* Header — pinned, never scrolls away */}
+        <div className="flex items-center justify-between gap-2 px-4 sm:px-5 py-2.5 border-b shrink-0" style={{ borderColor: "var(--claude-border)" }}>
+          <div className="flex items-center gap-2">
             {step === "preview" && (
               <button
                 type="button"
                 onClick={() => setStep("input")}
-                className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 transition-colors"
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 transition-colors"
                 title="Back to settings"
               >
-                <ArrowLeft size={18} />
+                <ArrowLeft size={16} />
               </button>
             )}
-            <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "var(--claude-accent)", color: "#fff" }}>
-              <Sparkles size={16} />
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "var(--claude-accent)", color: "#fff" }}>
+              <Sparkles size={14} />
             </div>
             <div>
-              <h3 className="text-[16px] font-bold leading-tight" style={{ color: "var(--claude-text)" }}>
+              <h3 className="text-[14px] sm:text-[15px] font-bold leading-tight" style={{ color: "var(--claude-text)" }}>
                 {step === "input" ? "Create Voice & Chat Assistant" : "Review & Edit Generated Prompts"}
               </h3>
-              <p className="text-[11px] text-gray-500 mt-0.5">
+              <p className="text-[10px] sm:text-[11px] text-gray-500 line-clamp-1">
                 {step === "input"
                   ? "Crawl site or upload docs to generate voice-optimized conversational prompts"
                   : "Inspect, refine, or customize the generated spoken voice script & chat guidelines"}
@@ -194,39 +218,40 @@ export function SiteAgentModal({ onCreated, onClose }: { onCreated: () => void; 
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+            className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
           >
-            <X size={16} />
+            <X size={15} />
           </button>
         </div>
 
-        {/* STEP 1: INPUTS */}
+        {/* STEP 1: INPUTS — body scrolls internally if needed, CTA stays pinned in footer */}
         {step === "input" && (
-          <div className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-3">
+          <>
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-5 py-2.5 flex flex-col gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {/* Site URL card */}
               <div
-                className="rounded-xl border p-3 flex flex-col gap-2 transition-all"
+                className="rounded-xl border p-2.5 flex flex-col gap-1.5 transition-all"
                 style={{
                   borderColor: url.trim() ? "var(--claude-accent)" : "var(--claude-border)",
                   background: url.trim() ? "var(--claude-accent-soft)" : "var(--claude-bg)",
                 }}
               >
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <div
-                    className="w-7 h-7 rounded-lg flex items-center justify-center"
+                    className="w-6 h-6 rounded-md flex items-center justify-center shrink-0"
                     style={{
                       background: url.trim() ? "var(--claude-accent)" : "var(--claude-surface-2)",
                       color: url.trim() ? "#fff" : "var(--claude-muted)",
                     }}
                   >
-                    <Globe size={14} />
+                    <Globe size={13} />
                   </div>
-                  <span className="text-[11px] font-bold tracking-wide uppercase" style={{ color: url.trim() ? "var(--claude-accent)" : "var(--claude-muted)" }}>
+                  <span className="text-[10.5px] font-bold tracking-wide uppercase" style={{ color: url.trim() ? "var(--claude-accent)" : "var(--claude-muted)" }}>
                     Option 1 — Site URL
                   </span>
                   {url.trim() && (
-                    <span className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full text-white" style={{ background: "var(--claude-accent)" }}>
+                    <span className="ml-auto text-[9.5px] font-bold px-1.5 py-0.2 rounded-full text-white" style={{ background: "var(--claude-accent)" }}>
                       selected
                     </span>
                   )}
@@ -235,46 +260,37 @@ export function SiteAgentModal({ onCreated, onClose }: { onCreated: () => void; 
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   placeholder="https://yourbusiness.com"
-                  className="w-full rounded-lg border px-3 py-2.5 text-[13px] outline-none focus:ring-2 bg-white"
+                  className="w-full rounded-lg border px-2.5 py-1.5 text-[12px] sm:text-[13px] outline-none focus:ring-1 bg-white"
                   style={{ borderColor: url.trim() ? "var(--claude-accent)" : "var(--claude-border)" }}
                 />
-                <span className="text-[10px] text-gray-500">
-                  Crawls pages → extracts services, pricing, hours & FAQs into voice & chat prompts.
+                <span className="text-[10px] text-gray-500 leading-tight">
+                  Crawls pages → extracts services, pricing, hours & FAQs into prompts.
                 </span>
               </div>
 
-              {/* OR divider */}
-              <div className="flex items-center gap-3 py-0.5">
-                <div className="flex-1 h-px" style={{ background: "var(--claude-border)" }} />
-                <span className="text-[10px] font-bold tracking-widest uppercase px-2 py-0.5 rounded-full border bg-white text-gray-400">
-                  OR / AND
-                </span>
-                <div className="flex-1 h-px" style={{ background: "var(--claude-border)" }} />
-              </div>
-
-              {/* Upload docs card */}
+              {/* Upload docs card — side-by-side with URL on desktop; use either or both */}
               <div
-                className="rounded-xl border p-3 flex flex-col gap-2 transition-all"
+                className="rounded-xl border p-2.5 flex flex-col gap-1.5 transition-all"
                 style={{
                   borderColor: creationFiles.length > 0 ? "var(--claude-accent)" : "var(--claude-border)",
                   background: creationFiles.length > 0 ? "var(--claude-accent-soft)" : "var(--claude-bg)",
                 }}
               >
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <div
-                    className="w-7 h-7 rounded-lg flex items-center justify-center"
+                    className="w-6 h-6 rounded-md flex items-center justify-center shrink-0"
                     style={{
                       background: creationFiles.length > 0 ? "var(--claude-accent)" : "var(--claude-surface-2)",
                       color: creationFiles.length > 0 ? "#fff" : "var(--claude-muted)",
                     }}
                   >
-                    <Upload size={14} />
+                    <Upload size={13} />
                   </div>
-                  <span className="text-[11px] font-bold tracking-wide uppercase" style={{ color: creationFiles.length > 0 ? "var(--claude-accent)" : "var(--claude-muted)" }}>
+                  <span className="text-[10.5px] font-bold tracking-wide uppercase" style={{ color: creationFiles.length > 0 ? "var(--claude-accent)" : "var(--claude-muted)" }}>
                     Option 2 — Upload Documents (PDF / Word)
                   </span>
                   {creationFiles.length > 0 && (
-                    <span className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full text-white" style={{ background: "var(--claude-accent)" }}>
+                    <span className="ml-auto text-[9.5px] font-bold px-1.5 py-0.2 rounded-full text-white" style={{ background: "var(--claude-accent)" }}>
                       {creationFiles.length} selected
                     </span>
                   )}
@@ -290,33 +306,39 @@ export function SiteAgentModal({ onCreated, onClose }: { onCreated: () => void; 
                 <button
                   type="button"
                   onClick={() => creationInputRef.current?.click()}
-                  className="w-full h-9 rounded-lg border text-[12px] font-medium flex items-center justify-center gap-1.5 bg-white hover:bg-gray-50 transition-colors"
+                  className="w-full h-8 rounded-lg border text-[11px] sm:text-[12px] font-medium flex items-center justify-center gap-1.5 bg-white hover:bg-gray-50 transition-colors"
                   style={{ borderColor: "var(--claude-border-strong)" }}
                 >
-                  <Upload size={14} /> {creationFiles.length > 0 ? `${creationFiles.length} file(s) chosen — click to change` : "Choose PDF/Doc files (max 3)"}
+                  <Upload size={13} /> {creationFiles.length > 0 ? `${creationFiles.length} file(s) chosen — change` : "Choose PDF/Doc files (max 3)"}
                 </button>
-                {creationFiles.length > 0 && (
-                  <div className="text-[11px] truncate px-1 text-gray-700 font-medium">
+                {creationFiles.length > 0 ? (
+                  <div className="text-[10px] truncate px-1 text-gray-700 font-medium">
                     {creationFiles.map((f) => f.name).join(", ")}
                   </div>
+                ) : (
+                  <span className="text-[10px] text-gray-500 leading-tight">
+                    Upload price sheets, FAQs, menus or service catalog.
+                  </span>
                 )}
               </div>
             </div>
 
+            <p className="-mt-1 text-[10px] text-gray-400">Use a site URL, upload docs, or both — any source works alone.</p>
+
             {/* Channel Chooser */}
-            <div className="flex flex-col gap-1.5">
-              <span className="text-[11px] font-bold tracking-wide uppercase text-gray-500">Agent Type</span>
+            <div className="flex flex-col gap-1">
+              <span className="text-[10.5px] font-bold tracking-wide uppercase text-gray-500">Agent Type</span>
               <div className="grid grid-cols-3 gap-2">
                 {[
-                  { id: "both", label: "Voice + Chat", icon: <span className="flex items-center gap-1"><Mic size={12} /><MessageSquare size={12} /></span> },
-                  { id: "voice", label: "Voice Calls Only", icon: <Mic size={12} /> },
-                  { id: "chat", label: "Text Chat Only", icon: <MessageSquare size={12} /> },
+                  { id: "both", label: "Voice + Chat", icon: <span className="flex items-center gap-1"><Mic size={11} /><MessageSquare size={11} /></span> },
+                  { id: "voice", label: "Voice Calls Only", icon: <Mic size={11} /> },
+                  { id: "chat", label: "Text Chat Only", icon: <MessageSquare size={11} /> },
                 ].map((c) => (
                   <button
                     key={c.id}
                     type="button"
                     onClick={() => setChannel(c.id as any)}
-                    className="h-9 rounded-lg border text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-all"
+                    className="h-8 rounded-lg border text-[11px] sm:text-[12px] font-semibold flex items-center justify-center gap-1.5 transition-all"
                     style={{
                       borderColor: channel === c.id ? "var(--claude-accent)" : "var(--claude-border)",
                       background: channel === c.id ? "var(--claude-accent)" : "white",
@@ -330,48 +352,48 @@ export function SiteAgentModal({ onCreated, onClose }: { onCreated: () => void; 
             </div>
 
             {/* Questionnaire */}
-            <div className="grid gap-3">
-              <label className="flex flex-col gap-1">
-                <span className="text-[12px] font-semibold text-gray-700">What is the primary role of this assistant? *</span>
+            <div className="grid gap-2">
+              <label className="flex flex-col gap-0.5">
+                <span className="text-[11.5px] font-semibold text-gray-700">What is the primary role of this assistant? *</span>
                 <input
                   value={goal}
                   onChange={(e) => setGoal(e.target.value)}
                   placeholder="e.g. Answer customer FAQs, explain pricing, book appointments"
-                  className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none focus:ring-1 bg-white"
+                  className="w-full rounded-lg border px-2.5 py-1.5 text-[12px] sm:text-[13px] outline-none focus:ring-1 bg-white"
                   style={{ borderColor: "var(--claude-border)" }}
                 />
               </label>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <label className="flex flex-col gap-1">
-                  <span className="text-[12px] font-semibold text-gray-700">Assistant Name</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[11.5px] font-semibold text-gray-700">Assistant Name</span>
                   <input
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="e.g. Saarthi, Alex, Maya"
-                    className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none focus:ring-1 bg-white"
+                    className="w-full rounded-lg border px-2.5 py-1.5 text-[12px] sm:text-[13px] outline-none focus:ring-1 bg-white"
                     style={{ borderColor: "var(--claude-border)" }}
                   />
                 </label>
-                <label className="flex flex-col gap-1">
-                  <span className="text-[12px] font-semibold text-gray-700">Business Name</span>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[11.5px] font-semibold text-gray-700">Business Name</span>
                   <input
                     value={business}
                     onChange={(e) => setBusiness(e.target.value)}
                     placeholder="e.g. Saarvix, Apex Dental"
-                    className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none focus:ring-1 bg-white"
+                    className="w-full rounded-lg border px-2.5 py-1.5 text-[12px] sm:text-[13px] outline-none focus:ring-1 bg-white"
                     style={{ borderColor: "var(--claude-border)" }}
                   />
                 </label>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <label className="flex flex-col gap-1">
-                  <span className="text-[12px] font-semibold text-gray-700">Tone & Demeanor</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[11.5px] font-semibold text-gray-700">Tone & Demeanor</span>
                   <select
                     value={tone}
                     onChange={(e) => setTone(e.target.value)}
-                    className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none bg-white"
+                    className="w-full rounded-lg border px-2.5 py-1.5 text-[12px] sm:text-[13px] outline-none bg-white"
                     style={{ borderColor: "var(--claude-border)" }}
                   >
                     <option>warm & friendly</option>
@@ -381,12 +403,12 @@ export function SiteAgentModal({ onCreated, onClose }: { onCreated: () => void; 
                   </select>
                 </label>
 
-                <label className="flex flex-col gap-1">
-                  <span className="text-[12px] font-semibold text-gray-700">Language Preference</span>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[11.5px] font-semibold text-gray-700">Language Preference</span>
                   <select
                     value={language}
                     onChange={(e) => setLanguage(e.target.value)}
-                    className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none bg-white"
+                    className="w-full rounded-lg border px-2.5 py-1.5 text-[12px] sm:text-[13px] outline-none bg-white"
                     style={{ borderColor: "var(--claude-border)" }}
                   >
                     <option value="unknown">Auto-detect (Hinglish / Hindi / English)</option>
@@ -399,29 +421,29 @@ export function SiteAgentModal({ onCreated, onClose }: { onCreated: () => void; 
 
             {/* Progress indicator */}
             {generating && (
-              <div className="rounded-xl border p-3 flex flex-col gap-2 bg-indigo-50/50" style={{ borderColor: "var(--claude-border)" }}>
+              <div className="rounded-xl border p-2.5 flex flex-col gap-1.5 bg-indigo-50/50" style={{ borderColor: "var(--claude-border)" }}>
                 <div className="flex items-center gap-2 text-[12px] font-semibold" style={{ color: "var(--claude-accent)" }}>
-                  <Loader2 size={14} className="animate-spin" /> {progressMsgs[progress]}
+                  <Loader2 size={13} className="animate-spin" /> {progressMsgs[progress]}
                 </div>
                 <div className="flex flex-col gap-1">
                   {progressMsgs.map((m, i) => (
                     <div
                       key={i}
-                      className="flex items-center gap-1.5 text-[11px]"
+                      className="flex items-center gap-1.5 text-[10.5px]"
                       style={{
                         color: i === progress ? "var(--claude-text)" : i < progress ? "var(--color-success)" : "var(--claude-muted)",
                         fontWeight: i === progress ? 600 : 400,
                       }}
                     >
                       <span
-                        className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] border"
+                        className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-[9px] border"
                         style={{
                           background: i < progress ? "var(--color-success)" : i === progress ? "var(--claude-accent)" : "#f3f4f6",
                           color: i <= progress ? "#fff" : "#9ca3af",
                           borderColor: i < progress ? "var(--color-success)" : i === progress ? "var(--claude-accent)" : "#e5e7eb",
                         }}
                       >
-                        {i < progress ? <Check size={10} /> : i + 1}
+                        {i < progress ? <Check size={9} /> : i + 1}
                       </span>
                       {m}
                     </div>
@@ -437,28 +459,35 @@ export function SiteAgentModal({ onCreated, onClose }: { onCreated: () => void; 
             )}
 
             {error && (
-              <div className="rounded-lg px-3 py-2 text-[12px] leading-4 border bg-red-50 text-red-800 border-red-200">
+              <div className="rounded-lg px-2.5 py-1.5 text-[11.5px] leading-4 border bg-red-50 text-red-800 border-red-200">
                 <span className="font-semibold">Error:</span> {error}
               </div>
             )}
-
+          </div>
+          {/* Footer — pinned CTA, always reachable without scrolling to the bottom */}
+          <div className="shrink-0 px-4 sm:px-5 py-2.5 border-t bg-white" style={{ borderColor: "var(--claude-border)" }}>
             <button
               onClick={handleGeneratePreview}
               disabled={generating || uploadingCreation || !goal.trim()}
-              className="w-full h-[44px] rounded-xl text-[13px] font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all active:scale-[0.99] shadow-md hover:shadow-lg"
+              className="w-full h-[40px] rounded-xl text-[13px] font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all active:scale-[0.99] shadow-md hover:shadow-lg"
               style={{
                 background: generating ? "var(--claude-muted)" : "linear-gradient(135deg, #4854A8 0%, #6366F1 100%)",
               }}
             >
-              {generating ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+              {generating ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
               {generating ? progressMsgs[progress] : "Generate & Preview Prompts →"}
             </button>
+            {!goal.trim() && !generating && (
+              <p className="mt-1 text-center text-[10.5px] text-gray-400">Describe the assistant&apos;s role above to continue</p>
+            )}
           </div>
+          </>
         )}
 
-        {/* STEP 2: INTERACTIVE PREVIEW & EDIT */}
+        {/* STEP 2: INTERACTIVE PREVIEW & EDIT — body scrolls, actions pinned */}
         {step === "preview" && (
-          <div className="flex flex-col gap-4">
+          <>
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-5 py-3 flex flex-col gap-3">
             {/* Tab switch for voice vs chat */}
             <div className="flex items-center justify-between border-b pb-2" style={{ borderColor: "var(--claude-border)" }}>
               <div className="flex items-center gap-2">
@@ -512,7 +541,7 @@ export function SiteAgentModal({ onCreated, onClose }: { onCreated: () => void; 
                 <textarea
                   value={previewVoiceScript}
                   onChange={(e) => setPreviewVoiceScript(e.target.value)}
-                  rows={9}
+                  rows={6}
                   className="w-full rounded-xl border p-3 text-[12px] font-mono leading-relaxed outline-none focus:ring-2 focus:ring-indigo-300 bg-gray-50 text-gray-800"
                   style={{ borderColor: "var(--claude-border)" }}
                 />
@@ -537,7 +566,7 @@ export function SiteAgentModal({ onCreated, onClose }: { onCreated: () => void; 
                 <textarea
                   value={previewChatScript}
                   onChange={(e) => setPreviewChatScript(e.target.value)}
-                  rows={9}
+                  rows={6}
                   className="w-full rounded-xl border p-3 text-[12px] font-mono leading-relaxed outline-none focus:ring-2 focus:ring-indigo-300 bg-gray-50 text-gray-800"
                   style={{ borderColor: "var(--claude-border)" }}
                 />
@@ -561,33 +590,34 @@ export function SiteAgentModal({ onCreated, onClose }: { onCreated: () => void; 
                 <span className="font-semibold">Error:</span> {error}
               </div>
             )}
-
-            {/* Actions */}
-            <div className="flex items-center gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setStep("input")}
-                className="px-4 py-2.5 rounded-xl border text-[13px] font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
-                style={{ borderColor: "var(--claude-border)" }}
-              >
-                ← Back
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveAgent}
-                disabled={saving}
-                className="flex-1 h-[42px] rounded-xl text-[13px] font-bold text-white flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all active:scale-[0.99]"
-                style={{
-                  background: "linear-gradient(135deg, #10B981 0%, #059669 100%)",
-                }}
-              >
-                {saving ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-                {saving ? "Saving Assistant…" : "Confirm & Save Assistant ✓"}
-              </button>
-            </div>
           </div>
+          {/* Actions — pinned, always reachable */}
+          <div className="shrink-0 px-4 sm:px-5 py-3 border-t bg-white flex items-center gap-3" style={{ borderColor: "var(--claude-border)" }}>
+            <button
+              type="button"
+              onClick={() => setStep("input")}
+              className="px-4 py-2.5 rounded-xl border text-[13px] font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+              style={{ borderColor: "var(--claude-border)" }}
+            >
+              ← Back
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveAgent}
+              disabled={saving}
+              className="flex-1 h-[42px] rounded-xl text-[13px] font-bold text-white flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all active:scale-[0.99]"
+              style={{
+                background: "linear-gradient(135deg, #10B981 0%, #059669 100%)",
+              }}
+            >
+              {saving ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+              {saving ? "Saving Assistant…" : "Confirm & Save Assistant ✓"}
+            </button>
+          </div>
+          </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

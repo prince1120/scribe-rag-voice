@@ -36,6 +36,9 @@ import {
 
 import "../../styles/callscreen.css";
 import { extractApiErrorMessage, formatClientError } from "../../lib/apiErrors";
+import { useAudioDevices, AudioDeviceSelector } from "../../components/voice/AudioDeviceControls";
+import { useAudioDeviceSwitching } from "../../components/voice/useAudioDeviceSwitching";
+import { Headphones, Sliders } from "lucide-react";
 
 type Phase = "idle" | "connecting" | "live" | "ended" | "error";
 
@@ -71,6 +74,27 @@ export function CallScreen({
   const [quality, setQuality] = useState<ConnectionQuality>(
     ConnectionQuality.Excellent,
   );
+  const [showAudioSettings, setShowAudioSettings] = useState(false);
+  const [deviceNotice, setDeviceNotice] = useState<string | null>(null);
+
+  const roomRef = useRef<Room | null>(null);
+  const audioDevices = useAudioDevices(roomRef.current);
+
+  useAudioDeviceSwitching({
+    room: roomRef.current,
+    enabled: phase === "live",
+    onSwitch: (label, reason) => {
+      setDeviceNotice(
+        reason === "connected" ? `Switched to ${label}` : `${label} disconnected — using default`
+      );
+    },
+  });
+
+  useEffect(() => {
+    if (!deviceNotice) return;
+    const timer = setTimeout(() => setDeviceNotice(null), 4000);
+    return () => clearTimeout(timer);
+  }, [deviceNotice]);
 
   // Live transcript state
   const [transcripts, setTranscripts] = useState<TranscriptMessage[]>([]);
@@ -83,7 +107,6 @@ export function CallScreen({
 
   const transcriptListRef = useRef<HTMLDivElement>(null);
 
-  const roomRef = useRef<Room | null>(null);
   const orbRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef(0);
   const analyserRef = useRef<ReturnType<typeof createAudioAnalyser> | null>(null);
@@ -163,18 +186,42 @@ export function CallScreen({
     if (blob.size < 60000) navigator.sendBeacon?.("/api/v1/voice/record_session", blob);
   }, []);
 
-  const teardown = useCallback(() => {
+  const teardown = useCallback(async () => {
     cancelAnimationFrame(rafRef.current);
     analyserRef.current = null;
-    audioElsRef.current.forEach((el) => el.remove());
+    audioElsRef.current.forEach((el) => {
+      try {
+        el.pause();
+        el.srcObject = null;
+        el.remove();
+      } catch {}
+    });
     audioElsRef.current = [];
-    roomRef.current?.disconnect();
+    const room = roomRef.current;
     roomRef.current = null;
+    if (room) {
+      try {
+        await room.localParticipant?.setMicrophoneEnabled(false);
+        room.localParticipant?.audioTrackPublications.forEach((pub) => {
+          try { pub.track?.stop(); } catch {}
+        });
+        await room.disconnect(true);
+      } catch {}
+    }
   }, []);
 
-  useEffect(() => teardown, [teardown]);
+  useEffect(() => {
+    return () => {
+      void teardown();
+    };
+  }, [teardown]);
 
   const start = useCallback(async () => {
+    if (phase === "connecting") return;
+    if (roomRef.current) {
+      await teardown();
+      await new Promise((r) => setTimeout(r, 250));
+    }
     callIdRef.current = null;
     persistedRef.current = null;
     setSaveState("idle");
@@ -224,6 +271,9 @@ export function CallScreen({
         if (track.kind !== Track.Kind.Audio) return;
         const element = track.attach() as HTMLAudioElement;
         element.autoplay = true;
+        if (audioDevices.activeOutputId && audioDevices.activeOutputId !== "default" && "setSinkId" in element) {
+          (element as any).setSinkId(audioDevices.activeOutputId).catch(() => {});
+        }
         document.body.appendChild(element);
         audioElsRef.current.push(element);
 
@@ -287,6 +337,15 @@ export function CallScreen({
                 el.currentTime = 0;
               } catch {}
             });
+            // livekit-client only play()s on attach, so a paused element
+            // would stay silent for the rest of the call. Resume shortly
+            // after the ~50ms cut; skip anything already playing or torn
+            // down so stacked interrupts can't storm play().
+            setTimeout(() => {
+              audioElsRef.current.forEach((el) => {
+                if (el.paused && el.isConnected) el.play().catch(() => {});
+              });
+            }, 50);
             setAgentSpeaking(false);
             setWaitingForAgent(false);
             return;
@@ -349,7 +408,17 @@ export function CallScreen({
       });
 
       await room.connect(url, token);
-      await room.localParticipant.setMicrophoneEnabled(true, MIC_CAPTURE);
+      const micOptions = {
+        ...MIC_CAPTURE,
+        ...(audioDevices.activeInputId && audioDevices.activeInputId !== "default"
+          ? { deviceId: { exact: audioDevices.activeInputId } }
+          : {}),
+      };
+      await room.localParticipant.setMicrophoneEnabled(true, micOptions);
+
+      if (audioDevices.activeOutputId && audioDevices.activeOutputId !== "default") {
+        await room.switchActiveDevice("audiooutput", audioDevices.activeOutputId).catch(() => {});
+      }
       setPhase("live");
 
       // Audio analysis visualizer tick
@@ -520,6 +589,11 @@ export function CallScreen({
               Connect your microphone to speak naturally in real time with the assistant.
             </p>
 
+            {/* Audio Device Selector: Mic & Headphones / Speakers + Live Volume Bar */}
+            <div className="w-full max-w-xs text-left">
+              <AudioDeviceSelector state={audioDevices} showTitle={false} compact={true} />
+            </div>
+
             {error && (
               <div className="w-full max-w-xs space-y-2">
                 <p className="text-xs text-rose-700 bg-rose-50 p-2.5 rounded-xl border border-rose-200 m-0 w-full text-center">
@@ -565,6 +639,13 @@ export function CallScreen({
                 <span>{status}</span>
               </div>
 
+              {deviceNotice && (
+                <div className="inline-flex items-center gap-1.5 py-1 px-3 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-semibold animate-pulse shadow-xs">
+                  <Headphones size={13} />
+                  <span>{deviceNotice}</span>
+                </div>
+              )}
+
               {liveBooking && (
                 <div className={`flex items-center gap-2 py-1.5 px-3.5 rounded-xl text-xs font-bold shadow-xs ${liveBooking.type === "booking_failed" ? "bg-rose-50 border border-rose-300 text-rose-800" : liveBooking.type === "booking_pending" ? "bg-amber-50 border border-amber-300 text-amber-800" : "bg-emerald-50 border border-emerald-300 text-emerald-800"}`}>
                   <span>✓</span>
@@ -600,6 +681,25 @@ export function CallScreen({
 
               {/* Symmetrical Control Actions (Directly centered inside the card!) */}
               <div className="live-card-controls-row">
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowAudioSettings((v) => !v)}
+                    className={`callscreen-pill-btn ${showAudioSettings ? "is-chat-active" : ""}`}
+                    title="Microphone & Headphone Settings"
+                    aria-label="Audio Devices"
+                  >
+                    <Headphones size={16} />
+                    <span>Audio</span>
+                  </button>
+
+                  {showAudioSettings && (
+                    <div className="absolute bottom-12 left-1/2 -translate-x-1/2 z-40 w-72 shadow-2xl animate-in fade-in slide-in-from-bottom-2 text-left">
+                      <AudioDeviceSelector state={audioDevices} showTitle={true} compact={false} />
+                    </div>
+                  )}
+                </div>
+
                 <button
                   type="button"
                   onClick={toggleMute}

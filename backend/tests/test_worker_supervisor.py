@@ -31,8 +31,14 @@ from app.services.voice import worker_supervisor as sup
 @pytest.fixture(autouse=True)
 def reset_supervisor_state(monkeypatch):
     """The module keeps process-wide state; each test needs its own."""
-    monkeypatch.setattr(sup, "_last_spawn_attempt", 0.0)
-    monkeypatch.setattr(sup, "_last_seen_alive", 0.0)
+    from app.config import settings
+
+    # Spawn path under test; dedicated mode must not leak in from env.
+    monkeypatch.setattr(settings, "VOICE_WORKER_AUTO_START", True)
+    monkeypatch.setattr(sup, "_last_spawn_attempt", -1e12)
+    # Cold cache: 0.0 would mean "alive at t=0" and trip the 30s trust
+    # window whenever time.monotonic() is still small.
+    monkeypatch.setattr(sup, "_last_seen_alive", -1e12)
     monkeypatch.setattr(sup, "_spawned", None)
     yield
 

@@ -9,7 +9,7 @@ export default function AgentsGalleryPage() {
   const ws = useWorkspace();
   return (
     <OwnerShell businessName={ws.businessName}>
-      <main className="owner-business-page agents-page flex flex-col gap-5 max-w-4xl w-full pb-20 px-3 sm:px-0">
+      <main className="owner-business-page agents-page flex flex-col gap-4 max-w-4xl w-full pb-12 px-3 sm:px-0">
         {/* Header */}
         <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4" style={{ borderColor: "var(--claude-border)" }}>
           <div>
@@ -21,7 +21,7 @@ export default function AgentsGalleryPage() {
             </p>
           </div>
           <Link
-            href="/agent"
+            href="/agent?create=1"
             className="owner-primary-action px-4 py-2 rounded-xl text-xs font-bold text-white flex items-center gap-1.5 self-start sm:self-auto"
           >
             <Plus size={14} /> Create New Agent

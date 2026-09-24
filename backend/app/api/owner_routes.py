@@ -528,7 +528,8 @@ async def generate_agent_preview(request: Request, body: SiteAgentRequest, ident
     try:
         pages, _, _ = await _collect_pages_for_agent(identity, url)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e)[:400])
+        logger.warning("generate-preview page collection failed: %s", e)
+        raise HTTPException(status_code=400, detail="Could not read content from that source. Check the link or upload a PDF instead.")
 
     if url and len(pages) == 0:
         raise HTTPException(status_code=400, detail="No readable content found at that URL — check the link or upload a PDF instead.")
@@ -565,7 +566,8 @@ async def create_from_site(request: Request, body: SiteAgentRequest, identity: I
     try:
         pages, source, source_url = await _collect_pages_for_agent(identity, url)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e)[:400])
+        logger.warning("from-site page collection failed: %s", e)
+        raise HTTPException(status_code=400, detail="Could not read content from that source. Check the link or upload a PDF instead.")
     if url and len(pages) == 0:
         raise HTTPException(status_code=400, detail="No readable content found at that URL — check the link or upload a PDF instead.")
 

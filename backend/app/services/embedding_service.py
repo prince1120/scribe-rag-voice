@@ -3,7 +3,6 @@ import numpy as np
 from typing import List, Union
 import logging
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

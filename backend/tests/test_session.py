@@ -176,6 +176,37 @@ class TestRateLimitKey:
         req = self._request(cookies={session.COOKIE_NAME: issue("owner")})
         assert rate_limit_key(req) == "owner"
 
+    def test_product_session_gets_its_own_bucket(self):
+        token = session.issue_product_session("sess-qr-1", "tenant-1", "prod-1")
+        req = self._request(cookies={session.PRODUCT_COOKIE_NAME: token})
+        assert rate_limit_key(req) == "product:sess-qr-1"
+
+    def test_product_visitors_do_not_share_one_bucket(self):
+        """Product traffic used to fall through to the proxy address, so
+        every scanner shared a single global allowance with every other
+        unauthenticated caller — including login itself."""
+        a = rate_limit_key(
+            self._request(
+                cookies={
+                    session.PRODUCT_COOKIE_NAME: session.issue_product_session(
+                        "sess-a", "tenant-1", "prod-1"
+                    )
+                }
+            )
+        )
+        b = rate_limit_key(
+            self._request(
+                cookies={
+                    session.PRODUCT_COOKIE_NAME: session.issue_product_session(
+                        "sess-b", "tenant-1", "prod-1"
+                    )
+                }
+            )
+        )
+        assert a.startswith("product:")
+        assert a != b
+        assert a != rate_limit_key(self._request(ip="10.0.0.1"))
+
     def test_demo_visitors_get_separate_buckets(self):
         a = rate_limit_key(self._request(headers={"X-User-Groq-Key": "key-a"}))
         b = rate_limit_key(self._request(headers={"X-User-Groq-Key": "key-b"}))

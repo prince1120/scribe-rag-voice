@@ -223,6 +223,16 @@ async def test_product_dispatch_metadata_has_no_credentials():
         product_qr_public_routes.settings, "LIVEKIT_API_SECRET", "s"
     ), patch.object(
         product_qr_public_routes.settings, "PRODUCT_QR_ENABLED", True
+    ), patch.object(
+        product_qr_public_routes.settings, "INTERNAL_API_KEY", "test-internal-key"
+    ), patch.object(
+        product_qr_public_routes.usage,
+        "usage_today",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                calls=0, minutes=0, over_budget=False
+            )
+        ),
     ):
         # Dependency override must be a plain callable returning the value.
         app.dependency_overrides[
@@ -233,7 +243,8 @@ async def test_product_dispatch_metadata_has_no_credentials():
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 resp = await client.post(
-                    "/api/v1/product-qr/public/voice/token", json={}
+                    "/api/v1/product-qr/public/voice/token",
+                    json={"consent_accepted": True},
                 )
         finally:
             app.dependency_overrides.clear()
@@ -490,7 +501,8 @@ async def test_product_token_503_when_credentials_unresolvable(monkeypatch):
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 resp = await client.post(
-                    "/api/v1/product-qr/public/voice/token", json={}
+                    "/api/v1/product-qr/public/voice/token",
+                    json={"consent_accepted": True},
                 )
         finally:
             app.dependency_overrides.clear()

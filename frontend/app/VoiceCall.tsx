@@ -260,8 +260,12 @@ export function VoiceCallModal({
       } catch {}
     });
     agentAudioElsRef.current = [];
-    roomRef.current?.disconnect();
+    // Null the ref before disconnect so the Disconnected handler (which
+    // checks roomRef to tell intentional hangup from a real failure) never
+    // re-enters teardown or surfaces a spurious "ended unexpectedly".
+    const room = roomRef.current;
     roomRef.current = null;
+    room?.disconnect();
     setActiveRoom(null);
     setDeviceNotice(null);
     setActiveSpeaker(null);
@@ -527,6 +531,15 @@ export function VoiceCallModal({
                 el.currentTime = 0;
               } catch {}
             });
+            // livekit-client only play()s on attach, so a paused element
+            // would stay silent for the rest of the call. Resume shortly
+            // after the ~50ms cut; skip anything already playing or torn
+            // down so stacked interrupts can't storm play().
+            setTimeout(() => {
+              agentAudioElsRef.current.forEach((el) => {
+                if (el.paused && el.isConnected) el.play().catch(() => {});
+              });
+            }, 50);
             setActiveSpeaker("user");
             setAgentState("listening");
             return;

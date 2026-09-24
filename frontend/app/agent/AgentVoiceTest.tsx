@@ -49,8 +49,11 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
     // device's in-call indicator lit after the call has visibly ended.
     audioElsRef.current.forEach((el) => el.remove());
     audioElsRef.current = [];
-    roomRef.current?.disconnect();
+    // Null before disconnect so the Disconnected handler's teardown call
+    // can't re-enter a second disconnect on an intentional hangup.
+    const room = roomRef.current;
     roomRef.current = null;
+    room?.disconnect();
     setActiveRoom(null);
   }, []);
 
@@ -124,6 +127,15 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
                 el.currentTime = 0;
               } catch {}
             });
+            // livekit-client only play()s on attach, so a paused element
+            // would stay silent for the rest of the call. Resume shortly
+            // after the ~50ms cut; skip anything already playing or torn
+            // down so stacked interrupts can't storm play().
+            setTimeout(() => {
+              audioElsRef.current.forEach((el) => {
+                if (el.paused && el.isConnected) el.play().catch(() => {});
+              });
+            }, 50);
             setSpeaking(false);
           }
         } catch {}

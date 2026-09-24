@@ -591,7 +591,11 @@ async def create_voice_token(
                 ),
             )
 
-    room_name = body.room_name or f"voice-{uuid4().hex[:12]}"
+    # Always server-generated. Trusting body.room_name would let any caller
+    # mint a token into another call's room — the schema keeps the field so
+    # older request bodies still validate, but it is never used to join here.
+    # Every mint (including reconnects) gets a fresh room.
+    room_name = f"voice-{uuid4().hex[:12]}"
     participant_identity = f"user-{uuid4().hex[:8]}"
 
     tenant_id = identity.tenant_id

@@ -1,4 +1,19 @@
-/* Studio — voice + text unified, phone-responsive */
+/* Studio — voice + text unified, phone-responsive. Above-the-fold: sticky compact
+   header + slim creation strip keep Identity + channel tabs visible without scrolling. */
+html { scroll-behavior: smooth; }
+.owner-content main:focus-visible,
+.owner-content button:focus-visible,
+.owner-content input:focus-visible,
+.owner-content textarea:focus-visible,
+.owner-content select:focus-visible,
+.owner-content a:focus-visible {
+  outline: 2px solid var(--claude-accent);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .studio-page-enter > main > * { animation: none !important; transition: none !important; }
+}
 @media (max-width: 640px) {
   .owner-content { padding: 12px !important; }
   .owner-content main[style*="max-width: 56rem"] { padding-bottom: 88px !important; }

@@ -4,6 +4,7 @@
 // document knowledge integration, and real-time live deployment controls.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   Bot,
@@ -147,10 +148,20 @@ export default function AgentPage() {
   const [previewing, setPreviewing] = useState("");
   const [error, setError] = useState("");
   const [showSiteModal, setShowSiteModal] = useState(false);
+  const [showQuickSetup, setShowQuickSetup] = useState(false);
   const [channelToDisable, setChannelToDisable] = useState<"voice" | "chat" | null>(null);
   const [toast, setToast] = useState<{ msg: string; type: "success" | "info" | "error" } | null>(null);
   const [initialConfig, setInitialConfig] = useState<AgentConfig | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get("create") === "1" || p.get("new") === "1" || p.get("site") === "1") {
+        setShowSiteModal(true);
+      }
+    }
+  }, []);
 
   // Custom provider states
   const [isVoiceCustom, setIsVoiceCustom] = useState(false);
@@ -535,16 +546,16 @@ export default function AgentPage() {
         {/* Header & Live Status Banner */}
         <header style={S.header}>
           <div style={{ minWidth: 0, flex: 1 }}>
-            <h1 style={{ ...S.title, display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ display: "inline-flex", width: 28, height: 28, borderRadius: 8, background: "var(--claude-accent)", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 14 }}>◐</span>
+            <h1 style={{ ...S.title, display: "flex", alignItems: "center", gap: 7 }}>
+              <span style={{ display: "inline-flex", width: 24, height: 24, borderRadius: 7, background: "var(--claude-accent)", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 12 }}>◐</span>
               Agent Creation Studio
               {hasUnsaved && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 999, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}>Unsaved changes</span>}
               {saved && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 999, background: "var(--color-success-soft)", color: "var(--color-success)" }}>Saved ✓ {lastSavedAt ? `· ${lastSavedAt}` : ""}</span>}
             </h1>
-            <p style={{ ...S.subtitle, marginTop: 4 }}>
-              Create voice OR chat separately. Prompt-first (fast), fallback RAG optional. Every change shows save/deploy status clearly.
+            <p style={S.subtitle}>
+              Voice or chat, prompt-first. RAG optional fallback.
             </p>
-            <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
               <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 999, background: channels?.voice ? "var(--color-success-soft)" : "var(--claude-surface-2)", color: channels?.voice ? "var(--color-success)" : "var(--claude-muted)", border: `1px solid ${channels?.voice ? "var(--color-success)" : "var(--claude-border)"}` }}>
                 <Mic size={10} style={{ display: "inline", marginRight: 4 }} />Voice: {channels?.voice ? (isLive ? "Live ✓" : "Ready") : ((config.voice_script||"").trim() ? "Draft" : "Not created")}
               </span>
@@ -611,95 +622,94 @@ export default function AgentPage() {
 
         {error && <div style={S.errorBanner}>{error}</div>}
 
-        {/* ── New: Site or Docs → Questionnaire → Agent (one live, gallery separate) ─ */}
-        <div style={{ ...S.card, background: "var(--claude-surface)", borderColor: "var(--claude-border)" }}>
-          <div style={S.cardHeader}>
-            <div style={{ ...S.iconWrap, background: "var(--claude-accent-soft)", color: "var(--claude-accent)" }}><Sparkles size={18} /></div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <h2 style={S.cardTitle}>Create from site or PDF — detailed prompt</h2>
-              <p style={S.cardSub}>Site or PDF → detailed voice (3500) + chat prompts with all important info (prompt-first, not verbatim dump) → one fallback knowledge doc per agent (RAG OFF by default, auto-deleted when agent deleted). Test voice+text then deploy. My Agents →</p>
+        {/* ── Slim creation strip: site import + templates, collapsible so the form sits above the fold ─ */}
+        <div style={{ ...S.card, background: "var(--claude-surface)", borderColor: "var(--claude-border)", gap: 0, padding: "10px 14px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ ...S.iconWrap, width: 30, height: 30, background: "var(--claude-accent-soft)", color: "var(--claude-accent)" }}><Sparkles size={15} /></div>
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "var(--claude-text)" }}>Create from site or PDF</span>
+              <span style={{ fontSize: 11, color: "var(--claude-muted)", marginLeft: 8 }}>Auto-builds voice + chat prompts. RAG off by default.</span>
             </div>
-            <button type="button" onClick={() => setShowSiteModal(true)} className="hidden sm:inline-flex h-9 px-4 rounded-lg text-[12px] font-bold gap-1.5 items-center" style={{ background: "var(--claude-accent)", color: "#fff" }}><Globe size={14} /> New from site</button>
+            <button type="button" onClick={() => setShowSiteModal(true)} className="inline-flex h-8 px-3.5 rounded-lg text-[12px] font-bold gap-1.5 items-center shrink-0" style={{ background: "var(--claude-accent)", color: "#fff" }}><Globe size={13} /> New from site</button>
+            <button
+              type="button"
+              onClick={() => setShowQuickSetup((v) => !v)}
+              aria-expanded={showQuickSetup}
+              className="ds-pressable inline-flex h-8 px-3 rounded-lg text-[12px] font-semibold items-center shrink-0"
+              style={{ border: "1px solid var(--claude-border-strong)", background: "var(--claude-surface-2)", color: "var(--claude-text)" }}
+            >
+              {showQuickSetup ? "Hide templates ▴" : "Templates ▾"}
+            </button>
+            <a href="/agents" className="inline-flex items-center gap-1 text-[11px] font-semibold underline shrink-0" style={{ color: "var(--claude-accent)" }}>My Agents →</a>
           </div>
-          <button type="button" onClick={() => setShowSiteModal(true)} className="sm:hidden w-full h-10 rounded-xl text-[13px] font-bold flex items-center justify-center gap-2" style={{ background: "var(--claude-accent)", color: "#fff" }}><Globe size={16} /> New assistant from site or docs</button>
-          <a href="/agents" className="mt-3 inline-flex items-center gap-1.5 text-[12px] font-semibold underline" style={{ color: "var(--claude-accent)" }}>View all agents gallery → My Agents</a>
-        </div>
-
-        {/* ── Guided Quick Setup — make high-class agent in 30s (Phase 3b) ─ */}
-        <div style={{ ...S.card, borderColor: "var(--claude-border)", background: "var(--claude-surface)" }}>
-          <div style={S.cardHeader}>
-            <div style={{ ...S.iconWrap, background: "var(--claude-accent-soft)", color: "var(--claude-accent)" }}>
-              <Sparkles size={18} />
+          {showQuickSetup && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--claude-surface-2)" }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {[
+                  { id: "dental", label: "Dental" },
+                  { id: "salon", label: "Salon" },
+                  { id: "clinic", label: "Clinic" },
+                  { id: "coaching", label: "Coaching" },
+                  { id: "retail", label: "Retail" },
+                  { id: "restaurant", label: "Restaurant" },
+                  { id: "real_estate", label: "Real estate" },
+                ].map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => {
+                      const t = templateForCategory(c.id);
+                      if (!t) return;
+                      update({ greeting: t.greeting });
+                      update({ voice_script: t.voice_script });
+                      update({ chat_script: t.chat_script });
+                      if (t.language) update({ language: t.language });
+                      if (t.voice_id) update({ voice_id: t.voice_id });
+                    }}
+                    className="ds-pressable"
+                    style={{
+                      padding: "5px 11px",
+                      borderRadius: 9999,
+                      border: "1px solid var(--claude-border)",
+                      background: "var(--claude-bg)",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                {[
+                  { id: "warm", label: "Warm & friendly", temp: 0.3 },
+                  { id: "pro", label: "Professional", temp: 0.2 },
+                  { id: "concise", label: "Concise", temp: 0.15 },
+                ].map((tone) => (
+                  <button
+                    key={tone.id}
+                    type="button"
+                    onClick={() => update({ voice_temperature: tone.temp, chat_temperature: Math.min(0.5, tone.temp + 0.15) })}
+                    className="ds-pressable"
+                    style={{
+                      padding: "5px 11px",
+                      borderRadius: 8,
+                      border: "1px solid var(--claude-border-strong)",
+                      background: "var(--claude-surface-2)",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                    title={`Sets voice temp ${tone.temp} — saves tokens & sounds human`}
+                  >
+                    {tone.label}
+                  </button>
+                ))}
+                <span style={{ fontSize: 11, color: "var(--claude-muted)" }}>Low thinking, saves tokens, stays human</span>
+              </div>
             </div>
-            <div>
-              <h2 style={S.cardTitle}>Quick setup — 30 seconds</h2>
-              <p style={S.cardSub}>Pick a template and tone → we compile a human-sounding, token-efficient prompt. Edit below if you want.</p>
-            </div>
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
-            {[
-              { id: "dental", label: "Dental" },
-              { id: "salon", label: "Salon" },
-              { id: "clinic", label: "Clinic" },
-              { id: "coaching", label: "Coaching" },
-              { id: "retail", label: "Retail" },
-              { id: "restaurant", label: "Restaurant" },
-              { id: "real_estate", label: "Real estate" },
-            ].map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => {
-                  const t = templateForCategory(c.id);
-                  if (!t) return;
-                  update({ greeting: t.greeting });
-                  update({ voice_script: t.voice_script });
-                  update({ chat_script: t.chat_script });
-                  if (t.language) update({ language: t.language });
-                  if (t.voice_id) update({ voice_id: t.voice_id });
-                }}
-                className="ds-pressable"
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 9999,
-                  border: "1px solid var(--claude-border)",
-                  background: "var(--claude-bg)",
-                  fontSize: 12,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                }}
-              >
-                {c.label}
-              </button>
-            ))}
-          </div>
-          <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-            {[
-              { id: "warm", label: "Warm & friendly", temp: 0.3 },
-              { id: "pro", label: "Professional", temp: 0.2 },
-              { id: "concise", label: "Concise", temp: 0.15 },
-            ].map((tone) => (
-              <button
-                key={tone.id}
-                type="button"
-                onClick={() => update({ voice_temperature: tone.temp, chat_temperature: Math.min(0.5, tone.temp + 0.15) })}
-                className="ds-pressable"
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 8,
-                  border: "1px solid var(--claude-border-strong)",
-                  background: "var(--claude-surface-2)",
-                  fontSize: 11,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                }}
-                title={`Sets voice temp ${tone.temp} — saves tokens & sounds human`}
-              >
-                {tone.label}
-              </button>
-            ))}
-            <span style={{ fontSize: 11, color: "var(--claude-muted)", alignSelf: "center" }}>→ Low thinking, saves tokens, stays human</span>
-          </div>
+          )}
         </div>
 
         {/* ── Card 1: Identity & Name ─────────────────────────── */}
@@ -1294,7 +1304,7 @@ color: "var(--claude-text-2)",
         {showSiteModal && <SiteAgentModal onClose={() => setShowSiteModal(false)} onCreated={async () => { setShowSiteModal(false); showToast("Agent created — prompt + fallback doc ready ✓", "success"); await refreshAgent(); }} />}
         
         {/* Styled Channel Disable Confirmation Modal */}
-        {channelToDisable && (
+        {channelToDisable && typeof document !== "undefined" && createPortal(
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in duration-150">
             <div className="bg-white rounded-2xl w-full max-w-sm p-6 border border-gray-200 shadow-2xl flex flex-col gap-4">
               <div className="flex items-center gap-3">
@@ -1341,7 +1351,8 @@ color: "var(--claude-text-2)",
                 </button>
               </div>
             </div>
-          </div>
+          </div>,
+          document.body
         )}
       </main>
     </OwnerShell>
@@ -1354,10 +1365,10 @@ const S: Record<string, React.CSSProperties> = {
   page: {
     display: "flex",
     flexDirection: "column",
-    gap: 16,
+    gap: 12,
     maxWidth: "56rem",
     width: "100%",
-    padding: "0 0 80px",
+    padding: "0 0 48px",
     boxSizing: "border-box",
   },
   header: {
@@ -1365,29 +1376,35 @@ const S: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     flexWrap: "wrap",
-    gap: 14,
+    gap: 10,
+    padding: "2px 0 12px",
+    borderBottom: "1px solid var(--claude-border)",
   },
   title: {
-    fontSize: 24,
+    fontSize: 19,
     fontWeight: 700,
     letterSpacing: "-0.02em",
     margin: 0,
     color: "var(--claude-text)",
   },
   subtitle: {
-    fontSize: 13,
+    fontSize: 12,
     color: "var(--claude-muted)",
-    marginTop: 4,
     margin: 0,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    maxWidth: "100%",
   },
   statusCard: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 16,
-    padding: "10px 16px",
+    gap: 10,
+    padding: "8px 12px",
     borderRadius: 12,
     border: "1px solid var(--claude-border)",
+    flexShrink: 0,
   },
   statusDot: {
     width: 10,
@@ -1405,9 +1422,9 @@ const S: Record<string, React.CSSProperties> = {
   card: {
     display: "flex",
     flexDirection: "column",
-    gap: 16,
-    padding: "20px 22px",
-    borderRadius: 16,
+    gap: 12,
+    padding: "14px 16px",
+    borderRadius: 14,
     background: "var(--claude-surface)",
     border: "1px solid var(--claude-border)",
     boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
@@ -1415,9 +1432,9 @@ const S: Record<string, React.CSSProperties> = {
   cardHeader: {
     display: "flex",
     alignItems: "center",
-    gap: 12,
+    gap: 10,
     borderBottom: "1px solid var(--claude-surface-2)",
-    paddingBottom: 12,
+    paddingBottom: 8,
   },
   iconWrap: {
     display: "flex",
@@ -1429,13 +1446,13 @@ const S: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   cardTitle: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: 700,
     color: "var(--claude-text)",
     margin: 0,
   },
   cardSub: {
-    fontSize: 12,
+    fontSize: 11,
     color: "var(--claude-muted)",
     margin: "2px 0 0",
   },

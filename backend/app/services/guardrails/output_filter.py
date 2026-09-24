@@ -31,13 +31,4 @@ def filter_output(text: str, allowed_citations: Optional[List[str]] = None) -> O
     for phrase in ["how to make a bomb", "instructions to hack"]:
         if phrase in low:
             return OutputFilterResult("I can't help with that request.", blocked=True, reason="disallowed")
-
-    # Citation sanity: if >30% citations hallucinated, mark but don't block (log upstream)
-    if allowed_citations is not None:
-        import re as _re
-        found = _re.findall(r"\[\d+\.\d+\]", out)
-        if found:
-            invalid = [c for c in found if c.strip("[]") not in {a.strip("[]") for a in allowed_citations} and c not in allowed_citations]
-            # don't block, just allow up to 30% — output_filter is not cit enforcement, rag_pipeline does
-            pass
     return OutputFilterResult(out)

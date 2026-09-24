@@ -5,7 +5,6 @@ import time
 from datetime import datetime, timezone
 import logging
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -101,21 +100,29 @@ class ConversationService:
         return conversation_id
     
     def add_message(self, conversation_id: str, role: str, content: str,
-                    citations: Optional[List[Dict]] = None):
-        """Add a message to the conversation."""
+                    citations: Optional[List[Dict]] = None,
+                    tenant_id: Optional[str] = None):
+        """Add a message to the conversation.
+
+        When `tenant_id` is given and the stored conversation belongs to a
+        different workspace, the message is not saved — Redis/memory keys are
+        `conv:{id}` only, so the tenant column is the ownership check.
+        """
         message = {
             "role": role,
             "content": content,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "citations": citations or []
         }
-        
+
         conversation = self.get_conversation(conversation_id)
         if conversation:
+            if tenant_id is not None and conversation.get("tenant_id") != tenant_id:
+                return message
             conversation["messages"].append(message)
             conversation["updated_at"] = datetime.now(timezone.utc).isoformat()
             self._save_conversation(conversation)
-        
+
         return message
     
     def get_conversation(self, conversation_id: str) -> Optional[Dict]:
@@ -135,11 +142,19 @@ class ConversationService:
                 self._mark_down(e)
         return self.memory_store.get(conversation_id)
     
-    def get_conversation_history(self, conversation_id: str, 
-                                max_messages: int = 10) -> List[Dict]:
-        """Get conversation history for context."""
+    def get_conversation_history(self, conversation_id: str,
+                                max_messages: int = 10,
+                                tenant_id: Optional[str] = None) -> List[Dict]:
+        """Get conversation history for context.
+
+        When `tenant_id` is given, a conversation stored under a different
+        workspace reads as empty history (default `None` keeps the voice
+        `/history` path unchanged).
+        """
         conversation = self.get_conversation(conversation_id)
         if conversation:
+            if tenant_id is not None and conversation.get("tenant_id") != tenant_id:
+                return []
             return conversation["messages"][-max_messages:]
         return []
     

@@ -14,7 +14,7 @@ from slowapi.util import get_remote_address
 from starlette.requests import Request
 
 from app.config import settings
-from app.session import COOKIE_NAME, SessionError, verify
+from app.session import COOKIE_NAME, PRODUCT_COOKIE_NAME, SessionError, verify
 
 
 def client_ip(request: Request) -> str:
@@ -31,8 +31,8 @@ def client_ip(request: Request) -> str:
 
 
 def rate_limit_key(request: Request) -> str:
-    """One bucket per caller: the owner's session, a demo visitor's key, or
-    (unauthenticated) their IP.
+    """One bucket per caller: the owner's session, a product-QR visitor's
+    session, a demo visitor's key, or (unauthenticated) their IP.
 
     The bucket must be per *tenant*, not per "is authenticated". This returned
     the literal string "owner" for every valid session, which was correct when
@@ -59,6 +59,20 @@ def rate_limit_key(request: Request) -> str:
                     return f"contact:{parts[1]}"
         # The original single-owner passcode session has no tenant to key on.
         return "owner"
+    except SessionError:
+        pass
+
+    try:
+        payload = verify(request.cookies.get(PRODUCT_COOKIE_NAME))
+        if payload.get("kind") == "product_visitor":
+            session_id = payload.get("session_id")
+            # Per visitor session, not per owner: one scanner's traffic must
+            # not spend another's allowance. Without this cookie the key fell
+            # through to the proxy's shared IP bucket, so every product
+            # visitor and every other unauthenticated caller shared one
+            # global limit — including lockout of login itself.
+            if isinstance(session_id, str) and session_id:
+                return f"product:{session_id}"
     except SessionError:
         pass
 
