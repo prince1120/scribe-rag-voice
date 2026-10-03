@@ -194,3 +194,4 @@ class VoiceTokenResponse(BaseModel):
 
 class VoicePreviewRequest(BaseModel):
     speaker: str = Field(..., max_length=64)
+    model: str = Field(default="bulbul:v3", max_length=32)

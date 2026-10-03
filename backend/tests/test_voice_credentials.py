@@ -20,6 +20,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 
 from app.api import voice_routes
@@ -83,6 +84,8 @@ def _agent():
         name="Asha",
         status="deployed",
         voice_id="priya",
+        stt_model="saaras:v4",
+        tts_model="bulbul:v3",
         language="unknown",
         greeting="",
         script="fallback script",
@@ -178,6 +181,9 @@ async def test_business_dispatch_metadata_has_no_credentials(monkeypatch):
         assert key not in meta, f"dispatch metadata leaks {key}"
     for value in FORBIDDEN_VALUES:
         assert value not in meta, "dispatch metadata leaks a key value"
+    dispatched = json.loads(meta)
+    assert dispatched["stt_model"] == "saaras:v4"
+    assert dispatched["tts_model"] == "bulbul:v3"
 
 
 @pytest.mark.asyncio
@@ -207,6 +213,16 @@ async def test_product_dispatch_metadata_has_no_credentials():
     with patch(
         "app.api.product_qr_public_routes.repo.list_product_document_ids",
         AsyncMock(return_value=["docA"]),
+    ), patch(
+        "app.api.product_qr_public_routes.owner_service.cached_agent",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                stt_model="saaras:v3",
+                tts_model="bulbul:v3",
+                voice_id="priya",
+                language="en-IN",
+            )
+        ),
     ), patch(
         "app.api.product_qr_public_routes.ensure_worker_running",
         AsyncMock(return_value=True),
@@ -307,7 +323,7 @@ async def test_credentials_endpoint_returns_stored_keys(monkeypatch, caplog):
             )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["groq_api_key"] == SECRET_GROQ
+    assert data["groq_api_key"] == ""  # Only the selected custom provider's key is returned.
     assert data["sarvam_api_key"] == SECRET_SARVAM
     assert data["custom_llm_api_key"] == SECRET_CUSTOM
     # Key values must never reach the logs.
@@ -406,8 +422,8 @@ async def test_business_token_503_when_stored_keys_unfetchable(monkeypatch, capl
 
 
 @pytest.mark.asyncio
-async def test_business_token_proceeds_when_defaults_cover(monkeypatch):
-    """Env defaults need no fetch: the session is servable without INTERNAL."""
+async def test_business_token_requires_internal_service_even_with_environment_defaults(monkeypatch):
+    """New calls resolve an immutable credential snapshot through the internal API."""
     _patch_token_path(monkeypatch)
     stored = _stored()
     stored["custom_llm_base_url"] = ""
@@ -420,16 +436,13 @@ async def test_business_token_proceeds_when_defaults_cover(monkeypatch):
     monkeypatch.setattr(voice_routes.settings, "SARVAM_API_KEY", "env-sarvam")
     _RoomConfigRecorder.last_agents = None
 
-    resp = await voice_routes.create_voice_token(
-        request=_owner_request(),
-        body=VoiceTokenRequest(),
-        identity=_owner_identity(),
-        x_user_groq_key=None,
-        x_user_sarvam_key=None,
-        x_user_custom_llm_key=None,
-    )
-    assert resp.call_id == "call-1"
-    assert _RoomConfigRecorder.last_agents, "token must be issued"
+    with pytest.raises(HTTPException) as exc:
+        await voice_routes.create_voice_token(
+            request=_owner_request(), body=VoiceTokenRequest(), identity=_owner_identity(),
+            x_user_groq_key=None, x_user_sarvam_key=None, x_user_custom_llm_key=None,
+        )
+    assert exc.value.status_code == 503
+    assert "INTERNAL_API_KEY" in exc.value.detail
 
 
 @pytest.mark.asyncio
@@ -475,6 +488,16 @@ async def test_product_token_503_when_credentials_unresolvable(monkeypatch):
     with patch(
         "app.api.product_qr_public_routes.ensure_worker_running",
         AsyncMock(return_value=True),
+    ), patch(
+        "app.api.product_qr_public_routes.owner_service.cached_agent",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                stt_model="saaras:v3",
+                tts_model="bulbul:v3",
+                voice_id="priya",
+                language="en-IN",
+            )
+        ),
     ), patch(
         "app.api.product_qr_public_routes.is_worker_available",
         AsyncMock(return_value=True),

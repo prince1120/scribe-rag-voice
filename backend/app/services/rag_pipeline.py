@@ -232,7 +232,9 @@ class RAGPipeline:
         kw: dict = {}
         # All Groq reasoning models accept reasoning_effort low — keep it low
         # per user request so no time is wasted in internal monologue.
-        if model_name and ("gpt-oss" in model_name.lower() or "qwen" in model_name.lower()):
+        if model_name and model_name.lower().startswith("sarvam-"):
+            kw["reasoning_effort"] = None
+        elif model_name and ("gpt-oss" in model_name.lower() or "qwen" in model_name.lower()):
             kw["reasoning_effort"] = "low"
         return kw
 

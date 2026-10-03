@@ -1,4 +1,5 @@
 import os
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 from typing import List, Optional
 
@@ -13,6 +14,18 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
 
 
 class Settings(BaseSettings):
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def normalize_debug_mode(cls, value):
+        """Accept common deployment-mode strings as well as real booleans."""
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"release", "production", "prod"}:
+                return False
+            if normalized in {"development", "develop", "dev"}:
+                return True
+        return value
+
     # Groq Configuration
     GROQ_API_KEY: str
     # Override via GROQ_MODEL in .env. Active Groq models (as of 08/16/26):

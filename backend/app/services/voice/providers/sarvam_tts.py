@@ -19,21 +19,29 @@ def build_sarvam_tts(settings: VoiceSettings) -> tts.TTS:
         raise ValueError(
             "SARVAM_API_KEY is required for the Sarvam TTS voice provider. Set it in .env."
         )
-    from app.services.voice.config import SUPPORTED_TTS_VOICE_IDS
+    from app.services.voice.config import SUPPORTED_TTS_VOICES_BY_MODEL
 
+    model = settings.VOICE_TTS_MODEL
+    model_voices = SUPPORTED_TTS_VOICES_BY_MODEL.get(model)
+    if not model_voices:
+        raise ValueError(f"Unsupported Sarvam TTS model: {model}")
+    allowed_speakers = {
+        voice["id"] for voices in model_voices.values() for voice in voices
+    }
     speaker = settings.VOICE_TTS_SPEAKER
-    if speaker not in SUPPORTED_TTS_VOICE_IDS:
+    if speaker not in allowed_speakers:
+        fallback = "priya" if model == "bulbul:v3" else "anushka"
         logger.warning(
-            "Requested TTS speaker '%s' is not supported in bulbul:v3. Falling back to 'priya'.",
-            speaker,
+            "Requested TTS speaker '%s' is not supported in %s. Falling back to '%s'.",
+            speaker, model, fallback,
         )
-        speaker = "priya"
+        speaker = fallback
 
     return sarvam.TTS(
         target_language_code=settings.VOICE_TTS_LANGUAGE,
         speaker=speaker,
         api_key=settings.SARVAM_API_KEY,
-        model="bulbul:v3",  # explicit — best prosody, supports all 11 voices
+        model=model,
         # Human-like delivery: slight pace drag + higher temperature = natural variation.
         # enable_preprocessing improves number/currency/date verbalization (e.g. "₹50,000" → "fifty thousand").
         pace=settings.VOICE_TTS_PACE,

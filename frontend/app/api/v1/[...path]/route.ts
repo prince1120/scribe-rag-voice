@@ -95,6 +95,14 @@ async function proxy(
     );
   }
 
+  if (upstreamResponse.status === 401) {
+    const detail = await upstreamResponse.clone().json().catch(() => null);
+    if (detail?.detail === "Invalid or missing API key") {
+      console.error("Backend service authentication failed. Check server-side BACKEND_API_KEY configuration.");
+      return Response.json({ error: "The service is temporarily unavailable. Please ask the assistant owner to check the service configuration." }, { status: 503 });
+    }
+  }
+
   // Copy response headers, dropping hop-by-hop ones. Most importantly we
   // pass through `content-type` so SSE (`text/event-stream`) is preserved.
   const respHeaders = new Headers();

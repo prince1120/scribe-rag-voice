@@ -14,7 +14,8 @@ import {
   createAudioAnalyser,
 } from "livekit-client";
 import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
-import { MIC_CAPTURE, useAgentStall, VOICE_ROOM_OPTIONS } from "../../components/voice/useCallQuality";
+import { useAgentStall, VOICE_ROOM_OPTIONS } from "../../components/voice/useCallQuality";
+import { enableEnhancedMic } from "../../components/voice/micEnhancement";
 import { SignalPill } from "../../components/voice/SignalPill";
 import { VOICE_DATA_PACKETS } from "../../components/voice/voiceEvents";
 import {
@@ -408,13 +409,14 @@ export function CallScreen({
       });
 
       await room.connect(url, token);
-      const micOptions = {
-        ...MIC_CAPTURE,
-        ...(audioDevices.activeInputId && audioDevices.activeInputId !== "default"
+      // Preserves the caller's chosen input device and adds background-voice
+      // cancellation (falls back to plain capture if the model can't load).
+      await enableEnhancedMic(
+        room,
+        audioDevices.activeInputId && audioDevices.activeInputId !== "default"
           ? { deviceId: { exact: audioDevices.activeInputId } }
-          : {}),
-      };
-      await room.localParticipant.setMicrophoneEnabled(true, micOptions);
+          : undefined
+      );
 
       if (audioDevices.activeOutputId && audioDevices.activeOutputId !== "default") {
         await room.switchActiveDevice("audiooutput", audioDevices.activeOutputId).catch(() => {});
@@ -567,7 +569,7 @@ export function CallScreen({
       </header>
 
       {/* ── Main Viewport Content ─────────────────────────────────── */}
-      <div className="callscreen-viewport-content">
+      <div className={`callscreen-viewport-content${phase === "live" || phase === "ended" ? "" : " callscreen-viewport-content--setup"}`}>
         
         {/* ── STATE 1: IDLE / CONNECTING ──────────────────────────── */}
         {(phase === "idle" || phase === "connecting" || phase === "error") && (
@@ -579,14 +581,14 @@ export function CallScreen({
 
             <div
               className="voice-orb-wrapper"
-              onClick={phase === "idle" ? start : undefined}
-              title="Click to start call"
+              aria-hidden="true"
             >
               <div className="voice-orb-3d" />
             </div>
 
             <p className="text-xs text-[var(--claude-muted)] max-w-xs m-0 leading-relaxed">
               Connect your microphone to speak naturally in real time with the assistant.
+              Your microphone stays off until you start the call.
             </p>
 
             {/* Audio Device Selector: Mic & Headphones / Speakers + Live Volume Bar */}
@@ -596,7 +598,7 @@ export function CallScreen({
 
             {error && (
               <div className="w-full max-w-xs space-y-2">
-                <p className="text-xs text-rose-700 bg-rose-50 p-2.5 rounded-xl border border-rose-200 m-0 w-full text-center">
+                <p role="alert" className="text-xs text-rose-700 bg-rose-50 p-2.5 rounded-xl border border-rose-200 m-0 w-full text-center">
                   {error}
                 </p>
                 {onSwitchToChat && (
@@ -623,7 +625,7 @@ export function CallScreen({
               }}
             >
               <Phone size={15} />
-              <span>{phase === "connecting" ? "Connecting Audio…" : "Start Voice Call"}</span>
+              <span>{phase === "connecting" ? "Connecting Audio…" : phase === "error" ? "Try voice call again" : "Start Voice Call"}</span>
             </button>
           </div>
         )}

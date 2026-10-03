@@ -146,7 +146,7 @@ export default function Home() {
   // ---- Early returns (loading / gate) ---------------------------------------
   if (!mounted) {
     return (
-      <div className="flex h-screen items-center justify-center" style={{ background: "var(--claude-bg)" }}>
+      <div className="flex items-center justify-center" style={{ background: "var(--claude-bg)", minHeight: "100dvh" }}>
         <div
           className="w-9 h-9 rounded-lg flex items-center justify-center"
           style={{ background: "linear-gradient(145deg, var(--claude-accent), var(--claude-accent-hover))", opacity: 0.85 }}

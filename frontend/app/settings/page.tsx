@@ -3,6 +3,7 @@
 // Settings & Account Profile: Business details, Provider API Keys, and Security credentials.
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   Building2,
   CheckCircle2,
@@ -51,9 +52,8 @@ export default function SettingsPage() {
   }>({});
   const [groqKey, setGroqKey] = useState("");
   const [sarvamKey, setSarvamKey] = useState("");
-  const [customUrl, setCustomUrl] = useState("");
-  const [customKey, setCustomKey] = useState("");
-  const [model, setModel] = useState("");
+  const [clearGroq, setClearGroq] = useState(false);
+  const [clearSarvam, setClearSarvam] = useState(false);
   const [savingKeys, setSavingKeys] = useState(false);
   const [keysSaved, setKeysSaved] = useState(false);
   const [keyError, setKeyError] = useState("");
@@ -61,7 +61,6 @@ export default function SettingsPage() {
   // Password / Secret toggles
   const [showGroq, setShowGroq] = useState(false);
   const [showSarvam, setShowSarvam] = useState(false);
-  const [showCustomKey, setShowCustomKey] = useState(false);
 
   useEffect(() => {
     const cached = getWorkspaceCache();
@@ -71,8 +70,6 @@ export default function SettingsPage() {
     if (cached.categoriesData) setCategories(cached.categoriesData);
     if (cached.providersData) {
       setProviders(cached.providersData);
-      if (cached.providersData.custom_llm_base_url) setCustomUrl(cached.providersData.custom_llm_base_url);
-      if (cached.providersData.llm_model) setModel(cached.providersData.llm_model);
     }
 
     let cancelled = false;
@@ -99,8 +96,6 @@ export default function SettingsPage() {
         if (provResResult.status === "fulfilled" && provResResult.value.ok) {
           const data = await provResResult.value.json();
           setProviders(data);
-          setCustomUrl(data.custom_llm_base_url || "");
-          setModel(data.llm_model || "");
           setWorkspaceCache({ providersData: data });
         }
         if (catResResult.status === "fulfilled" && catResResult.value.ok) {
@@ -195,11 +190,8 @@ export default function SettingsPage() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          groq_key: groqKey.trim() || undefined,
-          sarvam_key: sarvamKey.trim() || undefined,
-          custom_llm_key: customKey.trim() || undefined,
-          custom_llm_base_url: customUrl.trim() || undefined,
-          llm_model: model.trim() || undefined,
+          groq_key: groqKey.trim() || (clearGroq ? "" : undefined),
+          sarvam_key: sarvamKey.trim() || (clearSarvam ? "" : undefined),
         }),
       });
       if (!response.ok) {
@@ -212,7 +204,8 @@ export default function SettingsPage() {
       setWorkspaceCache({ providersData: updated });
       setGroqKey("");
       setSarvamKey("");
-      setCustomKey("");
+      setClearGroq(false);
+      setClearSarvam(false);
       setKeysSaved(true);
       setTimeout(() => setKeysSaved(false), 2500);
     } catch (err) {
@@ -306,7 +299,7 @@ export default function SettingsPage() {
           <DirectoryHandle />
         </div>
 
-        <form style={S.card} onSubmit={saveKeys}>
+        <form id="provider-keys" style={S.card} onSubmit={saveKeys}>
           <div style={S.cardHeader}>
             <div style={{ ...S.iconWrap, background: "var(--claude-accent-soft)", color: "var(--claude-accent)" }}>
               <KeyRound size={18} />
@@ -324,11 +317,11 @@ export default function SettingsPage() {
             {/* Groq Key */}
             <div style={S.fieldBox}>
               <div style={S.labelRow}>
-                <label style={S.label}>Groq API Key (LLM Inference)</label>
+                <label style={S.label} htmlFor="shared-groq-key">Groq API key (optional LLM)</label>
                 {providers.groq_key ? (
                   <span style={S.badgeSaved}>Active: {providers.groq_key}</span>
                 ) : (
-                  <span style={S.badgeMissing}>Required</span>
+                  <span style={S.badgeMissing}>Optional</span>
                 )}
               </div>
               <div style={S.passwordInputWrap}>
@@ -336,6 +329,7 @@ export default function SettingsPage() {
                   style={S.passwordInput}
                   type={showGroq ? "text" : "password"}
                   autoComplete="off"
+                  id="shared-groq-key"
                   value={groqKey}
                   onChange={(e) => setGroqKey(e.target.value)}
                   placeholder={providers.groq_key ? "Leave blank to keep saved key" : "gsk_…"}
@@ -349,12 +343,14 @@ export default function SettingsPage() {
                   {showGroq ? <EyeOff size={15} /> : <Eye size={15} />}
                 </button>
               </div>
+              {providers.groq_key && <button type="button" style={S.eyeBtn} onClick={() => { setClearGroq(!clearGroq); setGroqKey(""); }}>{clearGroq ? "Undo removal" : "Remove saved Groq key"}</button>}
+              {clearGroq && <p style={S.cardSub}>The Groq key will be removed when you save.</p>}
             </div>
 
             {/* Sarvam Key */}
             <div style={S.fieldBox}>
               <div style={S.labelRow}>
-                <label style={S.label}>Sarvam AI Key (Voice Synthesis & STT)</label>
+                <label style={S.label} htmlFor="shared-sarvam-key">Sarvam API key (LLM, STT and TTS)</label>
                 {providers.sarvam_key ? (
                   <span style={S.badgeSaved}>Active: {providers.sarvam_key}</span>
                 ) : (
@@ -367,6 +363,7 @@ export default function SettingsPage() {
                   type={showSarvam ? "text" : "password"}
                   autoComplete="off"
                   value={sarvamKey}
+                  id="shared-sarvam-key"
                   onChange={(e) => setSarvamKey(e.target.value)}
                   placeholder={providers.sarvam_key ? "Leave blank to keep saved key" : "Enter Sarvam key…"}
                 />
@@ -379,64 +376,12 @@ export default function SettingsPage() {
                   {showSarvam ? <EyeOff size={15} /> : <Eye size={15} />}
                 </button>
               </div>
+              {providers.sarvam_key && <button type="button" style={S.eyeBtn} onClick={() => { setClearSarvam(!clearSarvam); setSarvamKey(""); }}>{clearSarvam ? "Undo removal" : "Remove saved Sarvam key"}</button>}
+              {clearSarvam && <p style={S.cardSub}>The Sarvam key will be removed when you save. Agents using it will need a replacement key.</p>}
             </div>
           </div>
 
-          {/* Section B: Model & Custom Providers */}
-          <div style={{ ...S.twoColGrid, marginTop: 4 }}>
-            {/* Model Override */}
-            <div>
-              <label style={S.label}>Default Model Name</label>
-              <input
-                style={S.input}
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder="e.g. openai/gpt-oss-20b (or leave blank)"
-              />
-            </div>
-
-            {/* Custom LLM Base URL */}
-            <div>
-              <label style={S.label}>
-                Custom LLM Base URL <span style={{ color: "var(--claude-muted)", fontWeight: 400 }}>(Optional)</span>
-              </label>
-              <input
-                style={S.input}
-                value={customUrl}
-                onChange={(e) => setCustomUrl(e.target.value)}
-                placeholder="e.g. https://api.mistral.ai/v1 or OpenRouter"
-              />
-            </div>
-          </div>
-
-          {/* Custom Key */}
-          <div>
-            <div style={S.labelRow}>
-              <label style={S.label}>
-                Custom Endpoint API Key <span style={{ color: "var(--claude-muted)", fontWeight: 400 }}>(Optional)</span>
-              </label>
-              {providers.custom_llm_key && (
-                <span style={S.badgeSaved}>Active: {providers.custom_llm_key}</span>
-              )}
-            </div>
-            <div style={S.passwordInputWrap}>
-              <input
-                style={S.passwordInput}
-                type={showCustomKey ? "text" : "password"}
-                autoComplete="off"
-                value={customKey}
-                onChange={(e) => setCustomKey(e.target.value)}
-                placeholder={providers.custom_llm_key ? "Leave blank to keep saved key" : "Bearer key…"}
-              />
-              <button
-                type="button"
-                onClick={() => setShowCustomKey(!showCustomKey)}
-                style={S.eyeBtn}
-              >
-                {showCustomKey ? <EyeOff size={15} /> : <Eye size={15} />}
-              </button>
-            </div>
-          </div>
+          <p style={S.cardSub}>Sarvam is the default LLM and powers speech for all agents. Groq is optional. Choose models and save custom provider keys on the <Link href="/agent#agent-llm">Agent page</Link>. Blank key fields keep saved keys. Key replacements apply to new calls; existing calls keep their startup credentials.</p>
 
           {keyError && <p style={S.errorText}>{keyError}</p>}
           {keysSaved && (

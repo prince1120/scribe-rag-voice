@@ -669,4 +669,5 @@ from app.repositories.owners import (  # noqa: E402,F401
     set_owner_secrets,
     update_owner,
     upsert_agent,
+    activate_agent_snapshot,
 )

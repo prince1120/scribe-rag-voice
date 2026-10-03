@@ -47,8 +47,8 @@ html {
 html, body {
   background: var(--claude-bg);
   color: var(--claude-text);
-  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    "Inter", "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font-sans, "Outfit"), ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Helvetica Neue", Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   /* Safety net: an unanchored absolutely-positioned element or a fixed-width
@@ -59,10 +59,14 @@ html, body {
 }
 
 .font-serif-display {
-  font-family: "Iowan Old Style", "Apple Garamond", "Baskerville",
+  font-family: var(--font-editorial, "Newsreader"), "Iowan Old Style", "Apple Garamond", "Baskerville",
     "Times New Roman", "Droid Serif", Times, serif;
   letter-spacing: -0.01em;
 }
+
+/* ponytail: balance + tabular-nums utilities, native CSS over JS */
+h1, h2 { text-wrap: balance; }
+.tnum { font-variant-numeric: tabular-nums; }
 
 /* Loading dots */
 .loading-dots::after {

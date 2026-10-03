@@ -97,10 +97,7 @@ async def create_contact(
     if body.mode in ("chat", "both") and not channels["chat"]:
         raise HTTPException(
             status_code=400,
-            detail=(
-                "Chat answers from your documents, and none are uploaded yet. "
-                "Add a document, or share a voice-only link."
-            ),
+            detail=channels.get("chat_blocked_reason") or "Configure this agent's chat channel before sharing it.",
         )
 
     token = contacts.generate_token()
@@ -443,6 +440,8 @@ async def open_link(request: Request, response: Response, body: OpenLinkRequest)
     # a link tapped early does not show up in the owner's history as a call
     # that never happened.
     agent = await repositories.get_agent(record.owner_tenant_id)
+    from app.services.agent_configuration import published_agent
+    agent = published_agent(agent)
     if agent is None or agent.status != "deployed":
         raise HTTPException(
             status_code=503,

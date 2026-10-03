@@ -159,6 +159,7 @@ async def fetch_credentials(
     backend_url: str,
     api_key: str,
     timeout_s: float = 5.0,
+    call_id: Optional[str] = None,
 ) -> dict:
     """Stored provider credentials for a voice session, resolved server-side.
 
@@ -175,7 +176,7 @@ async def fetch_credentials(
         session = await _get_session()
         async with session.post(
             f"{backend_url.rstrip('/')}/api/v1/voice/credentials",
-            json={"tenant_id": tenant_id},
+            json={"tenant_id": tenant_id, **({"call_id": call_id} if call_id else {})},
             headers=headers,
             timeout=aiohttp.ClientTimeout(total=timeout_s),
         ) as resp:

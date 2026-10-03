@@ -130,6 +130,7 @@ class TestAgentConfig:
                 voice_max_tokens=None, chat_max_tokens=None,
                 voice_base_url=None, chat_base_url=None,
                 voice_api_key_enc=None, chat_api_key_enc=None,
+                stt_model="saaras:v3", tts_model="bulbul:v3",
             )
             if name is not None:
                 record.name = name
@@ -187,6 +188,29 @@ class TestAgentConfig:
             "t-1", voice_id="anushka", allowed_voices=frozenset({"anushka"})
         )
         assert config["voice_id"] == "anushka"
+
+    async def test_speech_models_are_saved(self, agent_store):
+        config = await owner_service.save_agent_config(
+            "t-1",
+            stt_model="saaras:v4",
+            tts_model="bulbul:v2",
+            voice_id="anushka",
+            allowed_stt_models={"saaras:v3", "saaras:v4"},
+            allowed_tts_models={"bulbul:v2", "bulbul:v3"},
+            allowed_voices_by_model={"bulbul:v2": {"anushka"}},
+        )
+        assert config["stt_model"] == "saaras:v4"
+        assert config["tts_model"] == "bulbul:v2"
+
+    async def test_incompatible_tts_voice_is_refused(self, agent_store):
+        with pytest.raises(owner_service.OwnerError, match="compatible"):
+            await owner_service.save_agent_config(
+                "t-1",
+                tts_model="bulbul:v2",
+                voice_id="priya",
+                allowed_tts_models={"bulbul:v2", "bulbul:v3"},
+                allowed_voices_by_model={"bulbul:v2": {"anushka"}},
+            )
 
 
 def test_the_document_cap_stays_small():

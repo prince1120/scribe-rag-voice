@@ -6,22 +6,20 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  BarChart3,
-  Bot,
-  Building2,
-  ChevronLeft,
-  ChevronRight,
+  ChartBar,
+  Robot,
+  CaretLeft,
+  CaretRight,
   Clock,
-  ExternalLink,
-  MessageCircle,
-  MessageSquare,
-  Mic,
+  ArrowSquareOut,
+  ChatCircle,
+  Chats,
+  Microphone,
   Phone,
-  RefreshCw,
-  Sparkles,
+  ArrowClockwise,
   Users,
   X,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 
 import { ownerFetch } from "../lib/ownerFetch";
 import { OwnerShell } from "../components/owner/OwnerShell";
@@ -195,11 +193,11 @@ export default function DashboardPage() {
               style={S.refreshBtn}
               title="Refresh metrics"
             >
-              <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+              <ArrowClockwise size={14} className={loading ? "animate-spin" : ""} />
               <span>Refresh</span>
             </button>
             <Link href="/directory" target="_blank" style={S.previewBtn}>
-              <ExternalLink size={14} />
+              <ArrowSquareOut size={14} />
               <span>Public Directory</span>
             </Link>
           </div>
@@ -219,7 +217,7 @@ export default function DashboardPage() {
           <div style={{ ...S.statCard, background: "var(--claude-surface)", borderColor: "var(--claude-border)" }} className="dash-stat-card">
             <div style={S.statTop}>
               <div style={{ ...S.statIconWrap, background: "var(--claude-surface-2)", color: "var(--claude-accent)" }}>
-                <BarChart3 size={18} />
+                <ChartBar size={18} />
               </div>
               <span style={{ ...S.statValue, color: "var(--claude-text)" }}>
                 {data ? data.totals.total_sessions : "..."}
@@ -249,7 +247,7 @@ export default function DashboardPage() {
           <div style={{ ...S.statCard, background: "var(--claude-surface)", borderColor: "var(--claude-border)" }} className="dash-stat-card">
             <div style={S.statTop}>
               <div style={{ ...S.statIconWrap, background: "var(--claude-surface-2)", color: "var(--claude-accent)" }}>
-                <MessageSquare size={18} />
+                <Chats size={18} />
               </div>
               <span style={{ ...S.statValue, color: "var(--claude-text)" }}>
                 {data ? data.totals.chat_sessions : "..."}
@@ -357,16 +355,16 @@ export default function DashboardPage() {
                             }}
                           >
                             {session.channel === "voice" ? (
-                              <Mic size={11} />
+                              <Microphone size={11} />
                             ) : (
-                              <MessageSquare size={11} />
+                              <Chats size={11} />
                             )}
                             <span>{session.channel === "voice" ? "Voice Call" : "Chat"}</span>
                           </span>
 
                           {/* Agent & Business Attribution */}
                           <span style={S.agentPill}>
-                            <Bot size={11} />
+                            <Robot size={11} />
                             <span>{session.agent_name || "Assistant"}</span>
                             <span>•</span>
                             <span style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -398,7 +396,7 @@ export default function DashboardPage() {
                       style={S.transcriptBtn}
                       className="dash-transcript-btn"
                     >
-                      <MessageCircle size={14} />
+                      <ChatCircle size={14} />
                       <span>View Transcript</span>
                     </button>
                   </div>
@@ -424,7 +422,7 @@ export default function DashboardPage() {
                         cursor: page <= 1 ? "not-allowed" : "pointer",
                       }}
                     >
-                      <ChevronLeft size={16} />
+                      <CaretLeft size={16} />
                       <span>Previous</span>
                     </button>
 
@@ -443,7 +441,7 @@ export default function DashboardPage() {
                       }}
                     >
                       <span>Next</span>
-                      <ChevronRight size={16} />
+                      <CaretRight size={16} />
                     </button>
                   </div>
                 </div>
@@ -491,7 +489,7 @@ export default function DashboardPage() {
                 {loadingTranscript ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: "12px 4px" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "8px 14px", background: "var(--claude-bg)", borderRadius: 20, border: "1px solid var(--claude-border)", width: "fit-content", margin: "0 auto 8px", fontSize: 12, color: "var(--claude-muted)", fontWeight: 500 }}>
-                      <RefreshCw size={13} className="animate-spin" style={{ color: "var(--claude-accent)" }} />
+                      <ArrowClockwise size={13} className="animate-spin" style={{ color: "var(--claude-accent)" }} />
                       <span>Loading dialogue transcript from database…</span>
                     </div>
 

@@ -5,7 +5,8 @@ import { Room, RoomEvent, Track, createAudioAnalyser } from "livekit-client";
 
 import { VoiceSpectrum } from "./components/voice/VoiceSpectrum";
 import { NetworkBanner } from "./components/voice/NetworkBanner";
-import { MIC_CAPTURE, useCallQuality, VOICE_ROOM_OPTIONS } from "./components/voice/useCallQuality";
+import { useCallQuality, VOICE_ROOM_OPTIONS } from "./components/voice/useCallQuality";
+import { enableEnhancedMic } from "./components/voice/micEnhancement";
 import { useAudioDeviceSwitching } from "./components/voice/useAudioDeviceSwitching";
 import { personaForVoice } from "./components/voice/voicePersona";
 import { VOICE_DATA_PACKETS } from "./components/voice/voiceEvents";
@@ -609,13 +610,11 @@ export function VoiceCallModal({
         );
       }
 
-      // Capture settings, not the browser's raw microphone. Without
-      // echoCancellation the agent's own voice comes back in through the mic
-      // and interrupts it mid-sentence; without noiseSuppression a fan or
-      // traffic does the same. The invite-link screen has always passed these
-      // and this one did not, which is why background noise behaved
-      // differently depending on where the call was placed from.
-      await room.localParticipant.setMicrophoneEnabled(true, { ...MIC_CAPTURE });
+      // Enhanced capture: WebRTC EC/NS/AGC plus on-device background-voice
+      // cancellation (primary speaker kept, nearby voices suppressed) when
+      // the model loads — plain MIC_CAPTURE fallback otherwise, never a
+      // failed call. See components/voice/micEnhancement.ts.
+      await enableEnhancedMic(room);
 
       // Analyser on the mic → orb reacts to the user's voice too.
       const micTrack = room.localParticipant.getTrackPublication(

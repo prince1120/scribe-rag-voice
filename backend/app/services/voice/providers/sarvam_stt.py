@@ -18,6 +18,6 @@ def build_sarvam_stt(settings: VoiceSettings) -> stt.STT:
         )
     return sarvam.STT(
         language=settings.VOICE_STT_LANGUAGE,
-        model="saaras:v3",
+        model=settings.VOICE_STT_MODEL,
         api_key=settings.SARVAM_API_KEY,
     )

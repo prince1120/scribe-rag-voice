@@ -72,6 +72,13 @@ async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncS
 # place indefinitely. Types are spelled to be valid in both SQLite and
 # Postgres, which is the only dialect pair this app runs on.
 _ADDED_COLUMNS: list[tuple[str, str, str]] = [
+    ("agents", "published_config", "TEXT"),
+    ("agents", "active_snapshot_id", "VARCHAR(36)"),
+    ("agents", "llm_model", "VARCHAR(120)"),
+    ("agents", "llm_base_url", "VARCHAR(500)"),
+    ("agents", "llm_api_key_enc", "TEXT"),
+    ("agent_snapshots", "config_json", "TEXT"),
+    ("voice_calls", "credentials_enc", "TEXT"),
     # Agents
     ("agents", "style_rules_enabled", "BOOLEAN NOT NULL DEFAULT true"),
     ("agents", "voice_script", "TEXT"),
@@ -82,11 +89,15 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("agents", "voice_api_key_enc", "TEXT"),
     ("agents", "chat_base_url", "VARCHAR(500)"),
     ("agents", "chat_api_key_enc", "TEXT"),
+    ("agents", "stt_model", "VARCHAR(32) NOT NULL DEFAULT 'saaras:v3'"),
+    ("agents", "tts_model", "VARCHAR(32) NOT NULL DEFAULT 'bulbul:v3'"),
     ("agents", "voice_temperature", "FLOAT"),
     ("agents", "voice_max_tokens", "INTEGER"),
     ("agents", "chat_temperature", "FLOAT"),
     ("agents", "chat_max_tokens", "INTEGER"),
     ("agents", "deployed_at", "TIMESTAMP WITH TIME ZONE"),
+    ("agent_snapshots", "stt_model", "VARCHAR(32) NOT NULL DEFAULT 'saaras:v3'"),
+    ("agent_snapshots", "tts_model", "VARCHAR(32) NOT NULL DEFAULT 'bulbul:v3'"),
 
     # Owners
     ("owners", "public_handle", "VARCHAR(32)"),

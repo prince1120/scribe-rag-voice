@@ -25,7 +25,12 @@ from app.services.product_safety import (
     ABSTENTION_MESSAGE,
     check_product_safety,
 )
-from app.services.voice.config import SUPPORTED_TTS_VOICE_IDS, voice_settings
+from app.services.voice.config import (
+    SUPPORTED_STT_MODEL_IDS,
+    SUPPORTED_TTS_MODEL_IDS,
+    SUPPORTED_TTS_VOICES_BY_MODEL,
+    voice_settings,
+)
 from app.services.voice.worker_supervisor import (
     ensure_worker_running,
     is_worker_available,
@@ -322,7 +327,8 @@ async def public_chat(
         product_id=product.product_id, tenant_id=sess.tenant_id
     )
 
-    agent = await owner_service.cached_agent(sess.tenant_id)
+    from app.services.agent_configuration import published_agent
+    agent = published_agent(await owner_service.cached_agent(sess.tenant_id))
     voice_channel = owner_service.channel_settings(agent, "voice") if agent else {}
     credentials = await owner_service.resolve_credentials(sess.tenant_id)
 
@@ -368,6 +374,7 @@ async def public_chat(
         sess.tenant_id, record=workspace
     )
 
+    runtime = owner_service.resolve_channel_runtime(agent, "chat", credentials)
     disclaimer = product.support_disclaimer or ""
     system_prompt = (
         f"You are the official product support assistant for {product.name} (Model: {product.model_number}).\n"
@@ -386,9 +393,10 @@ async def public_chat(
             conversation_history=[],
             temperature=0.1,
             max_tokens=600,
-            groq_api_key=credentials.get("groq_api_key"),
-            custom_base_url=credentials.get("custom_llm_base_url"),
-            custom_api_key=credentials.get("custom_llm_api_key"),
+            groq_api_key=runtime["api_key"] if runtime["provider"] == "groq" else None,
+            custom_base_url=runtime["base_url"],
+            custom_api_key=runtime["api_key"],
+            override_model=runtime["model"],
             agent_prompt=system_prompt,
         )
     except Exception as exc:
@@ -486,7 +494,8 @@ async def public_voice_token(
     # Load the same saved voice choices that power the owner's assistant.  The
     # metadata below intentionally carries configuration only; provider keys
     # remain server-side and are resolved by the voice worker.
-    agent = await owner_service.cached_agent(sess.tenant_id)
+    from app.services.agent_configuration import published_agent
+    agent = published_agent(await owner_service.cached_agent(sess.tenant_id))
     voice_channel = owner_service.channel_settings(agent, "voice") if agent else {}
     workspace = await owner_service.cached_owner(sess.tenant_id)
     credentials = await owner_service.resolve_credentials(
@@ -499,20 +508,11 @@ async def public_voice_token(
             detail="Voice infrastructure is not configured.",
         )
 
-    # Product voice has no per-request keys: the worker uses stored tenant
-    # keys (via POST /voice/credentials, which requires INTERNAL_API_KEY)
-    # or environment defaults. Without either, the token would mint a call
-    # that can never speak — refuse loudly here instead.
-    if not settings.INTERNAL_API_KEY and not (
-        settings.GROQ_API_KEY and settings.SARVAM_API_KEY
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Voice credential service is not configured (INTERNAL_API_KEY). "
-                "Product voice calls cannot start until it is set."
-            ),
-        )
+    runtime = owner_service.resolve_channel_runtime(agent, "voice", credentials)
+    if not settings.INTERNAL_API_KEY:
+        raise HTTPException(status_code=503, detail="Voice credential service is not configured (INTERNAL_API_KEY).")
+    if not runtime["api_key"] or not runtime["sarvam_api_key"] or not runtime["model"]:
+        raise HTTPException(status_code=503, detail="This assistant's voice connection is not configured. Please contact the owner.")
 
     allowed_doc_ids = await repo.list_product_document_ids(
         product_id=product.product_id, tenant_id=sess.tenant_id
@@ -548,19 +548,30 @@ async def public_voice_token(
     }
 
     if agent:
+        stt_model = getattr(agent, "stt_model", "saaras:v3") or "saaras:v3"
+        if stt_model not in SUPPORTED_STT_MODEL_IDS:
+            stt_model = "saaras:v3"
+        tts_model = getattr(agent, "tts_model", "bulbul:v3") or "bulbul:v3"
+        if tts_model not in SUPPORTED_TTS_MODEL_IDS:
+            tts_model = "bulbul:v3"
+        allowed_voices = {
+            voice["id"]
+            for voices in SUPPORTED_TTS_VOICES_BY_MODEL[tts_model].values()
+            for voice in voices
+        }
         meta["tts_speaker"] = (
-            agent.voice_id if agent.voice_id in SUPPORTED_TTS_VOICE_IDS else "priya"
+            agent.voice_id
+            if agent.voice_id in allowed_voices
+            else ("priya" if tts_model == "bulbul:v3" else "anushka")
         )
         meta["stt_language"] = agent.language or "unknown"
+        meta["stt_model"] = stt_model
+        meta["tts_model"] = tts_model
 
-    if voice_channel.get("model"):
-        meta["llm_model"] = voice_channel["model"]
-    elif credentials.get("llm_model"):
-        meta["llm_model"] = credentials["llm_model"]
-    if voice_channel.get("base_url"):
-        meta["custom_llm_base_url"] = voice_channel["base_url"]
-    elif credentials.get("custom_llm_base_url") and not voice_channel.get("model"):
-        meta["custom_llm_base_url"] = credentials["custom_llm_base_url"]
+    meta["llm_model"] = runtime["model"]
+    meta["llm_provider"] = "custom_openai" if runtime["base_url"] else "groq"
+    if runtime["base_url"]:
+        meta["custom_llm_base_url"] = runtime["base_url"]
 
     # Cost ceilings for this call. Product QR callers are unauthenticated
     # strangers spending the owner's keys — the same profile as a directory
@@ -576,6 +587,7 @@ async def public_voice_token(
         request.headers.get("user-agent"),
         context_label=f"Product QR · {product.name} · {product.model_number}",
         voice_consent_at=datetime.now(timezone.utc),
+        credentials=owner_service.voice_credentials_for_runtime(runtime),
     )
     meta["call_id"] = call_id
 

@@ -37,7 +37,12 @@ from app.services.voice.config import (
     SARVAM_TTS_BASE_URL,
     SUPPORTED_STT_LANGUAGES,
     SUPPORTED_STT_LANGUAGE_IDS,
+    SUPPORTED_STT_MODELS,
+    SUPPORTED_STT_MODEL_IDS,
+    SUPPORTED_TTS_MODELS,
+    SUPPORTED_TTS_MODEL_IDS,
     SUPPORTED_TTS_VOICES,
+    SUPPORTED_TTS_VOICES_BY_MODEL,
     SUPPORTED_TTS_VOICE_IDS,
     SUPPORTED_TTS_VOICE_LABELS,
     build_instructions,
@@ -109,7 +114,16 @@ async def list_voices() -> dict:
     """The TTS voices the UI may offer, grouped male/female. Single source of
     truth is the backend so the picker can never present a voice the worker
     would reject."""
-    return {"voices": SUPPORTED_TTS_VOICES, "speakers": SUPPORTED_TTS_VOICES, "default": voice_settings.VOICE_TTS_SPEAKER}
+    return {
+        "voices": SUPPORTED_TTS_VOICES,
+        "speakers": SUPPORTED_TTS_VOICES,
+        "voices_by_model": SUPPORTED_TTS_VOICES_BY_MODEL,
+        "stt_models": SUPPORTED_STT_MODELS,
+        "tts_models": SUPPORTED_TTS_MODELS,
+        "default": voice_settings.VOICE_TTS_SPEAKER,
+        "default_stt_model": voice_settings.VOICE_STT_MODEL,
+        "default_tts_model": voice_settings.VOICE_TTS_MODEL,
+    }
 
 
 @router.get("/languages", dependencies=[Depends(verify_api_key)])
@@ -173,7 +187,13 @@ async def voice_preview(
             status_code=400,
             detail="No Sarvam API Key available. Add one in Settings or .env to preview voices.",
         )
-    if body.speaker not in SUPPORTED_TTS_VOICE_IDS:
+    if body.model not in SUPPORTED_TTS_MODEL_IDS:
+        raise HTTPException(status_code=400, detail="Unknown TTS model.")
+    model_voices = SUPPORTED_TTS_VOICES_BY_MODEL[body.model]
+    allowed_speakers = {
+        voice["id"] for voices in model_voices.values() for voice in voices
+    }
+    if body.speaker not in allowed_speakers:
         raise HTTPException(status_code=400, detail="Unknown voice.")
 
     label = SUPPORTED_TTS_VOICE_LABELS[body.speaker]
@@ -183,7 +203,7 @@ async def voice_preview(
         "target_language_code": voice_settings.VOICE_TTS_LANGUAGE,
         "text": sample_text,
         "speaker": body.speaker,
-        "model": "bulbul:v3",
+        "model": body.model,
         "output_audio_codec": "mp3",
     }
     headers = {
@@ -242,6 +262,7 @@ async def verify_strict_internal_key(
 
 class VoiceCredentialsRequest(BaseModel):
     tenant_id: str = Field(min_length=1, max_length=64)
+    call_id: Optional[str] = Field(default=None, min_length=1, max_length=36)
 
 
 @router.post("/credentials", dependencies=[Depends(verify_strict_internal_key)])
@@ -254,6 +275,11 @@ async def voice_credentials(body: VoiceCredentialsRequest) -> dict:
     own provider when the owner configured one. Returns only what a voice
     session needs; key values are never logged.
     """
+    if body.call_id:
+        try:
+            return await business.call_credentials(body.call_id, body.tenant_id)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Voice call credentials are unavailable.") from None
     try:
         agent = await owner_service.cached_agent(body.tenant_id)
         workspace = await owner_service.cached_owner(body.tenant_id)
@@ -270,15 +296,13 @@ async def voice_credentials(body: VoiceCredentialsRequest) -> dict:
             status_code=503,
             detail="Voice credentials are temporarily unavailable.",
         )
-    channel = owner_service.channel_settings(agent, "voice") if agent else {}
+    channel = owner_service.resolve_channel_runtime(agent, "voice", stored)
     # Keys only — model/base-URL selection already travels in dispatch
     # metadata (routing, not secrets).
     return {
-        "groq_api_key": stored.get("groq_api_key") or "",
-        "sarvam_api_key": stored.get("sarvam_api_key") or "",
-        "custom_llm_api_key": (
-            channel.get("api_key") or stored.get("custom_llm_api_key") or ""
-        ),
+        "groq_api_key": (channel.get("api_key") or "") if channel["provider"] == "groq" else "",
+        "sarvam_api_key": channel.get("sarvam_api_key") or "",
+        "custom_llm_api_key": (channel.get("api_key") or "") if channel["base_url"] else "",
     }
 
 
@@ -408,158 +432,30 @@ async def create_voice_token(
             else _none()
         ),
     )
+    if not identity.is_owner:
+        from app.services.agent_configuration import published_agent
+        agent = published_agent(agent)
     if identity.contact_id:
         _require_voice_caller(identity, contact, agent)
-    # Phase 2: worker admission — only for callers allowed to call. Makes
-    # sure a worker is actually up before we hand out a token — otherwise
-    # the room gets created with nobody to dispatch the job to, and the call
-    # just times out with no obvious cause.
-    worker_ready = await ensure_worker_running()
-    if not worker_ready:
-        raise HTTPException(
-            status_code=503,
-            detail="Voice service is temporarily unavailable. Please try again in a moment. If the problem persists, ensure the voice worker is running.",
-        )
     # Not in the gather above: it needs the owner record, and passing the one
     # just fetched saves it re-reading the same row.
     resolved = await owner_service.resolve_credentials(
         identity.tenant_id, record=workspace
     )
 
-    effective_groq = (
-        x_user_groq_key
-        or resolved.get("groq_api_key")
-        or settings.GROQ_API_KEY
-        or ""
-    ).strip()
-    effective_sarvam = (
-        x_user_sarvam_key
-        or resolved.get("sarvam_api_key")
-        or settings.SARVAM_API_KEY
-        or ""
-    ).strip()
-    # A custom OpenAI-compatible model replaces Groq entirely, so its presence
-    # makes a Groq key unnecessary rather than merely optional.
     voice_channel = owner_service.channel_settings(agent, "voice") if agent else {}
-    has_custom_llm = bool(
-        (body.custom_llm_base_url or voice_channel.get("base_url") or resolved.get("custom_llm_base_url") or "").strip()
-    )
-
-    if not effective_groq and not has_custom_llm:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Add your Groq API key in Account before starting a voice "
-                "session."
-            ),
+    runtime = owner_service.resolve_channel_runtime(agent, "voice", resolved)
+    if not runtime["api_key"]:
+        location = "Settings → Sarvam API key" if runtime["provider"] == "sarvam" else (
+            "Settings → Groq API key" if runtime["provider"] == "groq" else "Agent → LLM model → API key"
         )
-    if not effective_sarvam:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Add your Sarvam API key in Account — voice needs it for "
-                "speech."
-            ),
-        )
-    # Dispatch metadata carries no key material (the worker resolves stored
-    # keys server-side via POST /voice/credentials), so a key whose only
-    # source is this request's headers could never reach the worker. Reject
-    # loudly here rather than minting a token for a call that cannot speak.
-    if (
-        effective_groq
-        and not has_custom_llm
-        and x_user_groq_key
-        and not resolved.get("groq_api_key")
-        and not settings.GROQ_API_KEY
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Voice calls need a server-side Groq key — save one in "
-                "Account or set GROQ_API_KEY in .env."
-            ),
-        )
-    if (
-        effective_sarvam
-        and x_user_sarvam_key
-        and not resolved.get("sarvam_api_key")
-        and not settings.SARVAM_API_KEY
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Voice calls need a server-side Sarvam key — save one in "
-                "Account or set SARVAM_API_KEY in .env."
-            ),
-        )
-    effective_custom_key = (
-        x_user_custom_llm_key
-        or voice_channel.get("api_key")
-        or resolved.get("custom_llm_api_key")
-        or ""
-    ).strip()
-    if (
-        (body.custom_llm_base_url or voice_channel.get("base_url"))
-        and not effective_custom_key
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "This custom voice endpoint needs its API key saved in "
-                "Account before starting a voice session."
-            ),
-        )
-    if (
-        body.custom_llm_base_url
-        and x_user_custom_llm_key
-        and not voice_channel.get("api_key")
-        and not resolved.get("custom_llm_api_key")
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Voice calls need a server-side custom LLM key — save one "
-                "in Account."
-            ),
-        )
-    # The worker resolves stored keys via POST /voice/credentials, which
-    # requires INTERNAL_API_KEY. If this session depends on stored keys and
-    # that path is unavailable, the token would mint a call that can never
-    # speak — refuse loudly here instead. Environment defaults need no
-    # fetch, so sessions they cover proceed.
-    custom_base_effective = (
-        body.custom_llm_base_url
-        or voice_channel.get("base_url")
-        or resolved.get("custom_llm_base_url")
-        or ""
-    ).strip()
-    needs_stored_fetch = (
-        (
-            not has_custom_llm
-            and bool(resolved.get("groq_api_key"))
-            and not settings.GROQ_API_KEY
-        )
-        or (
-            bool(resolved.get("sarvam_api_key"))
-            and not settings.SARVAM_API_KEY
-        )
-        or (
-            bool(custom_base_effective)
-            and bool(
-                voice_channel.get("api_key")
-                or resolved.get("custom_llm_api_key")
-            )
-        )
-    )
-    if needs_stored_fetch and not settings.INTERNAL_API_KEY:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Voice credential service is not configured (INTERNAL_API_KEY). "
-                "Voice calls that depend on saved workspace keys cannot start "
-                "until it is set."
-            ),
-        )
+        raise HTTPException(status_code=400, detail=f"Save the key in {location} before calling this agent.")
+    if not runtime["sarvam_api_key"]:
+        raise HTTPException(status_code=400, detail="Save your Sarvam API key in Settings. Voice uses it for speech recognition and speech output.")
+    if not runtime["model"]:
+        raise HTTPException(status_code=400, detail="Choose a model in Agent → LLM model before starting a call.")
+    if not settings.INTERNAL_API_KEY:
+        raise HTTPException(status_code=503, detail="Voice credential service is not configured (INTERNAL_API_KEY). Ask the administrator to configure it so saved agent keys can be used.")
 
     if not (settings.LIVEKIT_URL and settings.LIVEKIT_API_KEY and settings.LIVEKIT_API_SECRET):
         raise HTTPException(
@@ -570,6 +466,16 @@ async def create_voice_token(
             ),
         )
 
+    # Phase 2: worker admission — only for callers allowed to call. Makes
+    # sure a worker is actually up before we hand out a token — otherwise
+    # the room gets created with nobody to dispatch the job to, and the call
+    # just times out with no obvious cause.
+    worker_ready = await ensure_worker_running()
+    if not worker_ready:
+        raise HTTPException(
+            status_code=503,
+            detail="Voice service is temporarily unavailable. Please try again in a moment. If the problem persists, ensure the voice worker is running.",
+        )
     # The daily ceiling, checked before a room is created rather than after.
     #
     # This is the only limit that bounds total spend: every other cap is
@@ -654,10 +560,24 @@ async def create_voice_token(
         # Voice, greeting and language are configuration the owner set and the
         # caller hears, so they come from the agent rather than the request.
         # Taking them from the body would let a caller pick a different voice
-        agent_voice = agent.voice_id if (agent.voice_id and agent.voice_id in SUPPORTED_TTS_VOICE_IDS) else "priya"
+        agent_stt_model = getattr(agent, "stt_model", "saaras:v3") or "saaras:v3"
+        if agent_stt_model not in SUPPORTED_STT_MODEL_IDS:
+            agent_stt_model = "saaras:v3"
+        agent_tts_model = getattr(agent, "tts_model", "bulbul:v3") or "bulbul:v3"
+        if agent_tts_model not in SUPPORTED_TTS_MODEL_IDS:
+            agent_tts_model = "bulbul:v3"
+        allowed_agent_voices = {
+            voice["id"]
+            for voices in SUPPORTED_TTS_VOICES_BY_MODEL[agent_tts_model].values()
+            for voice in voices
+        }
+        fallback_voice = "priya" if agent_tts_model == "bulbul:v3" else "anushka"
+        agent_voice = agent.voice_id if agent.voice_id in allowed_agent_voices else fallback_voice
         agent_overrides = {
             "tts_speaker": agent_voice,
             "stt_language": agent.language or "unknown",
+            "stt_model": agent_stt_model,
+            "tts_model": agent_tts_model,
             "greet_on_connect": bool((agent.greeting or "").strip()),
         }
         if (agent.greeting or "").strip():
@@ -703,25 +623,6 @@ async def create_voice_token(
     # POST /voice/credentials (internal key) and falls back to its own
     # environment defaults; per-request header keys are rejected above when
     # they would be the sole source.
-    stored = resolved
-
-    if stored.get("llm_model") and not body.llm_model:
-        meta["llm_model"] = stored["llm_model"]
-    # The workspace endpoint is a fallback for a channel that named no provider
-    # of its own. When the owner picked a model for *this* channel, it is not:
-    # the worker flips the whole provider to custom_openai the moment it sees a
-    # base URL, so leaving this in would send the channel's model name — a Groq
-    # model, say — to an unrelated endpoint and fail the call. The console
-    # clears the channel's own base_url when a hosted model is picked, but it
-    # has no way to clear this one. URLs are routing, not secrets; the key
-    # itself is resolved server-side by the worker.
-    channel_names_a_model = bool(channel.get("model") or channel.get("base_url"))
-    if (
-        stored.get("custom_llm_base_url")
-        and not body.custom_llm_base_url
-        and not channel_names_a_model
-    ):
-        meta["custom_llm_base_url"] = stored["custom_llm_base_url"]
     # Only pass through a voice the worker will actually accept — silently
     # ignore anything else so a stale/bad client value can't crash the session.
     if body.tts_speaker and body.tts_speaker in SUPPORTED_TTS_VOICE_IDS:
@@ -747,12 +648,8 @@ async def create_voice_token(
         meta["max_call_seconds"] = settings.DIRECTORY_MAX_CALL_SECONDS
 
     call_id = await business.create_call(tenant_id, identity.contact_id,
-        client_ip(request), request.headers.get("user-agent"))
+        client_ip(request), request.headers.get("user-agent"), credentials=owner_service.voice_credentials_for_runtime(runtime))
     meta["call_id"] = call_id
-    if body.llm_model:
-        meta["llm_model"] = body.llm_model
-    if body.custom_llm_base_url:
-        meta["custom_llm_base_url"] = body.custom_llm_base_url
     meta.update(agent_overrides)
     if "greet_on_connect" not in agent_overrides:
         meta["greet_on_connect"] = body.greet_on_connect
@@ -771,20 +668,10 @@ async def create_voice_token(
         meta["temperature"] = temperature
     if max_tokens is not None:
         meta["max_tokens"] = max_tokens
-    if channel.get("model"):
-        meta["llm_model"] = channel["model"]
-    # A channel's own provider replaces whatever the workspace has stored —
-    # an owner may reasonably want a fast hosted model for calls and their own
-    # server for chat, and a per-channel endpoint says so unambiguously.
-    if channel.get("base_url"):
-        meta["custom_llm_base_url"] = channel["base_url"]
-    active_model = meta.get("llm_model") or getattr(voice_settings, "VOICE_LLM_MODEL", "") or "openai/gpt-oss-20b"
-    if meta.get("custom_llm_base_url"):
-        meta["llm_provider"] = "custom_openai"
-    elif isinstance(active_model, str) and active_model.lower().startswith("mistral"):
-        meta["llm_provider"] = "mistral"
-    else:
-        meta["llm_provider"] = "groq"
+    meta["llm_model"] = runtime["model"]
+    meta["llm_provider"] = "custom_openai" if runtime["base_url"] else "groq"
+    if runtime["base_url"]:
+        meta["custom_llm_base_url"] = runtime["base_url"]
 
     dispatch_metadata = json.dumps(meta)
     # Report what was actually dispatched, not what the request asked for. The
@@ -794,13 +681,15 @@ async def create_voice_token(
     # thing you go on to debug for an hour.
     logger.info(
         "[VOICE TOKEN] Room: '%s' | Provider: '%s' | LLM: '%s' | endpoint: %s | TTS voice: '%s' "
-        "| STT lang: '%s' | style rules: %s | RAG: %s",
+        "| STT: '%s' (%s) | TTS model: '%s' | style rules: %s | RAG: %s",
         room_name,
         meta.get("llm_provider"),
         meta.get("llm_model") or voice_settings.VOICE_LLM_MODEL,
         meta.get("custom_llm_base_url") or "groq",
         meta.get("tts_speaker") or voice_settings.VOICE_TTS_SPEAKER,
+        meta.get("stt_model") or voice_settings.VOICE_STT_MODEL,
         meta.get("stt_language") or voice_settings.VOICE_STT_LANGUAGE,
+        meta.get("tts_model") or voice_settings.VOICE_TTS_MODEL,
         channel.get("style_rules", True) if channel else "n/a (personal)",
         meta.get("rag_enabled"),
     )

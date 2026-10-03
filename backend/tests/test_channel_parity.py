@@ -9,7 +9,11 @@ chat half was forgotten. These tests exist so that cannot happen quietly a
 third time.
 """
 import pytest
+from types import SimpleNamespace
 
+from app.api import common
+from app.identity import Identity
+from app.services import owner_service
 from app.services.rag_pipeline import RAGPipeline
 
 
@@ -61,6 +65,45 @@ class TestAgentPromptInChat:
         assert prompt == pipeline._build_system_prompt(
             has_images=False, has_text_context=True
         )
+
+
+class TestChatProviderPrecedence:
+    async def _overrides(self, monkeypatch, channel):
+        async def value(result):
+            return result
+
+        agent = SimpleNamespace(name="Asha", chat_rag_enabled=False)
+        monkeypatch.setattr(owner_service, "cached_agent", lambda *_: value(agent))
+        monkeypatch.setattr(owner_service, "cached_owner", lambda *_: value(None))
+        monkeypatch.setattr(owner_service, "channel_settings", lambda *_: channel)
+        monkeypatch.setattr(owner_service, "resolve_credentials", lambda *_args, **_kwargs: value({
+            "groq_api_key": "account-groq",
+            "custom_llm_api_key": "account-custom",
+            "custom_llm_base_url": "https://account.example/v1",
+            "llm_model": "account-model",
+        }))
+        return await common._chat_overrides(
+            Identity(tenant_id="t-1", is_owner=True), None, None, None
+        )
+
+    @pytest.mark.asyncio
+    async def test_agent_groq_selection_does_not_inherit_account_custom_url(self, monkeypatch):
+        result = await self._overrides(monkeypatch, {
+            "script": None, "model": "openai/gpt-oss-20b", "base_url": None,
+            "api_key": None, "temperature": None, "max_tokens": None,
+        })
+        assert result["custom_base_url"] is None
+        assert result["model"] == "openai/gpt-oss-20b"
+
+    @pytest.mark.asyncio
+    async def test_agent_custom_provider_wins_over_account_default(self, monkeypatch):
+        result = await self._overrides(monkeypatch, {
+            "script": None, "model": "agent-model", "base_url": "https://agent.example/v1",
+            "api_key": "agent-key", "temperature": None, "max_tokens": None,
+        })
+        assert result["custom_base_url"] == "https://agent.example/v1"
+        assert result["custom_api_key"] == "agent-key"
+        assert result["model"] == "agent-model"
 
 
 class TestPromptAssembly:

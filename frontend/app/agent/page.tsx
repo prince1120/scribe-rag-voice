@@ -41,7 +41,21 @@ import { extractApiErrorMessage, formatClientError } from "../lib/apiErrors";
 
 type Channel = "voice" | "chat";
 
+function prepareAgentDraft(config: AgentConfig): AgentConfig {
+  const endpoint = config.llm_base_url ?? config.voice_base_url ?? config.chat_base_url ?? "";
+  const model = config.llm_model ?? config.voice_model ?? config.chat_model ?? "";
+  if (endpoint.replace(/\/+$/, "") === "https://api.sarvam.ai/v1" &&
+      ["sarvam-m", "sarvam-30b", "sarvam-30b-16k", "sarvam-105b-32k"].includes(model.trim().toLowerCase())) {
+    return { ...config, llm_model: "sarvam-105b-conversations", llm_base_url: "https://api.sarvam.ai/v1" };
+  }
+  return config;
+}
+
 interface AgentConfig {
+  llm_model?: string | null;
+  llm_base_url?: string | null;
+  llm_api_key?: string | null;
+  has_draft_changes?: boolean;
   name?: string;
   status?: string;
   script: string;
@@ -57,6 +71,8 @@ interface AgentConfig {
   chat_temperature?: number | null;
   voice_max_tokens?: number | null;
   chat_max_tokens?: number | null;
+  stt_model?: string | null;
+  tts_model?: string | null;
   voice_id: string;
   language?: string;
   rag_enabled: boolean;
@@ -75,7 +91,19 @@ interface Voice {
   tagline: string;
 }
 
+interface SpeechModel {
+  id: string;
+  label: string;
+  tagline: string;
+}
+
+interface RuntimeConnection {
+  provider: string; model: string; key_source: string; key_hint: string | null;
+  speech_key_source: string; speech_key_hint: string | null; ready: boolean;
+}
 interface Channels {
+  runtime?: { voice: RuntimeConnection; chat: RuntimeConnection };
+  published_runtime?: { voice: RuntimeConnection; chat: RuntimeConnection } | null;
   voice: boolean;
   chat: boolean;
   voice_blocked_reason?: string | null;
@@ -127,12 +155,20 @@ const DEFAULT_VOICES: Record<string, Voice[]> = {
 import { getWorkspaceCache, setWorkspaceCache, useWorkspace } from "../lib/workspaceCache";
 import { AGENT_TEMPLATES, defaultTemplate, templateForCategory } from "./templates";
 
+function keySourceLabel(source: string) {
+  const labels: Record<string, string> = { agent: "This agent", settings_sarvam: "Settings · Sarvam", settings_groq: "Settings · Groq", settings_custom: "Settings · existing custom connection", server_sarvam: "Server · Sarvam", server_groq: "Server · Groq", missing: "Key required" };
+  return labels[source] || source;
+}
+
 export default function AgentPage() {
   const ws = useWorkspace();
   const businessName = ws.businessName;
 
   const [config, setConfig] = useState<AgentConfig | null>(null);
   const [voices, setVoices] = useState<Record<string, Voice[]>>({});
+  const [voicesByModel, setVoicesByModel] = useState<Record<string, Record<string, Voice[]>>>({});
+  const [sttModels, setSttModels] = useState<SpeechModel[]>([]);
+  const [ttsModels, setTtsModels] = useState<SpeechModel[]>([]);
   const [languages, setLanguages] = useState<Array<{ id: string; label: string }>>([]);
   const [channels, setChannels] = useState<Channels | null>(null);
   const [models, setModels] = useState<ModelOption[]>(DEFAULT_MODELS);
@@ -153,6 +189,8 @@ export default function AgentPage() {
   const [toast, setToast] = useState<{ msg: string; type: "success" | "info" | "error" } | null>(null);
   const [initialConfig, setInitialConfig] = useState<AgentConfig | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [llmTestResult, setLlmTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [testingLlm, setTestingLlm] = useState(false);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -164,10 +202,8 @@ export default function AgentPage() {
   }, []);
 
   // Custom provider states
-  const [isVoiceCustom, setIsVoiceCustom] = useState(false);
-  const [isChatCustom, setIsChatCustom] = useState(false);
-  const [voiceKeyInput, setVoiceKeyInput] = useState("");
-  const [chatKeyInput, setChatKeyInput] = useState("");
+  const [llmKeyInput, setLlmKeyInput] = useState("");
+  const [clearLlmKey, setClearLlmKey] = useState(false);
 
   const loadChannels = useCallback(async () => {
     try {
@@ -185,7 +221,20 @@ export default function AgentPage() {
 
   const hasUnsaved = (() => {
     if (!config || !initialConfig) return false;
-    return JSON.stringify({ voice: config.voice_script, chat: config.chat_script, name: config.name, greeting: config.greeting, voice_id: config.voice_id, language: config.language }) !== JSON.stringify({ voice: initialConfig.voice_script, chat: initialConfig.chat_script, name: initialConfig.name, greeting: initialConfig.greeting, voice_id: initialConfig.voice_id, language: initialConfig.language });
+    const editable = (value: AgentConfig) => ({
+      llm_model: value.llm_model, llm_base_url: value.llm_base_url,
+      name: value.name, voice_script: value.voice_script, chat_script: value.chat_script,
+      voice_model: value.voice_model, chat_model: value.chat_model,
+      voice_base_url: value.voice_base_url, chat_base_url: value.chat_base_url,
+      voice_temperature: value.voice_temperature, chat_temperature: value.chat_temperature,
+      voice_max_tokens: value.voice_max_tokens, chat_max_tokens: value.chat_max_tokens,
+      stt_model: value.stt_model, tts_model: value.tts_model,
+      voice_id: value.voice_id, language: value.language, greeting: value.greeting,
+      rag_enabled: value.rag_enabled, voice_rag_enabled: value.voice_rag_enabled,
+      chat_rag_enabled: value.chat_rag_enabled, style_rules_enabled: value.style_rules_enabled,
+    });
+    return JSON.stringify(editable(config)) !== JSON.stringify(editable(initialConfig))
+      || Boolean(llmKeyInput.trim() || clearLlmKey);
   })();
 
   const refreshAgent = useCallback(async () => {
@@ -193,11 +242,9 @@ export default function AgentPage() {
       const [agentRes] = await Promise.all([ownerFetch("/api/v1/workspace/agent")]);
       if (agentRes.ok) {
         const cfg = await agentRes.json();
-        setConfig(cfg);
+        setConfig(prepareAgentDraft(cfg));
         setInitialConfig(cfg);
         setWorkspaceCache({ agentConfig: cfg, status: cfg.status });
-        if (cfg.voice_base_url || cfg.voice_api_key) setIsVoiceCustom(true);
-        if (cfg.chat_base_url || cfg.chat_api_key) setIsChatCustom(true);
       }
       await loadChannels();
     } catch {}
@@ -206,11 +253,9 @@ export default function AgentPage() {
   useEffect(() => {
     const cached = getWorkspaceCache();
     if (cached.agentConfig) {
-      setConfig(cached.agentConfig);
+      setConfig(prepareAgentDraft(cached.agentConfig));
       setInitialConfig(cached.agentConfig);
       setLoading(false);
-      if (cached.agentConfig.voice_base_url || cached.agentConfig.voice_api_key) setIsVoiceCustom(true);
-      if (cached.agentConfig.chat_base_url || cached.agentConfig.chat_api_key) setIsChatCustom(true);
     }
     if (cached.voices) setVoices(cached.voices);
     if (cached.languages) setLanguages(cached.languages);
@@ -230,11 +275,9 @@ export default function AgentPage() {
           const agentRes = agentResResult.value;
           if (agentRes.ok) {
             const cfg = await agentRes.json();
-            setConfig(cfg);
+            setConfig(prepareAgentDraft(cfg));
             setInitialConfig(cfg);
             setWorkspaceCache({ agentConfig: cfg, status: cfg.status });
-            if (cfg.voice_base_url || cfg.voice_api_key) setIsVoiceCustom(true);
-            if (cfg.chat_base_url || cfg.chat_api_key) setIsChatCustom(true);
           } else if (!config) {
             const err = await extractApiErrorMessage(agentRes, "Could not load assistant configuration.");
             setError(err);
@@ -246,8 +289,12 @@ export default function AgentPage() {
         if (voicesResResult.status === "fulfilled" && voicesResResult.value.ok) {
           try {
             const vData = await voicesResResult.value.json();
-            setVoices(vData);
-            setWorkspaceCache({ voices: vData });
+            const legacyVoices = vData.voices || vData.speakers || vData;
+            setVoices(legacyVoices);
+            setVoicesByModel(vData.voices_by_model || {});
+            setSttModels(vData.stt_models || []);
+            setTtsModels(vData.tts_models || []);
+            setWorkspaceCache({ voices: legacyVoices });
           } catch {}
         }
 
@@ -275,12 +322,14 @@ export default function AgentPage() {
     setConfig((prev) => (prev ? { ...prev, ...patch } : prev));
   }
 
-  async function save() {
-    if (!config) return;
+  async function save(): Promise<boolean> {
+    if (!config) return false;
     setSaving(true);
     setError("");
     try {
-      const payload: Record<string, any> = {
+      const payload: Record<string, unknown> = {
+        llm_model: config.llm_model ?? config.voice_model ?? config.chat_model ?? "sarvam-105b-conversations",
+        llm_base_url: config.llm_base_url ?? config.voice_base_url ?? config.chat_base_url ?? ((config.voice_model || config.chat_model) ? "" : "https://api.sarvam.ai/v1"),
         name: (config.name || "").trim() || "Assistant",
         voice_script: config.voice_script,
         chat_script: config.chat_script,
@@ -292,6 +341,8 @@ export default function AgentPage() {
         chat_temperature: config.chat_temperature,
         voice_max_tokens: config.voice_max_tokens,
         chat_max_tokens: config.chat_max_tokens,
+        stt_model: config.stt_model || "saaras:v3",
+        tts_model: config.tts_model || "bulbul:v3",
         voice_id: config.voice_id,
         language: config.language,
         rag_enabled: config.rag_enabled,
@@ -301,17 +352,8 @@ export default function AgentPage() {
         greeting: config.greeting || undefined,
       };
 
-      if (isVoiceCustom) {
-        if (voiceKeyInput.trim()) payload.voice_api_key = voiceKeyInput.trim();
-      } else if (config.voice_api_key) {
-        payload.voice_api_key = "";
-      }
-
-      if (isChatCustom) {
-        if (chatKeyInput.trim()) payload.chat_api_key = chatKeyInput.trim();
-      } else if (config.chat_api_key) {
-        payload.chat_api_key = "";
-      }
+      if (llmKeyInput.trim()) payload.llm_api_key = llmKeyInput.trim();
+      else if (clearLlmKey) payload.llm_api_key = "";
 
       const response = await ownerFetch("/api/v1/workspace/agent", {
         method: "PUT",
@@ -327,19 +369,46 @@ export default function AgentPage() {
       setConfig(updated);
       setInitialConfig(updated);
       setWorkspaceCache({ agentConfig: updated, status: updated.status });
-      setVoiceKeyInput("");
-      setChatKeyInput("");
+      setLlmKeyInput("");
+      setClearLlmKey(false);
       setSaved(true);
       setLastSavedAt(new Date().toLocaleTimeString());
       await loadChannels();
       showToast(hasUnsaved ? "Changes saved ✓" : "Assistant saved ✓", "success");
       setTimeout(() => setSaved(false), 2500);
+      return true;
     } catch (err) {
       const msg = formatClientError(err, "Could not save assistant.");
       setError(msg);
       showToast(msg, "error");
+      return false;
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveAndTestCustomLlm() {
+    setLlmTestResult(null);
+    const savedOk = await save();
+    if (!savedOk) return;
+    setTestingLlm(true);
+    try {
+      const response = await ownerFetch("/api/v1/workspace/agent/test-llm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: tab }),
+      });
+      if (!response.ok) {
+        throw new Error(await extractApiErrorMessage(response, "LLM connection test failed."));
+      }
+      const result = await response.json();
+      setLlmTestResult({ ok: true, message: `Connection verified for ${result.model}. This model is ready to use.` });
+    } catch (err) {
+      const message = formatClientError(err, "LLM connection test failed.");
+      setLlmTestResult({ ok: false, message });
+      showToast(message, "error");
+    } finally {
+      setTestingLlm(false);
     }
   }
 
@@ -347,6 +416,7 @@ export default function AgentPage() {
     setDeploying(true);
     setError("");
     try {
+      if (live && hasUnsaved && !(await save())) return;
       const response = await ownerFetch(`/api/v1/workspace/agent/${live ? "deploy" : "undeploy"}`, {
         method: "POST",
       });
@@ -356,8 +426,8 @@ export default function AgentPage() {
       }
       const data = await response.json();
       invalidateOwnerCache("/api/v1/workspace/agent");
-      setConfig((prev) => (prev ? { ...prev, status: data.status } : prev));
-      setWorkspaceCache({ status: data.status } as any);
+      await refreshAgent();
+      setWorkspaceCache({ status: data.status });
       showToast(live ? "Agent deployed live ✓ — links now active" : "Agent taken offline — links paused", live ? "success" : "info");
       await loadChannels();
     } catch (err) {
@@ -413,7 +483,7 @@ export default function AgentPage() {
       const response = await ownerFetch("/api/v1/voice/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ speaker: voiceId }),
+        body: JSON.stringify({ speaker: voiceId, model: config?.tts_model || "bulbul:v3" }),
       });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
@@ -456,8 +526,10 @@ export default function AgentPage() {
     );
   }
 
-  const effectiveFemale = (voices.female && voices.female.length > 0) ? voices.female : DEFAULT_VOICES.female;
-  const effectiveMale = (voices.male && voices.male.length > 0) ? voices.male : DEFAULT_VOICES.male;
+  const selectedTtsModel = config.tts_model || "bulbul:v3";
+  const modelVoices = voicesByModel[selectedTtsModel] || voices;
+  const effectiveFemale = (modelVoices.female && modelVoices.female.length > 0) ? modelVoices.female : DEFAULT_VOICES.female;
+  const effectiveMale = (modelVoices.male && modelVoices.male.length > 0) ? modelVoices.male : DEFAULT_VOICES.male;
   const femaleList = effectiveFemale.map((v) => ({ ...v, gender: "female" as const }));
   const maleList = effectiveMale.map((v) => ({ ...v, gender: "male" as const }));
   const selectedVoiceObj = [...femaleList, ...maleList].find((v) => v.id === config.voice_id) || femaleList[0];
@@ -468,11 +540,10 @@ export default function AgentPage() {
   const isVoice = tab === "voice";
 
   const prompt = (isVoice ? config.voice_script : config.chat_script) ?? "";
-  const currentModel = (isVoice ? config.voice_model : config.chat_model) ?? "";
-  const currentBaseUrl = (isVoice ? config.voice_base_url : config.chat_base_url) ?? "";
-  const currentSavedKey = isVoice ? config.voice_api_key : config.chat_api_key;
-  const currentKeyInput = isVoice ? voiceKeyInput : chatKeyInput;
-  const isCurrentCustom = isVoice ? isVoiceCustom : isChatCustom;
+  const currentModel = config.llm_model ?? config.voice_model ?? config.chat_model ?? "sarvam-105b-conversations";
+  const currentBaseUrl = config.llm_base_url ?? config.voice_base_url ?? config.chat_base_url ?? ((config.voice_model || config.chat_model) ? "" : "https://api.sarvam.ai/v1");
+  const currentSavedKey = clearLlmKey ? null : config.llm_api_key ?? config.voice_api_key ?? config.chat_api_key;
+  const isCurrentCustom = Boolean(currentBaseUrl);
 
   const temperature = (isVoice ? config.voice_temperature : config.chat_temperature) ?? "";
   const maxTokens = (isVoice ? config.voice_max_tokens : config.chat_max_tokens) ?? "";
@@ -483,37 +554,15 @@ export default function AgentPage() {
   const setMaxTokens = (value: number | null) =>
     update(isVoice ? { voice_max_tokens: value } : { chat_max_tokens: value });
 
-  const handleSelectGroqModel = (modelId: string) => {
-    if (isVoice) {
-      update({ voice_model: modelId, voice_base_url: "" });
-      setIsVoiceCustom(false);
-    } else {
-      update({ chat_model: modelId, chat_base_url: "" });
-      setIsChatCustom(false);
-    }
+  const selectProvider = (model: string, url: string) => {
+    update({ llm_model: model, llm_base_url: url });
+    setLlmKeyInput("");
+    setClearLlmKey(true);
+    setLlmTestResult(null);
   };
-
-  const handleEnableCustom = () => {
-    if (isVoice) {
-      setIsVoiceCustom(true);
-      if (!config.voice_base_url) update({ voice_base_url: "https://openrouter.ai/api/v1" });
-    } else {
-      setIsChatCustom(true);
-      if (!config.chat_base_url) update({ chat_base_url: "https://openrouter.ai/api/v1" });
-    }
-  };
-
-  const handleDisableCustom = (fallbackModelId?: string) => {
-    if (isVoice) {
-      setIsVoiceCustom(false);
-      update({ voice_base_url: "", voice_model: fallbackModelId || "openai/gpt-oss-20b" });
-      setVoiceKeyInput("");
-    } else {
-      setIsChatCustom(false);
-      update({ chat_base_url: "", chat_model: fallbackModelId || "openai/gpt-oss-120b" });
-      setChatKeyInput("");
-    }
-  };
+  const handleSelectGroqModel = (model: string) => selectProvider(model, "");
+  const handleEnableCustom = () => selectProvider("", "https://openrouter.ai/api/v1");
+  const handleDisableCustom = (model?: string) => selectProvider(model || models[0]?.id || "openai/gpt-oss-20b", "");
 
   if (!config) {
     return (
@@ -955,6 +1004,53 @@ color: "var(--claude-text-2)",
           {/* Voice-specific settings */}
           {isVoice && (
             <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 10, paddingTop: 16, borderTop: "1px solid var(--claude-surface-2)" }}>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label style={S.label}>Speech-to-Text Model</label>
+                  <select
+                    style={S.input}
+                    value={config.stt_model || "saaras:v3"}
+                    onChange={(e) => update({ stt_model: e.target.value })}
+                  >
+                    {(sttModels.length ? sttModels : [
+                      { id: "saaras:v3", label: "Saaras v3", tagline: "Recommended" },
+                      { id: "saaras:v4", label: "Saaras v4", tagline: "Latest; Global English" },
+                    ]).map((model) => (
+                      <option key={model.id} value={model.id}>{model.label} — {model.tagline}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={S.label}>Text-to-Speech Model</label>
+                  <select
+                    style={S.input}
+                    value={selectedTtsModel}
+                    onChange={(e) => {
+                      const ttsModel = e.target.value;
+                      const groups = voicesByModel[ttsModel];
+                      const compatible = groups
+                        ? [...(groups.female || []), ...(groups.male || [])]
+                        : [];
+                      const voiceId = compatible.some((voice) => voice.id === config.voice_id)
+                        ? config.voice_id
+                        : (ttsModel === "bulbul:v2" ? "anushka" : "priya");
+                      update({ tts_model: ttsModel, voice_id: voiceId });
+                      setVoiceGenderFilter("all");
+                    }}
+                  >
+                    {(ttsModels.length ? ttsModels : [
+                      { id: "bulbul:v3", label: "Bulbul v3", tagline: "Recommended" },
+                      { id: "bulbul:v2", label: "Bulbul v2", tagline: "Legacy" },
+                    ]).map((model) => (
+                      <option key={model.id} value={model.id}>{model.label} — {model.tagline}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <p style={{ fontSize: 11, color: "var(--claude-muted)", margin: "-8px 0 0" }}>
+                Both speech models use the workspace Sarvam key from Account. Replacing that key updates voice access for every assistant; it does not change these model selections.
+              </p>
+
               {/* Language Selection */}
               <div>
                 <label style={S.label}>Caller Spoken Language</label>
@@ -994,7 +1090,7 @@ color: "var(--claude-text-2)",
                         <button
                           key={g.id}
                           type="button"
-                          onClick={() => setVoiceGenderFilter(g.id as any)}
+                          onClick={() => setVoiceGenderFilter(g.id as "all" | "female" | "male")}
                           style={{
                             padding: "5px 12px",
                             borderRadius: 9999,
@@ -1171,47 +1267,59 @@ color: "var(--claude-text-2)",
         </div>
 
         {/* ── Card 3: Model & Sampling ────────────────────────── */}
+        <section className="agent-section" aria-label="Models and keys in use">
+          <h2 className="agent-label">Models and keys in use — saved draft</h2>
+          <p className="agent-hint">Calls use saved settings. No keys are requested when starting a call.</p>
+          {channels?.runtime ? <dl className="agent-runtime-list">
+            <div><dt>LLM · voice and chat</dt><dd>{channels.runtime.voice.model} · {channels.runtime.voice.provider}</dd></div>
+            <div><dt>LLM key</dt><dd>{channels.runtime.voice.key_hint || "Missing"} · {keySourceLabel(channels.runtime.voice.key_source)} <a href={channels.runtime.voice.key_source === "agent" || channels.runtime.voice.provider === "custom_openai" ? "#agent-llm" : "/settings#provider-keys"}>Edit</a></dd></div>
+            <div><dt>STT / TTS</dt><dd>{config.stt_model || "saaras:v3"} / {config.tts_model || "bulbul:v3"}</dd></div>
+            <div><dt>Speech key</dt><dd>{channels.runtime.voice.speech_key_hint || "Missing"} · {keySourceLabel(channels.runtime.voice.speech_key_source)} <a href="/settings#provider-keys">Edit in Settings</a></dd></div>
+          </dl> : <p className="agent-hint">Loading saved connections…</p>}
+          {hasUnsaved && <p className="agent-hint">Save changes to update this summary and enable testing.</p>}
+          {channels?.published_runtime && <p className="agent-hint">Published LLM: {channels.published_runtime.voice.model} · {channels.published_runtime.voice.key_hint || "Missing key"} · {keySourceLabel(channels.published_runtime.voice.key_source)}. Customers use this connection until you publish changes.</p>}
+          {channels?.runtime && channels.runtime.voice.model !== channels.runtime.chat.model && <p className="agent-hint">Legacy chat uses {channels.runtime.chat.model}. Saving this editor applies the displayed LLM to both channels.</p>}
+          {config.has_draft_changes && <p className="agent-hint">The saved draft differs from the published version.</p>}
+          {isLive && <button type="button" className="links-btn" disabled={deploying || saving} onClick={() => deploy(true)}>Publish changes</button>}
+        </section>
+        {initialConfig && prepareAgentDraft(initialConfig) !== initialConfig && <p className="agent-hint">Your saved Sarvam model is retired. The editor now selects Sarvam 105B Conversations. Save and test to apply this change; publish when ready.</p>}
         <ChannelModelPicker
-          channel={tab}
           models={models}
           selectedModel={currentModel}
           baseUrl={currentBaseUrl}
           savedApiKey={currentSavedKey}
-          apiKeyInput={currentKeyInput}
+          apiKeyInput={llmKeyInput}
           isCustom={isCurrentCustom}
           onSelectGroqModel={handleSelectGroqModel}
+          onSelectSarvam={() => selectProvider("sarvam-105b-conversations", "https://api.sarvam.ai/v1")}
+          onClearKey={() => { setClearLlmKey(true); setLlmKeyInput(""); }}
           onEnableCustom={handleEnableCustom}
           onDisableCustom={handleDisableCustom}
-          onChangeBaseUrl={(val) =>
-            update(isVoice ? { voice_base_url: val } : { chat_base_url: val })
-          }
-          onChangeApiKey={(val) => {
-            if (isVoice) setVoiceKeyInput(val);
-            else setChatKeyInput(val);
-          }}
-          onChangeCustomModel={(val) =>
-            update(isVoice ? { voice_model: val } : { chat_model: val })
-          }
+          onChangeBaseUrl={(val) => { update({ llm_base_url: val }); setLlmTestResult(null); }}
+          onChangeApiKey={setLlmKeyInput}
+          onChangeCustomModel={(val) => { update({ llm_model: val }); setLlmTestResult(null); }}
+          onSave={saveAndTestCustomLlm}
+          saving={saving || testingLlm}
+          testResult={llmTestResult}
         />
-
         {/* ── Card 4: Knowledge Documents (RAG fallback) — always visible, fallback OFF by default (prompt-first) */}
         <div id="assistant-knowledge" style={{ ...S.card, background: "var(--claude-bg)" }}>
           <div className="flex items-center gap-2 text-[12px] font-bold" style={{ color: "var(--claude-text-2)" }}>
             <FileText size={14} /> Knowledge Base (RAG fallback) — optional
           </div>
           <p className="text-[11px] leading-4 -mt-2" style={{ color: "var(--claude-muted)" }}>
-            Prompt is primary for both Voice & Chat (fast, no stall). When "Fallback" above is ON, these docs supplement only if prompt lacks answer. Creation fallback doc (one per agent) is auto-managed — delete agent deletes its fallback doc.
+            Prompts define both channels. When &quot;Fallback&quot; is enabled, these documents provide supporting knowledge. Each automatically created document belongs to its saved agent.
           </p>
           <AgentDocuments purpose="rag" />
         </div>
 
         <section id="assistant-test" aria-label="Test your assistant" className="workspace-test-section">
           <h2>Try your assistant</h2>
-          <p>Save your changes, then ask a real customer question to check the response.</p>
+          <p>Save the draft, then test it. Customers keep using the published version until you publish changes.</p>
           <AgentTest
             deployed={isLive}
-            voiceAvailable={Boolean(channels?.voice)}
-            chatAvailable={Boolean(channels?.chat)}
+            voiceAvailable={!hasUnsaved && Boolean(channels?.voice)}
+            chatAvailable={!hasUnsaved && Boolean(channels?.chat)}
             voiceBlockedReason={channels?.voice_blocked_reason || "Save a voice prompt and configure your voice providers to test this channel."}
             chatBlockedReason={channels?.chat_blocked_reason || "Save your chat configuration to test this channel."}
           />

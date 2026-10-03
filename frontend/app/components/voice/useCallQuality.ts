@@ -20,9 +20,9 @@ import { AudioPresets, ConnectionQuality, Room, RoomEvent } from "livekit-client
  *
  * `noiseSuppression` removes steady non-speech sound — a fan, traffic, a
  * keyboard. It does NOT remove a second person talking nearby: that is speech,
- * and browser suppression is built to preserve speech. Background *voices* need
- * either a speech-aware filter (LiveKit Cloud's Krisp plugin) or an
- * interruption mode that waits for words rather than audio.
+ * and browser suppression is built to preserve speech. Background *voices* are
+ * handled by `micEnhancement.ts` (on-device Krisp BVC, primary speaker kept),
+ * backed by the worker's adaptive interruption gate.
  *
  * `echoCancellation` matters more than it looks on this stack: without it the
  * agent's own voice leaves the speaker, re-enters the microphone, and

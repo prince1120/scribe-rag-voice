@@ -15,7 +15,7 @@ from typing import Dict
 from app.services.voice.domain.interfaces import LLMFactory, STTFactory, TTSFactory
 from app.services.voice.providers.groq_llm import build_groq_llm
 from app.services.voice.providers.mistral_llm import build_mistral_llm
-from app.services.voice.providers.openai_compatible_llm import build_custom_openai_llm
+from app.services.voice.providers.openai_compatible_llm import build_custom_openai_llm, build_sarvam_llm
 from app.services.voice.providers.sarvam_stt import build_sarvam_stt
 from app.services.voice.providers.sarvam_tts import build_sarvam_tts
 
@@ -67,4 +67,5 @@ def default_registry() -> ProviderRegistry:
     registry.register_llm("groq", build_groq_llm)
     registry.register_llm("mistral", build_mistral_llm)
     registry.register_llm("custom_openai", build_custom_openai_llm)
+    registry.register_llm("sarvam", build_sarvam_llm)
     return registry

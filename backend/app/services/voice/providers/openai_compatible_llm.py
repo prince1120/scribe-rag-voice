@@ -14,6 +14,8 @@ from app.services.voice.config import VoiceSettings
 
 
 def build_custom_openai_llm(settings: VoiceSettings) -> llm.LLM:
+    from app.services.llm_connection import is_sarvam_endpoint
+
     if not settings.CUSTOM_LLM_BASE_URL:
         raise ValueError(
             "No custom LLM base URL was supplied for this session."
@@ -22,10 +24,19 @@ def build_custom_openai_llm(settings: VoiceSettings) -> llm.LLM:
         raise ValueError(
             "No custom LLM API key was supplied for this session."
         )
+    sarvam = is_sarvam_endpoint(settings.CUSTOM_LLM_BASE_URL)
+    options = {"extra_body": {"max_tokens": settings.VOICE_LLM_MAX_TOKENS, "reasoning_effort": None}} if sarvam else {"max_completion_tokens": settings.VOICE_LLM_MAX_TOKENS}
     return lk_openai.LLM(
         model=settings.VOICE_LLM_MODEL,
         api_key=settings.CUSTOM_LLM_API_KEY,
         base_url=settings.CUSTOM_LLM_BASE_URL,
         temperature=settings.VOICE_LLM_TEMPERATURE,
-        max_completion_tokens=settings.VOICE_LLM_MAX_TOKENS,
+        **options,
     )
+
+
+def build_sarvam_llm(settings: VoiceSettings) -> llm.LLM:
+    return build_custom_openai_llm(settings.model_copy(update={
+        "CUSTOM_LLM_BASE_URL": "https://api.sarvam.ai/v1",
+        "CUSTOM_LLM_API_KEY": settings.SARVAM_API_KEY,
+    }))

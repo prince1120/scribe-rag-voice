@@ -32,7 +32,7 @@ class VoiceSettings(BaseSettings):
     # Mistral uses the OpenAI-compatible API and is the default for voice.
     # It avoids the very small Groq TPM allowance that can leave an active
     # caller waiting with no response when a burst of turns exhausts it.
-    VOICE_LLM_PROVIDER: str = "groq"
+    VOICE_LLM_PROVIDER: str = "sarvam"
 
     # Sarvam
     SARVAM_API_KEY: str = ""
@@ -42,7 +42,9 @@ class VoiceSettings(BaseSettings):
     # "unknown" (audio streamed continuously but no result ever came back).
     # saaras:v3 supports every listed language plus reliable auto-detect.
     VOICE_STT_LANGUAGE: str = "unknown"
+    VOICE_STT_MODEL: str = "saaras:v3"
     VOICE_TTS_LANGUAGE: str = "en-IN"
+    VOICE_TTS_MODEL: str = "bulbul:v3"
     # Must be compatible with the TTS plugin's default model (bulbul:v3) —
     # bulbul:v2 speakers like "anushka" will raise at construction time.
     # Sarvam's production guidance recommends Priya as the most broadly
@@ -50,13 +52,11 @@ class VoiceSettings(BaseSettings):
     # can still choose any supported voice per agent.
     VOICE_TTS_SPEAKER: str = "priya"
 
-    # Groq — default to the *instant* model: for real-time voice, time-to-
-    # first-token dominates perceived latency, and 8b-instant is far snappier
-    # than 70b-versatile. Override VOICE_LLM_MODEL in .env if you'd rather
-    # trade latency for the larger model's reasoning.
+    # Sarvam's conversational variant is tuned for real-time voice. The
+    # provider factory explicitly disables reasoning and streams replies.
     GROQ_API_KEY: str = ""
     MISTRAL_API_KEY: str = ""
-    VOICE_LLM_MODEL: str = "mixtral-8x7b-32768"
+    VOICE_LLM_MODEL: str = "sarvam-105b-conversations"
     # Deliberately lower than text chat's rag_pipeline.py default (800): a
     # spoken answer needs to stay short to be listenable (800 tokens is
     # roughly a minute of TTS) and short is also cheap. The Settings panel's
@@ -178,11 +178,18 @@ class VoiceSettings(BaseSettings):
     VOICE_SEMANTIC_TURN_DETECTION: bool = False
     VOICE_PREEMPTIVE_TTS: bool = False
 
-    # Local VAD is dependable even without a hosted turn detector. A caller
-    # can barge in on the first audible word instead of waiting for STT.
-    VOICE_INTERRUPTION_MODE: str = "vad"
+    # "adaptive" classifies overlapping audio before cutting the agent in:
+    # a real interruption still barges through, but background voices, coughs
+    # and backchannels are ignored instead of hijacking the turn. Costs roughly
+    # 100-200ms of barge-in latency versus raw "vad" — worth it wherever a
+    # caller isn't alone in a quiet room. Matches LiveKit's own noisy-room
+    # preset (adaptive + 0.5s gate).
+    VOICE_INTERRUPTION_MODE: str = "adaptive"
     VOICE_INTERRUPTION_MIN_WORDS: int = 0
-    VOICE_INTERRUPTION_MIN_DURATION: float = 0.20
+    # Background blips (door, cough, a word from someone nearby) rarely sustain
+    # half a second of speech-like audio; a real interruption does. Zero-cost
+    # gate — filters false cuts without adding any turn latency.
+    VOICE_INTERRUPTION_MIN_DURATION: float = 0.50
     VOICE_RESUME_FALSE_INTERRUPTION: bool = True
     VOICE_VAD_MIN_SILENCE: float = 0.24
     # Greet the user out loud the moment the call connects, like a real
@@ -226,30 +233,56 @@ if not voice_settings.LIMITS_ENABLED:
 # endpoint validates the caller's picked speaker against this so a bad value
 # can never reach and crash the worker. Grouped for the UI's male/female
 # picker; taglines are informational only.
-SUPPORTED_TTS_VOICES: dict[str, list[dict[str, str]]] = {
-    "male": [
-        {"id": "shubh", "label": "Shubh", "tagline": "Confident & Bold"},
-        {"id": "ratan", "label": "Ratan", "tagline": "Natural English & Hinglish"},
-        {"id": "rahul", "label": "Rahul", "tagline": "Deep & Authoritative"},
-        {"id": "amit", "label": "Amit", "tagline": "Steady & Trustworthy"},
-        {"id": "kabir", "label": "Kabir", "tagline": "Rich & Cinematic"},
-        {"id": "dev", "label": "Dev", "tagline": "Casual & Relatable"},
-    ],
-    "female": [
-        {"id": "priya", "label": "Priya", "tagline": "Natural & Conversational"},
-        {"id": "ishita", "label": "Ishita", "tagline": "Polished & Articulate"},
-        {"id": "neha", "label": "Neha", "tagline": "Energetic & Warm"},
-        {"id": "roopa", "label": "Roopa", "tagline": "Gentle & Soothing"},
-        {"id": "shreya", "label": "Shreya", "tagline": "Bright & Warm"},
-    ],
+SUPPORTED_STT_MODELS: list[dict[str, str]] = [
+    {"id": "saaras:v3", "label": "Saaras v3", "tagline": "Recommended for Indian languages and code-mixing"},
+    {"id": "saaras:v4", "label": "Saaras v4", "tagline": "Latest; adds Global English support"},
+]
+SUPPORTED_STT_MODEL_IDS: set[str] = {model["id"] for model in SUPPORTED_STT_MODELS}
+
+SUPPORTED_TTS_MODELS: list[dict[str, str]] = [
+    {"id": "bulbul:v3", "label": "Bulbul v3", "tagline": "Recommended; natural prosody and more voices"},
+    {"id": "bulbul:v2", "label": "Bulbul v2", "tagline": "Legacy; pitch and loudness controls"},
+]
+SUPPORTED_TTS_MODEL_IDS: set[str] = {model["id"] for model in SUPPORTED_TTS_MODELS}
+
+
+def _voice(voice_id: str) -> dict[str, str]:
+    return {"id": voice_id, "label": voice_id.title(), "tagline": "Sarvam neural voice"}
+
+
+# Only expose combinations accepted by the installed LiveKit streaming plugin.
+SUPPORTED_TTS_VOICES_BY_MODEL: dict[str, dict[str, list[dict[str, str]]]] = {
+    "bulbul:v3": {
+        "female": [_voice(v) for v in (
+            "ritu", "pooja", "simran", "kavya", "ishita", "shreya", "priya",
+            "neha", "roopa", "amelia", "sophia", "suhani", "rupali", "tanya",
+            "shruti", "kavitha",
+        )],
+        "male": [_voice(v) for v in (
+            "shubh", "rahul", "amit", "ratan", "rohan", "dev", "manan", "sumit",
+            "aditya", "kabir", "varun", "aayan", "ashutosh", "advait",
+        )],
+    },
+    "bulbul:v2": {
+        "female": [_voice(v) for v in ("anushka", "manisha", "vidya", "arya")],
+        "male": [_voice(v) for v in ("abhilash", "karun", "hitesh")],
+    },
 }
 
+SUPPORTED_TTS_VOICES = SUPPORTED_TTS_VOICES_BY_MODEL["bulbul:v3"]
+
 SUPPORTED_TTS_VOICE_IDS: set[str] = {
-    v["id"] for group in SUPPORTED_TTS_VOICES.values() for v in group
+    v["id"]
+    for model_voices in SUPPORTED_TTS_VOICES_BY_MODEL.values()
+    for group in model_voices.values()
+    for v in group
 }
 
 SUPPORTED_TTS_VOICE_LABELS: dict[str, str] = {
-    v["id"]: v["label"] for group in SUPPORTED_TTS_VOICES.values() for v in group
+    v["id"]: v["label"]
+    for model_voices in SUPPORTED_TTS_VOICES_BY_MODEL.values()
+    for group in model_voices.values()
+    for v in group
 }
 
 # The Sarvam REST TTS endpoint (non-streaming) — used directly by

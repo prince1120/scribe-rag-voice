@@ -45,6 +45,7 @@ class TestItRuns:
     def test_a_missing_key_is_explained_not_crashed(self, client, monkeypatch):
         from app.config import settings
         monkeypatch.setattr(settings, "GROQ_API_KEY", "")
+        monkeypatch.setattr(settings, "SARVAM_API_KEY", "")
         # Deterministic regardless of suite order or shared database state:
         # no stored credential may satisfy the key check from cache or rows
         # written by other tests.
@@ -57,7 +58,7 @@ class TestItRuns:
         response = client.post("/api/v1/voice/token", json={})
         assert response.status_code == 400
         # The message should say where to fix it, not restate the rule.
-        assert "Account" in response.json()["detail"]
+        assert "Settings" in response.json()["detail"]
 
     def test_an_unexpected_body_does_not_crash_it(self, client):
         """Callers send partial bodies — the console's test call sends {} so
@@ -96,11 +97,20 @@ class TestWorkerAdmission:
     ):
         """Exercise the real endpoint function through its worker gate.
 
-        No credentials or LiveKit token should be evaluated after a failed
-        worker check; the browser must receive an actionable 503 instead of
+        With credentials configured, the browser must receive an actionable
+        503 after a failed worker check instead of
         joining a room whose assistant never arrives.
         """
         monkeypatch.setattr(settings, "VOICE_WORKER_AUTO_START", True)
+        monkeypatch.setattr(settings, "INTERNAL_API_KEY", "test-internal")
+        monkeypatch.setattr(settings, "LIVEKIT_URL", "wss://test.invalid")
+        monkeypatch.setattr(settings, "LIVEKIT_API_KEY", "test-livekit")
+        monkeypatch.setattr(settings, "LIVEKIT_API_SECRET", "test-secret")
+
+        async def stored_credentials(*args, **kwargs):
+            return {"sarvam_api_key": "test-sarvam"}
+
+        monkeypatch.setattr(voice_routes.owner_service, "resolve_credentials", stored_credentials)
 
         async def unavailable():
             return False

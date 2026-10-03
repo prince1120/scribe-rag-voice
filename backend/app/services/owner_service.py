@@ -24,6 +24,10 @@ from typing import Optional
 
 from app import repositories
 from app.services import prompt_rules
+from app.services.llm_connection import (
+    SARVAM_LLM_URL, SARVAM_VOICE_MODEL, SARVAM_CHAT_MODEL,
+    is_sarvam_endpoint, verify_connection, validate_endpoint, ConnectionError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +163,91 @@ DEFAULT_SCRIPT = (
     "than guessing."
 )
 
+def resolve_channel_runtime(agent, channel: str, stored: dict) -> dict:
+    """Resolve routing and credentials together; never borrow another provider's key."""
+    from app.config import settings
+
+    selected = channel_settings(agent, channel)
+    if getattr(agent, "llm_model", None) or getattr(agent, "llm_base_url", None):
+        selected.update({
+            "model": agent.llm_model, "base_url": agent.llm_base_url,
+            "api_key": _decrypt_quietly(getattr(agent, "llm_api_key_enc", None)),
+        })
+    model = (selected.get("model") or "").strip()
+    base_url = (selected.get("base_url") or "").strip()
+    source = "agent"
+    if not model and not base_url:
+        model = (stored.get("llm_model") or "").strip()
+        base_url = (stored.get("custom_llm_base_url") or "").strip()
+        source = "settings"
+    if not model and not base_url:
+        base_url = SARVAM_LLM_URL
+        model = SARVAM_VOICE_MODEL if channel == "voice" else SARVAM_CHAT_MODEL
+        source = "default"
+
+    if is_sarvam_endpoint(base_url):
+        provider = "sarvam"
+        model = model or (SARVAM_VOICE_MODEL if channel == "voice" else SARVAM_CHAT_MODEL)
+        key = stored.get("sarvam_api_key") or settings.SARVAM_API_KEY
+        key_source = "settings_sarvam" if stored.get("sarvam_api_key") else "server_sarvam"
+    elif base_url:
+        provider = "custom_openai"
+        # An account key is safe only for that same endpoint. A changed URL
+        # must not send the previous provider's key to a different host.
+        key = selected.get("api_key") if source == "agent" else None
+        key_source = "agent" if key else "settings_custom"
+        legacy_selection = not getattr(agent, "llm_model", None) and not getattr(agent, "llm_base_url", None)
+        if not key and (source == "settings" or legacy_selection) and base_url.rstrip("/") == (stored.get("custom_llm_base_url") or "").rstrip("/"):
+            key = stored.get("custom_llm_api_key")
+    else:
+        provider = "groq"
+        key = stored.get("groq_api_key") or settings.GROQ_API_KEY
+        key_source = "settings_groq" if stored.get("groq_api_key") else "server_groq"
+
+    speech_key = stored.get("sarvam_api_key") or settings.SARVAM_API_KEY
+    return {
+        **selected, "provider": provider, "model": model, "base_url": base_url or None,
+        "api_key": key or None, "key_source": key_source if key else "missing",
+        "selection_source": source, "sarvam_api_key": speech_key or None,
+        "speech_key_source": ("settings_sarvam" if stored.get("sarvam_api_key") else "server_sarvam") if speech_key else "missing",
+    }
+
+
+def voice_credentials_for_runtime(runtime: dict) -> dict:
+    return {
+        "groq_api_key": runtime["api_key"] if runtime["provider"] == "groq" else "",
+        "sarvam_api_key": runtime["sarvam_api_key"] or "",
+        "custom_llm_api_key": runtime["api_key"] if runtime["base_url"] else "",
+    }
+
+
+def runtime_summary(agent, stored: dict) -> dict:
+    from app.services import secrets_box
+    result = {}
+    for channel in ("voice", "chat"):
+        runtime = resolve_channel_runtime(agent, channel, stored)
+        result[channel] = {
+            name: runtime[name] for name in ("provider", "model", "base_url", "key_source", "selection_source", "speech_key_source")
+        }
+        result[channel].update({
+            "key_hint": secrets_box.mask(runtime["api_key"]) if runtime["api_key"] else None,
+            "speech_key_hint": secrets_box.mask(runtime["sarvam_api_key"]) if runtime["sarvam_api_key"] else None,
+            "ready": bool(runtime["api_key"] and runtime["model"] and (channel != "voice" or runtime["sarvam_api_key"])),
+        })
+    return result
+
+
+async def agent_runtime_summary(tenant_id: str, *, published: bool = False) -> dict:
+    """Masked execution settings; never return key values to the owner."""
+    import asyncio
+    from app.services.agent_configuration import published_agent
+
+    agent, workspace = await asyncio.gather(cached_agent(tenant_id), cached_owner(tenant_id))
+    if published:
+        agent = published_agent(agent)
+    stored = await resolve_credentials(tenant_id, record=workspace)
+    return runtime_summary(agent, stored)
+
 
 def _mask_enc(encrypted):
     """Show that a key exists without handing it back."""
@@ -172,6 +261,13 @@ def _mask_enc(encrypted):
         return "unreadable - please re-enter"
 
 
+def _has_draft_changes(record) -> bool:
+    from app.services.agent_configuration import serialize
+
+    published = getattr(record, "published_config", None)
+    return bool(published and published != serialize(record))
+
+
 async def get_agent_config(tenant_id: str) -> dict:
     """The owner's agent, with defaults filled in when they have not saved one.
 
@@ -182,20 +278,26 @@ async def get_agent_config(tenant_id: str) -> dict:
     if record is None:
         return {
             "voice_script": None,
+            "llm_model": SARVAM_VOICE_MODEL,
+            "llm_base_url": SARVAM_LLM_URL,
+            "llm_api_key": None,
+            "has_draft_changes": False,
             "chat_script": None,
-            "voice_model": None,
-            "chat_model": None,
-            "voice_base_url": None,
-            "chat_base_url": None,
+            "voice_model": SARVAM_VOICE_MODEL,
+            "chat_model": SARVAM_CHAT_MODEL,
+            "voice_base_url": SARVAM_LLM_URL,
+            "chat_base_url": SARVAM_LLM_URL,
             "voice_api_key": None,
             "chat_api_key": None,
             "voice_temperature": None,
             "voice_max_tokens": None,
             "chat_temperature": None,
             "chat_max_tokens": None,
+            "stt_model": "saaras:v3",
+            "tts_model": "bulbul:v3",
             "name": "Assistant",
             "script": DEFAULT_SCRIPT,
-            "voice_id": "anushka",
+            "voice_id": "priya",
             "language": "unknown",
             "rag_enabled": True,
             "greeting": None,
@@ -210,8 +312,13 @@ async def get_agent_config(tenant_id: str) -> dict:
         voice_rag = False
     if chat_rag is None:
         chat_rag = False
+    runtime = resolve_channel_runtime(record, "voice", await resolve_credentials(tenant_id))
     return {
         "voice_script": record.voice_script,
+        "llm_model": runtime["model"],
+        "llm_base_url": runtime["base_url"] or "",
+        "llm_api_key": _mask_enc(getattr(record, "llm_api_key_enc", None) or getattr(record, "voice_api_key_enc", None)),
+        "has_draft_changes": _has_draft_changes(record),
         "chat_script": record.chat_script,
         "voice_model": record.voice_model,
         "chat_model": record.chat_model,
@@ -223,6 +330,8 @@ async def get_agent_config(tenant_id: str) -> dict:
         "voice_max_tokens": record.voice_max_tokens,
         "chat_temperature": record.chat_temperature,
         "chat_max_tokens": record.chat_max_tokens,
+        "stt_model": getattr(record, "stt_model", "saaras:v3") or "saaras:v3",
+        "tts_model": getattr(record, "tts_model", "bulbul:v3") or "bulbul:v3",
         "name": record.name,
         "status": record.status,
         "script": record.script or DEFAULT_SCRIPT,
@@ -241,10 +350,14 @@ async def save_agent_config(
     tenant_id: str, *, name: Optional[str] = None,
     script: Optional[str] = None, voice_id: Optional[str] = None,
     language: Optional[str] = None,
+    stt_model: Optional[str] = None, tts_model: Optional[str] = None,
     rag_enabled: Optional[bool] = None, greeting: Optional[str] = None,
     style_rules_enabled: Optional[bool] = None,
     voice_rag_enabled: Optional[bool] = None, chat_rag_enabled: Optional[bool] = None,
     allowed_voices: Optional[frozenset[str]] = None,
+    allowed_stt_models: Optional[set[str]] = None,
+    allowed_tts_models: Optional[set[str]] = None,
+    allowed_voices_by_model: Optional[dict[str, set[str]]] = None,
     **channel_fields,
 ) -> dict:
     """Save the agent, refusing anything the voice worker would reject.
@@ -257,6 +370,16 @@ async def save_agent_config(
         if voice_id not in allowed_voices:
             raise OwnerError("That voice is not available.")
 
+    if stt_model is not None and allowed_stt_models is not None:
+        if stt_model not in allowed_stt_models:
+            raise OwnerError("That speech-to-text model is not available.")
+    if tts_model is not None and allowed_tts_models is not None:
+        if tts_model not in allowed_tts_models:
+            raise OwnerError("That text-to-speech model is not available.")
+    if voice_id is not None and tts_model is not None and allowed_voices_by_model:
+        if voice_id not in allowed_voices_by_model.get(tts_model, set()):
+            raise OwnerError("That voice is not compatible with the selected TTS model.")
+
     if script is not None and not script.strip():
         raise OwnerError("The script cannot be empty — it is what the agent says.")
 
@@ -264,12 +387,44 @@ async def save_agent_config(
     # rather than left as columns anyone with a database dump can read.
     from app.services import secrets_box
 
-    for field in ("voice_api_key", "chat_api_key"):
+    existing = await repositories.get_agent(tenant_id)
+    for channel in ("llm", "voice", "chat"):
+        url_field = f"{channel}_base_url"
+        new_url = channel_fields.get(url_field)
+        if new_url is not None:
+            try:
+                new_url = validate_endpoint(new_url)
+            except ConnectionError as exc:
+                raise OwnerError(str(exc)) from None
+            channel_fields[url_field] = new_url
+            if new_url and not new_url.startswith(("https://", "http://")):
+                raise OwnerError("The model URL should start with https:// or http://.")
+            old_url = (getattr(existing, url_field, None) or "").rstrip("/")
+            if channel == "llm" and existing is not None and not getattr(existing, "llm_model", None):
+                legacy_url = getattr(existing, "voice_base_url", None) or getattr(existing, "chat_base_url", None) or ""
+                if legacy_url.rstrip("/") == new_url.rstrip("/"):
+                    old_url = new_url.rstrip("/")
+                    if channel_fields.get("llm_api_key") is None:
+                        channel_fields["llm_api_key_enc"] = getattr(existing, "voice_api_key_enc", None) or getattr(existing, "chat_api_key_enc", None) or ""
+                if not channel_fields.get("llm_api_key_enc") and channel_fields.get("llm_api_key") is None:
+                    owner = await cached_owner(tenant_id)
+                    if owner and (owner.custom_llm_base_url or "").rstrip("/") == new_url.rstrip("/"):
+                        channel_fields["llm_api_key_enc"] = owner.custom_llm_key_enc or ""
+                        old_url = new_url.rstrip("/")
+            if old_url != new_url.rstrip("/") and not channel_fields.get(f"{channel}_api_key"):
+                channel_fields[f"{channel}_api_key"] = ""
+
+    if existing is None and not any(channel_fields.get(field) for field in ("llm_model", "voice_model", "chat_model", "llm_base_url", "voice_base_url", "chat_base_url")):
+        channel_fields.update(llm_model=SARVAM_VOICE_MODEL, llm_base_url=SARVAM_LLM_URL)
+    for field in ("llm_api_key", "voice_api_key", "chat_api_key"):
         value = channel_fields.pop(field, None)
         if value is not None:
             channel_fields[f"{field}_enc"] = (
                 secrets_box.encrypt(value.strip()) if value.strip() else ""
             )
+    if channel_fields.get("llm_model") is not None or channel_fields.get("llm_base_url") is not None:
+        for prefix in ("voice", "chat"):
+            channel_fields.update({f"{prefix}_model": "", f"{prefix}_base_url": "", f"{prefix}_api_key_enc": ""})
 
     record = await repositories.upsert_agent(
         tenant_id=tenant_id,
@@ -277,6 +432,8 @@ async def save_agent_config(
         script=script.strip() if script is not None else None,
         voice_id=voice_id,
         language=language,
+        stt_model=stt_model,
+        tts_model=tts_model,
         rag_enabled=rag_enabled,
         voice_rag_enabled=voice_rag_enabled,
         chat_rag_enabled=chat_rag_enabled,
@@ -286,6 +443,11 @@ async def save_agent_config(
     )
     return {
         "voice_script": getattr(record, "voice_script", None),
+        "status": getattr(record, "status", DRAFT),
+        "llm_model": getattr(record, "llm_model", None),
+        "llm_base_url": getattr(record, "llm_base_url", None),
+        "llm_api_key": _mask_enc(getattr(record, "llm_api_key_enc", None)),
+        "has_draft_changes": _has_draft_changes(record),
         "chat_script": getattr(record, "chat_script", None),
         "voice_model": getattr(record, "voice_model", None),
         "chat_model": getattr(record, "chat_model", None),
@@ -297,6 +459,8 @@ async def save_agent_config(
         "voice_max_tokens": getattr(record, "voice_max_tokens", None),
         "chat_temperature": getattr(record, "chat_temperature", None),
         "chat_max_tokens": getattr(record, "chat_max_tokens", None),
+        "stt_model": getattr(record, "stt_model", "saaras:v3") or "saaras:v3",
+        "tts_model": getattr(record, "tts_model", "bulbul:v3") or "bulbul:v3",
         "name": getattr(record, "name", "Assistant"),
         "script": getattr(record, "script", "") or DEFAULT_SCRIPT,
         "voice_id": getattr(record, "voice_id", "anushka"),
@@ -414,6 +578,26 @@ async def deploy_agent(tenant_id: str) -> dict:
     )
     if record is None or not has_prompt:
         raise OwnerError("Write what your assistant should say before deploying.")
+    if not any(channel_settings(record, channel).get("script") for channel in ("voice", "chat")):
+        raise OwnerError("Enable at least one channel before publishing.")
+
+    stored = await resolve_credentials(tenant_id)
+    verified = set()
+    for channel in ("voice", "chat"):
+        runtime = resolve_channel_runtime(record, channel, stored)
+        if not runtime.get("script"):
+            continue
+        if not runtime["api_key"] or not runtime["model"]:
+            raise OwnerError("Save a working LLM model and key in Agent settings before publishing.")
+        if channel == "voice" and not runtime["sarvam_api_key"]:
+            raise OwnerError("Save your Sarvam API key in Settings before publishing voice.")
+        connection = (runtime["model"], runtime["base_url"], runtime["api_key"])
+        if connection not in verified:
+            try:
+                await verify_connection(runtime)
+            except ConnectionError as exc:
+                raise OwnerError(str(exc)) from None
+            verified.add(connection)
 
     # If script column is blank, sync it from voice_script or chat_script
     if not (record.script or "").strip():
@@ -642,41 +826,52 @@ def channel_settings(agent, channel: str) -> dict:
     }
 
 
-async def available_channels(tenant_id: str) -> dict:
+async def available_channels(tenant_id: str, *, published: bool = False) -> dict:
     """Which channels this agent can actually serve.
 
     A channel needs a prompt. An unwritten one is not a quiet default — it is
     an assistant with nothing to say, and offering it means someone is sent a
     link to a blank agent.
 
-    Chat additionally needs documents, because chat always answers from them.
-    That is the product rather than a preference, which is why the RAG toggle
-    exists on voice alone: an owner may legitimately want a spoken agent that
-    works from its prompt and nothing else.
+    Both channels can work from their prompts. Chat needs enabled documents
+    when its RAG setting is on. Model and key readiness use the runtime resolver.
 
     Used by the test panel, the link-type picker, and link creation, so the
     console can never offer a channel that would not work.
     """
     from app import repositories
 
-    agent = await repositories.get_agent(tenant_id)
+    import asyncio
+    from app.services import cache
+
+    agent, workspace = await asyncio.gather(cached_agent(tenant_id), cached_owner(tenant_id))
+    if published:
+        from app.services.agent_configuration import published_agent
+        agent = published_agent(agent)
     # Enabled documents, not all of them. Chat answers from the selection, so an
     # owner who switched everything off has a chat channel that would reply "I
     # don't have that" to every question — which is the exact situation this
     # function exists to refuse to offer.
-    enabled_ids = await repositories.list_enabled_document_ids(tenant_id)
+    enabled_ids = await cache.config_cache.get_or_load(("docs", tenant_id), lambda: repositories.list_enabled_document_ids(tenant_id))
     has_documents = len(enabled_ids) > 0
 
     def has_prompt(channel: str) -> bool:
         return bool((channel_settings(agent, channel) or {}).get("script"))
 
-    voice_ready = has_prompt("voice")
-    chat_ready = has_prompt("chat") and has_documents
+    stored = await resolve_credentials(tenant_id, record=workspace)
+    runtime = runtime_summary(agent, stored)
+    from app.services.agent_configuration import published_agent
+    published_runtime = runtime_summary(published_agent(agent), stored) if agent and agent.status == DEPLOYED and not published else None
+    voice_ready = has_prompt("voice") and runtime["voice"]["ready"]
+    chat_rag = bool(getattr(agent, "chat_rag_enabled", False))
+    chat_ready = has_prompt("chat") and runtime["chat"]["ready"] and (has_documents or not chat_rag)
 
     def chat_reason() -> Optional[str]:
         if not has_prompt("chat"):
             return "Write a chat prompt to enable it."
-        if not has_documents:
+        if not runtime["chat"]["ready"]:
+            return "Save the agent's LLM model and matching key."
+        if chat_rag and not has_documents:
             return (
                 "Chat answers from your documents. Add one — or switch one back "
                 "on — to enable it."
@@ -684,11 +879,13 @@ async def available_channels(tenant_id: str) -> dict:
         return None
 
     return {
+        "runtime": runtime,
+        "published_runtime": published_runtime,
         "voice": voice_ready,
         "chat": chat_ready,
         "document_count": len(enabled_ids),
         "voice_blocked_reason": (
-            None if voice_ready else "Write a voice prompt to enable it."
+            None if voice_ready else ("Write a voice prompt to enable it." if not has_prompt("voice") else "Save the agent's LLM key and the Sarvam speech key in Settings.")
         ),
         "chat_blocked_reason": chat_reason(),
     }

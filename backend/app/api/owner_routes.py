@@ -7,6 +7,7 @@ it is in the wrong place.
 import logging
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
@@ -18,7 +19,12 @@ from app.rate_limit import limiter
 from app.services import owner_auth
 from app.session import issue
 from app.services import owner_service
-from app.services.voice.config import SUPPORTED_TTS_VOICE_IDS
+from app.services.voice.config import (
+    SUPPORTED_STT_MODEL_IDS,
+    SUPPORTED_TTS_MODEL_IDS,
+    SUPPORTED_TTS_VOICE_IDS,
+    SUPPORTED_TTS_VOICES_BY_MODEL,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -31,6 +37,9 @@ class ChooseModeRequest(BaseModel):
 
 
 class AgentConfigRequest(BaseModel):
+    llm_model: Optional[str] = Field(default=None, max_length=120)
+    llm_base_url: Optional[str] = Field(default=None, max_length=500)
+    llm_api_key: Optional[str] = Field(default=None, max_length=300)
     name: Optional[str] = Field(default=None, max_length=120)
     script: Optional[str] = Field(default=None, max_length=20000)
     voice_id: Optional[str] = Field(default=None, max_length=64)
@@ -42,6 +51,8 @@ class AgentConfigRequest(BaseModel):
     # layer and stored on the model but never declared here, so an owner's
     # choice was dropped between the console and the database.
     language: Optional[str] = Field(default=None, max_length=16)
+    stt_model: Optional[str] = Field(default=None, max_length=32)
+    tts_model: Optional[str] = Field(default=None, max_length=32)
     # Whether our delivery rules are appended to the owner's script. Null means
     # "leave as-is", like every other field on this model.
     style_rules_enabled: Optional[bool] = None
@@ -62,6 +73,10 @@ class AgentConfigRequest(BaseModel):
     # past that a caller is listening to a lecture rather than an answer.
     voice_max_tokens: Optional[int] = Field(default=None, ge=50, le=800)
     chat_max_tokens: Optional[int] = Field(default=None, ge=50, le=4000)
+
+
+class AgentLlmTestRequest(BaseModel):
+    channel: str = Field(pattern="^(voice|chat)$")
 
 
 def _require_workspace_owner(identity: Identity) -> None:
@@ -402,6 +417,8 @@ async def save_agent(
             script=body.script,
             voice_id=body.voice_id,
             language=body.language,
+            stt_model=body.stt_model,
+            tts_model=body.tts_model,
             rag_enabled=body.rag_enabled,
             voice_rag_enabled=body.voice_rag_enabled,
             chat_rag_enabled=body.chat_rag_enabled,
@@ -410,7 +427,18 @@ async def save_agent(
             # The allowed set is owned by the voice config, not duplicated here,
             # so adding a voice in one place is enough.
             allowed_voices=SUPPORTED_TTS_VOICE_IDS,
+            allowed_stt_models=SUPPORTED_STT_MODEL_IDS,
+            allowed_tts_models=SUPPORTED_TTS_MODEL_IDS,
+            allowed_voices_by_model={
+                model: {
+                    voice["id"]
+                    for voices in groups.values()
+                    for voice in voices
+                }
+                for model, groups in SUPPORTED_TTS_VOICES_BY_MODEL.items()
+            },
             **{f: getattr(body, f) for f in (
+                "llm_model", "llm_base_url", "llm_api_key",
                 "voice_script", "chat_script", "voice_model", "chat_model",
                 "voice_base_url", "chat_base_url",
                 "voice_api_key", "chat_api_key",
@@ -420,6 +448,22 @@ async def save_agent(
         )
     except owner_service.OwnerError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/agent/test-llm")
+async def test_agent_llm(
+    body: AgentLlmTestRequest, identity: Identity = Depends(get_identity)
+):
+    """Make a minimal request to the saved custom OpenAI-compatible endpoint."""
+    _require_workspace_owner(identity)
+    agent = await repositories.get_agent(identity.tenant_id)
+    stored = await owner_service.resolve_credentials(identity.tenant_id)
+    channel = owner_service.resolve_channel_runtime(agent, body.channel, stored)
+    try:
+        await owner_service.verify_connection(channel)
+    except owner_service.ConnectionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+    return {"ok": True, "model": channel["model"], "response_received": True}
 
 
 @router.delete("/agent")
@@ -607,6 +651,11 @@ async def create_from_site(request: Request, body: SiteAgentRequest, identity: I
     cfg = await _svc.save_agent_config(
         identity.tenant_id,
         name=agent_display_name,
+        active_snapshot_id=snapshot_id,
+        status="draft", published_config="", deployed_at=None,
+        llm_model=_svc.SARVAM_VOICE_MODEL, llm_base_url=_svc.SARVAM_LLM_URL, llm_api_key="",
+        voice_model="", chat_model="", voice_base_url="", chat_base_url="", voice_api_key="", chat_api_key="",
+        voice_rag_enabled=False, chat_rag_enabled=False,
         voice_id=None,
         language=body.language or "unknown",
         script=fallback_script,
@@ -615,12 +664,16 @@ async def create_from_site(request: Request, body: SiteAgentRequest, identity: I
         greeting=body.greeting or prompt.get("greeting"),
         allowed_voices=SUPPORTED_TTS_VOICE_IDS,
     )
+    await repositories.set_agent_status(identity.tenant_id, "draft")
     # also snapshot for history (use pre-allocated snapshot_id so fallback doc can link)
     try:
         from app.database import async_session
         from app.models.db_models import AgentSnapshotRecord
         async with async_session() as session:
+            from app.services.agent_configuration import serialize
+            active = await repositories.get_agent(identity.tenant_id)
             session.add(AgentSnapshotRecord(
+                config_json=serialize(active),
                 snapshot_id=snapshot_id,
                 tenant_id=identity.tenant_id,
                 name=cfg.get("name", "Assistant"),
@@ -628,6 +681,8 @@ async def create_from_site(request: Request, body: SiteAgentRequest, identity: I
                 voice_script=cfg.get("voice_script"),
                 chat_script=cfg.get("chat_script"),
                 voice_id=cfg.get("voice_id", "anushka"),
+                stt_model=cfg.get("stt_model", "saaras:v3"),
+                tts_model=cfg.get("tts_model", "bulbul:v3"),
                 language=cfg.get("language", "unknown"),
                 greeting=cfg.get("greeting"),
                 source=source,
@@ -682,6 +737,8 @@ async def list_agents(identity: Identity = Depends(get_identity)):
     def _matches_current(r) -> bool:
         if not active:
             return False
+        if active.active_snapshot_id:
+            return r.snapshot_id == active.active_snapshot_id
         if active.name and r.name and active.name == r.name:
             if active.voice_script and r.voice_script and active.voice_script == r.voice_script:
                 return True
@@ -694,6 +751,8 @@ async def list_agents(identity: Identity = Depends(get_identity)):
             "name": active.name if active else "Assistant",
             "status": active.status if active else "draft",
             "voice_id": active.voice_id if active else "anushka",
+            "stt_model": getattr(active, "stt_model", "saaras:v3") if active else "saaras:v3",
+            "tts_model": getattr(active, "tts_model", "bulbul:v3") if active else "bulbul:v3",
             "language": active.language if active else "unknown",
         } if active else None,
         "snapshots": [
@@ -704,6 +763,8 @@ async def list_agents(identity: Identity = Depends(get_identity)):
                 "source_url": r.source_url,
                 "language": r.language,
                 "voice_id": r.voice_id,
+                "stt_model": getattr(r, "stt_model", "saaras:v3"),
+                "tts_model": getattr(r, "tts_model", "bulbul:v3"),
                 "greeting": r.greeting,
                 "is_current": _matches_current(r),
                 "is_active": _matches_current(r) and is_deployed,
@@ -722,26 +783,10 @@ async def list_agents(identity: Identity = Depends(get_identity)):
 async def activate_snapshot(snapshot_id: str, identity: Identity = Depends(get_identity)):
     """Make a past snapshot live again."""
     _require_workspace_owner(identity)
-    from app.database import async_session
-    from app.models.db_models import AgentSnapshotRecord
-    from sqlalchemy import select
-    async with async_session() as session:
-        result = await session.execute(select(AgentSnapshotRecord).where(AgentSnapshotRecord.snapshot_id == snapshot_id, AgentSnapshotRecord.tenant_id == identity.tenant_id))
-        snap = result.scalar_one_or_none()
-        if not snap:
-            raise HTTPException(status_code=404, detail="Snapshot not found")
-        # copy to active
-        await owner_service.save_agent_config(
-            identity.tenant_id,
-            name=snap.name,
-            script=snap.script,
-            voice_id=snap.voice_id,
-            language=snap.language,
-            greeting=snap.greeting,
-            voice_script=snap.voice_script,
-            chat_script=snap.chat_script,
-            allowed_voices=SUPPORTED_TTS_VOICE_IDS,
-        )
+    try:
+        await repositories.activate_agent_snapshot(identity.tenant_id, snapshot_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Snapshot not found") from None
     return {"status": "activated", "snapshot_id": snapshot_id}
 
 
@@ -814,7 +859,24 @@ async def edit_snapshot(snapshot_id: str, body: SnapshotPatchRequest, identity: 
             snap.chat_script = body.chat_script
         if body.greeting is not None:
             snap.greeting = body.greeting
+        import json
+        if snap.config_json:
+            config = json.loads(snap.config_json)
+            config.update({field: getattr(snap, field) for field in ("name", "script", "voice_script", "chat_script", "greeting")})
+            snap.config_json = json.dumps(config, sort_keys=True)
+        from app.models.db_models import AgentRecord
+        from app.services.agent_configuration import serialize
+        active = await session.scalar(select(AgentRecord).where(AgentRecord.tenant_id == identity.tenant_id))
+        if active and active.active_snapshot_id == snapshot_id:
+            if active.status == "deployed" and not active.published_config:
+                active.published_config = serialize(active)
+            for field in body.model_fields_set:
+                if getattr(body, field) is not None:
+                    setattr(active, field, getattr(snap, field))
+            snap.config_json = serialize(active)
         await session.commit()
+        from app.services import cache
+        cache.config_cache.invalidate(("agent", identity.tenant_id))
         await session.refresh(snap)
         return {"snapshot_id": snap.snapshot_id, "name": snap.name}
 
@@ -839,7 +901,12 @@ async def duplicate_snapshot(snapshot_id: str, identity: Identity = Depends(get_
             raise HTTPException(status_code=404, detail="Snapshot not found")
         
         new_id = uuid.uuid4().hex[:12]
+        import json
+        cloned_config = json.loads(snap.config_json) if snap.config_json else None
+        if cloned_config:
+            cloned_config["name"] = f"{snap.name} (Copy)"[:120]
         new_snap = AgentSnapshotRecord(
+            config_json=json.dumps(cloned_config, sort_keys=True) if cloned_config else None,
             snapshot_id=new_id,
             tenant_id=identity.tenant_id,
             name=f"{snap.name} (Copy)"[:120],
@@ -847,6 +914,8 @@ async def duplicate_snapshot(snapshot_id: str, identity: Identity = Depends(get_
             voice_script=snap.voice_script,
             chat_script=snap.chat_script,
             voice_id=snap.voice_id,
+            stt_model=getattr(snap, "stt_model", "saaras:v3"),
+            tts_model=getattr(snap, "tts_model", "bulbul:v3"),
             language=snap.language,
             greeting=snap.greeting,
             source="duplicate",

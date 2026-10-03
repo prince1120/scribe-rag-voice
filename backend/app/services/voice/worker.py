@@ -118,6 +118,12 @@ def _params_for_job(ctx: JobContext, server_creds: Optional[dict] = None) -> Ses
     if data.get("tts_speaker"):
         logger.info("Using caller-selected TTS voice: %s", data["tts_speaker"])
         overrides["VOICE_TTS_SPEAKER"] = data["tts_speaker"]
+    if data.get("stt_model"):
+        logger.info("Using caller-selected STT model: %s", data["stt_model"])
+        overrides["VOICE_STT_MODEL"] = data["stt_model"]
+    if data.get("tts_model"):
+        logger.info("Using caller-selected TTS model: %s", data["tts_model"])
+        overrides["VOICE_TTS_MODEL"] = data["tts_model"]
     if data.get("llm_model"):
         logger.info("Using caller-selected LLM model: %s", data["llm_model"])
         overrides["VOICE_LLM_MODEL"] = data["llm_model"]
@@ -218,6 +224,7 @@ async def _resolve_voice_credentials(params: SessionParams) -> dict:
             params.tenant_id,
             backend_url=params.settings.VOICE_BACKEND_URL,
             api_key=params.settings.INTERNAL_API_KEY or params.settings.API_KEY,
+            call_id=params.call_id,
         )
     except Exception as exc:
         logger.warning("Voice credential fetch failed (%s)", type(exc).__name__)
@@ -232,6 +239,8 @@ def _voice_provider_keys_available(settings: VoiceSettings) -> bool:
     provider = (settings.VOICE_LLM_PROVIDER or "groq").lower()
     if provider == "custom_openai":
         llm_ok = bool(settings.CUSTOM_LLM_BASE_URL and settings.CUSTOM_LLM_API_KEY)
+    elif provider == "sarvam":
+        llm_ok = bool(settings.SARVAM_API_KEY)
     elif provider == "mistral":
         llm_ok = bool(settings.MISTRAL_API_KEY or settings.GROQ_API_KEY)
     else:
@@ -286,6 +295,13 @@ async def entrypoint(ctx: JobContext) -> None:
     def _elapsed() -> float:
         return time.monotonic() - t0
 
+    # Ensure asyncpg connections are clean and bound to this worker's event loop
+    try:
+        from app.database import engine
+        await engine.dispose()
+    except Exception:
+        pass
+
     await ctx.connect()
     logger.info("[CONNECT %s] room joined at %.2fs", ctx.room.name, _elapsed())
 
@@ -298,7 +314,7 @@ async def entrypoint(ctx: JobContext) -> None:
     if server_creds:
         params = _params_for_job(ctx, server_creds=server_creds)
 
-    if not _voice_provider_keys_available(params.settings):
+    if (params.call_id and not server_creds) or not _voice_provider_keys_available(params.settings):
         # Fail loud, not silent: without provider keys the session build
         # below would raise and leave the caller in a dead room until the
         # idle watchdog fires. End the room at once instead so the client

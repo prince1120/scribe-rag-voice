@@ -27,12 +27,17 @@ async def transaction_lock(session, key: str):
 
 
 async def create_call(tenant_id, contact_id, ip_address=None, user_agent=None,
-                      context_label=None, voice_consent_at=None):
+                      context_label=None, voice_consent_at=None, credentials=None):
+    import json
+    from app.services import secrets_box, cache
+
     call_id, conversation_id = str(uuid4()), str(uuid4())
+    encrypted = secrets_box.encrypt(json.dumps(credentials)) if credentials else None
     async with async_session() as session:
         session.add(VoiceCallRecord(call_id=call_id, tenant_id=tenant_id,
                                    contact_id=contact_id, conversation_id=conversation_id,
                                    context_label=(context_label or "").strip()[:240] or None,
+                                   credentials_enc=encrypted,
                                    voice_consent_at=voice_consent_at))
         session.add(ConversationRecord(conversation_id=conversation_id, tenant_id=tenant_id))
         if contact_id:
@@ -41,6 +46,8 @@ async def create_call(tenant_id, contact_id, ip_address=None, user_agent=None,
                 channel="voice", ip_address=ip_address, user_agent=(user_agent or "")[:300],
             ))
         await session.commit()
+    if encrypted:
+        cache.config_cache.set(("voice_credentials", tenant_id, call_id), encrypted, ttl=600)
     return call_id
 
 
@@ -51,6 +58,26 @@ async def get_call(call_id, tenant_id, contact_id=None):
         if contact_id:
             q = q.where(VoiceCallRecord.contact_id == contact_id)
         return await session.scalar(q)
+
+
+async def call_credentials(call_id, tenant_id):
+    import json
+    from app.services import secrets_box, cache
+
+    cache_key = ("voice_credentials", tenant_id, call_id)
+    encrypted = cache.config_cache.get(cache_key)
+    if encrypted:
+        # Startup's common path needs no database round trip. Other API
+        # processes and repeated reads use the durable, tenant-scoped record.
+        cache.config_cache.invalidate(cache_key)
+        return json.loads(secrets_box.decrypt(encrypted))
+    call = await get_call(call_id, tenant_id)
+    if not call or call.completed or not call.credentials_enc:
+        raise LookupError("Voice call credentials are unavailable")
+    created = call.created_at.replace(tzinfo=timezone.utc) if call.created_at.tzinfo is None else call.created_at
+    if now() - created > timedelta(minutes=10):
+        raise LookupError("Voice call credential setup has expired")
+    return json.loads(secrets_box.decrypt(call.credentials_enc))
 
 
 async def save_call(call_id, tenant_id, contact_id, messages, duration_seconds,
@@ -80,6 +107,10 @@ async def save_call(call_id, tenant_id, contact_id, messages, duration_seconds,
             call.transcript_source = source
         call.duration_seconds = max(call.duration_seconds, min(14400, max(0, duration_seconds)))
         call.completed = call.completed or completed
+        if call.completed:
+            call.credentials_enc = None
+            from app.services import cache
+            cache.config_cache.invalidate(("voice_credentials", tenant_id, call_id))
         call.updated_at = now()
         if call.completed and call.transcript:
             should_queue = False

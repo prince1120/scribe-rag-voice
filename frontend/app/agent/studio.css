@@ -42,3 +42,24 @@ html { scroll-behavior: smooth; }
 @media (max-width: 375px) {
   .call-orb { transform: scale(0.85); }
 }
+.agent-custom-save-btn {
+  border: 0;
+  border-radius: 8px;
+  background: var(--claude-accent);
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 10px 16px;
+}
+
+.agent-custom-save-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.agent-runtime-list { display: grid; gap: 12px; margin: 16px 0; }
+.agent-runtime-list > div { display: grid; grid-template-columns: minmax(120px, 1fr) 3fr; gap: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--claude-border); }
+.agent-runtime-list dt { font-size: 12px; color: var(--claude-muted); }
+.agent-runtime-list dd { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.agent-runtime-list a { margin-left: 8px; text-decoration: underline; }
+@media (max-width: 600px) { .agent-runtime-list > div { grid-template-columns: 1fr; gap: 4px; } }

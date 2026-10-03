@@ -149,6 +149,9 @@ async def _chat_overrides(identity: Identity, x_user_groq_key, x_custom_llm_base
         owner_service.cached_agent(identity.tenant_id),
         owner_service.cached_owner(identity.tenant_id),
     )
+    if not identity.is_owner:
+        from app.services.agent_configuration import published_agent
+        agent = published_agent(agent)
     channel = owner_service.channel_settings(agent, "chat")
 
     cal_summary = ""
@@ -184,21 +187,22 @@ async def _chat_overrides(identity: Identity, x_user_groq_key, x_custom_llm_base
     stored = await owner_service.resolve_credentials(
         identity.tenant_id, record=workspace
     )
+    runtime = owner_service.resolve_channel_runtime(agent, "chat", stored)
+    # Saved agents are owner-controlled. Browser demo overrides apply only
+    # when there is no configured agent.
+    if agent is None:
+        if x_custom_llm_base_url:
+            runtime.update(base_url=x_custom_llm_base_url, api_key=x_custom_llm_key, provider="custom_openai", model=None)
+        elif x_user_groq_key:
+            runtime.update(base_url=None, api_key=x_user_groq_key, provider="groq", model=None)
     return {
         "agent_prompt": agent_prompt,
+        "model_locked": agent is not None,
         "chat_rag_enabled": chat_rag_enabled,
-        "groq_api_key": x_user_groq_key or stored.get("groq_api_key"),
-        "custom_base_url": (
-            x_custom_llm_base_url
-            or channel.get("base_url")
-            or stored.get("custom_llm_base_url")
-        ),
-        "custom_api_key": (
-            x_custom_llm_key
-            or channel.get("api_key")
-            or stored.get("custom_llm_api_key")
-        ),
-        "model": channel.get("model") or stored.get("llm_model"),
+        "groq_api_key": runtime.get("api_key") if runtime["provider"] == "groq" else (x_user_groq_key if agent is None else None),
+        "custom_base_url": runtime.get("base_url"),
+        "custom_api_key": runtime.get("api_key"),
+        "model": runtime.get("model"),
         "temperature": channel.get("temperature"),
         "max_tokens": channel.get("max_tokens"),
     }

@@ -47,7 +47,7 @@ async def caller_chat(request: Request, body: CallerChatBody,
     from uuid import uuid4
     contact = await repositories.get_contact(identity.contact_id, identity.tenant_id)
     agent = await cached_agent(identity.tenant_id)
-    channels = await available_channels(identity.tenant_id)
+    channels = await available_channels(identity.tenant_id, published=True)
     if contact.mode == "voice" or not agent or agent.status != "deployed" or not channels["chat"]:
         raise HTTPException(403, "Text chat is not available for this link.")
     conversation_id = str(body.conversation_id) if body.conversation_id else str(uuid4())

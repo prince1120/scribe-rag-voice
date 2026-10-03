@@ -1,27 +1,24 @@
 "use client";
 
-// The frame every owner screen sits in.
-//
-// Modern, sleek console interface with persistent responsive navigation,
-// dark glassmorphism sidebar, live agent indicators, and mobile drawer support.
+// The frame every owner screen sits in — light SaaS rail, single border.
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
-  LayoutDashboard,
-  Bot,
+  SquaresFour,
+  Robot,
   Users,
-  Settings,
-  LogOut,
-  Menu,
+  Gear,
+  SignOut,
+  List,
   X,
-  ExternalLink,
+  ArrowSquareOut,
   Calendar,
-  Layers,
-  Inbox,
+  Stack,
+  Tray,
   QrCode,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import { clearWorkspaceCache, useWorkspace } from "../../lib/workspaceCache";
 import { NotificationBell } from "./NotificationBell";
 import { ScribeMark } from "../../Logo";
@@ -34,24 +31,24 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
-  { href: "/inbox", label: "Inbox", description: "Customer requests and follow-ups", icon: <Inbox size={18} /> },
+  { href: "/inbox", label: "Inbox", description: "Customer requests and follow-ups", icon: <Tray size={18} /> },
   {
     href: "/dashboard",
     label: "Overview",
     description: "Performance and recent activity",
-    icon: <LayoutDashboard size={18} />,
+    icon: <SquaresFour size={18} />,
   },
   {
     href: "/agent",
     label: "Assistant",
     description: "Behavior, knowledge and voice",
-    icon: <Bot size={18} />,
+    icon: <Robot size={18} />,
   },
   {
     href: "/agents",
     label: "My Agents",
     description: "Manage deployed assistants",
-    icon: <Layers size={18} />,
+    icon: <Stack size={18} />,
   },
   {
     href: "/calendar",
@@ -75,7 +72,7 @@ const NAV: NavItem[] = [
     href: "/settings",
     label: "Account & Keys",
     description: "Business profile and providers",
-    icon: <Settings size={18} />,
+    icon: <Gear size={18} />,
   },
 ];
 
@@ -199,7 +196,7 @@ export function OwnerShell({
             onClick={() => setMenuOpen(false)}
           >
             <span className="owner-nav-icon">
-              <ExternalLink size={17} />
+              <ArrowSquareOut size={17} />
             </span>
             <span className="owner-nav-label">Public Directory</span>
           </Link>
@@ -222,7 +219,7 @@ export function OwnerShell({
             }}
           >
             <span className="owner-nav-icon">
-              <LogOut size={17} />
+              <SignOut size={17} />
             </span>
             <span className="owner-nav-label">Sign out</span>
           </button>
@@ -268,7 +265,7 @@ export function OwnerShell({
             aria-controls="owner-navigation"
             aria-expanded={menuOpen}
           >
-            <Menu size={20} />
+            <List size={20} />
           </button>
           <div className="owner-topbar-info">
             <span className="owner-topbar-overline" suppressHydrationWarning>

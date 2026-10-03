@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Room } from "livekit-client";
+import { Track } from "livekit-client";
 import { Mic, Headphones, Volume2, Check, RefreshCw, ChevronDown } from "lucide-react";
 
 export interface AudioDeviceState {
@@ -24,8 +25,6 @@ export function useAudioDevices(room: Room | null): AudioDeviceState {
   const [micLevel, setMicLevel] = useState<number>(0);
   const [sinkIdSupported, setSinkIdSupported] = useState<boolean>(true);
 
-  const testStreamRef = useRef<MediaStream | null>(null);
-  const testAnalyserRef = useRef<AnalyserNode | null>(null);
   const testRafRef = useRef<number>(0);
 
   const refreshDevices = useCallback(async () => {
@@ -84,14 +83,9 @@ export function useAudioDevices(room: Room | null): AudioDeviceState {
     }
   }, [room]);
 
-  // Microphone tester when idle (so user sees their voice reacting before starting call)
+  // Observe the call's existing microphone track. Never open a preview stream.
   useEffect(() => {
-    // Only run test stream if room is NOT active
-    if (room) {
-      if (testStreamRef.current) {
-        testStreamRef.current.getTracks().forEach((t) => t.stop());
-        testStreamRef.current = null;
-      }
+    if (!room) {
       cancelAnimationFrame(testRafRef.current);
       setMicLevel(0);
       return;
@@ -100,31 +94,26 @@ export function useAudioDevices(room: Room | null): AudioDeviceState {
     let isCancelled = false;
     let audioCtx: AudioContext | null = null;
 
-    const startTest = async () => {
+    const monitorMicrophone = () => {
       try {
-        if (!navigator.mediaDevices?.getUserMedia) return;
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: activeInputId && activeInputId !== "default" ? { deviceId: { exact: activeInputId } } : true,
-          video: false,
-        });
+        const track = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;
+        if (!track) return;
+        const stream = new MediaStream([track]);
 
         if (isCancelled) {
-          stream.getTracks().forEach((t) => t.stop());
           return;
         }
 
-        testStreamRef.current = stream;
         // Re-read devices now that permission is definitely granted (labels become visible!)
         void refreshDevices();
 
-        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        const AudioContextClass = window.AudioContext;
         if (!AudioContextClass) return;
         audioCtx = new AudioContextClass();
         const source = audioCtx.createMediaStreamSource(stream);
         const analyser = audioCtx.createAnalyser();
         analyser.fftSize = 256;
         source.connect(analyser);
-        testAnalyserRef.current = analyser;
 
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
         const tick = () => {
@@ -142,19 +131,15 @@ export function useAudioDevices(room: Room | null): AudioDeviceState {
         };
         testRafRef.current = requestAnimationFrame(tick);
       } catch {
-        /* User hasn't clicked allow yet, which is fine */
+        /* Metering is optional; it must not interrupt the existing call. */
       }
     };
 
-    void startTest();
+    monitorMicrophone();
 
     return () => {
       isCancelled = true;
       cancelAnimationFrame(testRafRef.current);
-      if (testStreamRef.current) {
-        testStreamRef.current.getTracks().forEach((t) => t.stop());
-        testStreamRef.current = null;
-      }
       if (audioCtx) {
         audioCtx.close().catch(() => {});
       }

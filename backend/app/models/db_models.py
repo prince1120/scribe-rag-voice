@@ -255,6 +255,11 @@ class AgentRecord(Base):
     # half-written prompt, so deploy is an explicit gate rather than an
     # implicit consequence of saving.
     status: Mapped[str] = mapped_column(String(16), default="draft")
+    published_config: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    active_snapshot_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    llm_model: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    llm_base_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    llm_api_key_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     deployed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -284,6 +289,11 @@ class AgentRecord(Base):
     voice_api_key_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     chat_base_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     chat_api_key_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Speech model choice is per agent; the Sarvam key remains a workspace
+    # credential so rotating it updates every agent without editing each one.
+    stt_model: Mapped[str] = mapped_column(String(32), default="saaras:v3")
+    tts_model: Mapped[str] = mapped_column(String(32), default="bulbul:v3")
 
     # Sampling, per channel and for the same reason. Null uses the server
     # default rather than a number this table had to guess.
@@ -325,6 +335,7 @@ class AgentSnapshotRecord(Base):
     switch active by copying a snapshot back. Source = site|upload|manual.
     """
     __tablename__ = "agent_snapshots"
+    config_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     snapshot_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
@@ -334,6 +345,8 @@ class AgentSnapshotRecord(Base):
     voice_script: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     chat_script: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     voice_id: Mapped[str] = mapped_column(String(64), default="shreya")
+    stt_model: Mapped[str] = mapped_column(String(32), default="saaras:v3")
+    tts_model: Mapped[str] = mapped_column(String(32), default="bulbul:v3")
     language: Mapped[str] = mapped_column(String(16), default="unknown")
     rag_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     greeting: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
@@ -416,6 +429,7 @@ class VoiceCallRecord(Base):
     __tablename__ = "voice_calls"
     call_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    credentials_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     contact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     conversation_id: Mapped[str] = mapped_column(String(36), unique=True)
     context_label: Mapped[Optional[str]] = mapped_column(String(240), nullable=True)

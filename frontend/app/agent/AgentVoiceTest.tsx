@@ -15,7 +15,8 @@ import { extractApiErrorMessage, formatClientError } from "../lib/apiErrors";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, Track, createAudioAnalyser } from "livekit-client";
 import { NetworkBanner } from "../components/voice/NetworkBanner";
-import { MIC_CAPTURE, useCallQuality, VOICE_ROOM_OPTIONS } from "../components/voice/useCallQuality";
+import { useCallQuality, VOICE_ROOM_OPTIONS } from "../components/voice/useCallQuality";
+import { enableEnhancedMic } from "../components/voice/micEnhancement";
 import { VOICE_DATA_PACKETS } from "../components/voice/voiceEvents";
 import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
 
@@ -144,11 +145,9 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
       room.on(RoomEvent.Disconnected, () => { setPhase("ended"); teardown(); });
 
       await room.connect(url, token);
-      // Same capture settings as a real call. Testing on the browser's raw
-      // microphone meant the owner tuned their agent against different audio
-      // conditions than their callers actually get — including the agent
-      // interrupting itself through the speaker.
-      await room.localParticipant.setMicrophoneEnabled(true, { ...MIC_CAPTURE });
+      // Same enhanced capture as a real call (BVC + EC/NS/AGC), so the owner
+      // tunes against the audio conditions callers actually get.
+      await enableEnhancedMic(room);
       setActiveRoom(room);
       setPhase("live");
 

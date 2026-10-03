@@ -178,6 +178,10 @@ async def upsert_agent(
             record = AgentRecord(tenant_id=tenant_id)
             session.add(record)
 
+        from app.services.agent_configuration import serialize
+        if record.status == "deployed" and not record.published_config:
+            record.published_config = serialize(record)
+
         if name is not None:
             record.name = name
         if script is not None:
@@ -197,6 +201,17 @@ async def upsert_agent(
         for field, value in channel_fields.items():
             if value is not None:
                 setattr(record, field, value)
+
+        if record.active_snapshot_id:
+            from app.models.db_models import AgentSnapshotRecord
+            snapshot = await session.scalar(select(AgentSnapshotRecord).where(
+                AgentSnapshotRecord.snapshot_id == record.active_snapshot_id,
+                AgentSnapshotRecord.tenant_id == tenant_id,
+            ))
+            if snapshot:
+                snapshot.config_json = serialize(record)
+                for field in ("name", "script", "voice_script", "chat_script", "voice_id", "language", "greeting", "stt_model", "tts_model"):
+                    setattr(snapshot, field, getattr(record, field))
 
         await session.commit()
         _invalidate(tenant_id)
@@ -222,12 +237,56 @@ async def set_agent_status(tenant_id: str, status: str) -> AgentRecord:
             session.add(record)
 
         record.status = status
+        if status == "deployed":
+            from app.services.agent_configuration import serialize
+            record.published_config = serialize(record)
         record.deployed_at = datetime.now(_tz.utc) if status == "deployed" else None
 
         await session.commit()
         _invalidate(tenant_id)
         await session.refresh(record)
         return record
+
+
+async def activate_agent_snapshot(tenant_id: str, snapshot_id: str):
+    import json
+    from app.models.db_models import AgentSnapshotRecord
+    from app.services.agent_configuration import CONFIG_FIELDS, serialize
+
+    async with async_session() as session:
+        snapshot = await session.scalar(select(AgentSnapshotRecord).where(
+            AgentSnapshotRecord.tenant_id == tenant_id,
+            AgentSnapshotRecord.snapshot_id == snapshot_id,
+        ))
+        if snapshot is None:
+            raise LookupError("Snapshot not found")
+        record = await session.scalar(select(AgentRecord).where(AgentRecord.tenant_id == tenant_id))
+        if record is None:
+            record = AgentRecord(tenant_id=tenant_id)
+            session.add(record)
+        elif record.active_snapshot_id:
+            previous = await session.scalar(select(AgentSnapshotRecord).where(
+                AgentSnapshotRecord.tenant_id == tenant_id,
+                AgentSnapshotRecord.snapshot_id == record.active_snapshot_id,
+            ))
+            if previous:
+                previous.config_json = serialize(record)
+        values = json.loads(snapshot.config_json) if snapshot.config_json else {
+            field: getattr(snapshot, field, None) for field in CONFIG_FIELDS
+        }
+        defaults = {"name": "Assistant", "script": "", "voice_id": "priya", "language": "unknown",
+                    "stt_model": "saaras:v3", "tts_model": "bulbul:v3", "rag_enabled": False,
+                    "style_rules_enabled": True, "llm_model": "sarvam-105b-conversations",
+                    "llm_base_url": "https://api.sarvam.ai/v1"}
+        for field in CONFIG_FIELDS:
+            value = values.get(field)
+            setattr(record, field, defaults.get(field) if value is None else value)
+        record.status = "draft"
+        record.published_config = None
+        record.deployed_at = None
+        record.active_snapshot_id = snapshot_id
+        await session.commit()
+        _invalidate(tenant_id)
 
 
 async def delete_agent(tenant_id: str) -> None:
@@ -334,6 +393,8 @@ async def list_deployed_agents() -> List[dict]:
         agents = []
         minted = False
         for agent, owner in rows:
+            from app.services.agent_configuration import published_agent
+            agent = published_agent(agent)
             # Exclude test runner or dummy tenants
             if owner.tenant_id.startswith("test_"):
                 continue

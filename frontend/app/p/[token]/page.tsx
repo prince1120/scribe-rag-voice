@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { Room, RoomEvent, Track } from "livekit-client";
 import type { RemoteTrack } from "livekit-client";
-import { MIC_CAPTURE, VOICE_ROOM_OPTIONS } from "../../components/voice/useCallQuality";
+import { VOICE_ROOM_OPTIONS } from "../../components/voice/useCallQuality";
+import { enableEnhancedMic } from "../../components/voice/micEnhancement";
 import {
   Package,
   ShieldCheck,
@@ -557,7 +558,7 @@ export default function PublicProductQrPage() {
       });
 
       await room.connect(data.url, data.token);
-      await room.localParticipant.setMicrophoneEnabled(true, { ...MIC_CAPTURE });
+      await enableEnhancedMic(room);
       setVoiceActive(true);
       setVoiceHasConnected(true);
       setVoiceMuted(false);
@@ -581,7 +582,14 @@ export default function PublicProductQrPage() {
     const room = roomRef.current;
     if (!room || !voiceActive) return;
     try {
-      await room.localParticipant.setMicrophoneEnabled(voiceMuted, { ...MIC_CAPTURE });
+      // Unmuting re-creates the mic track — re-attach BVC so background
+      // voices don't sneak back in after the first mute cycle. Muting needs
+      // no options.
+      if (voiceMuted) {
+        await enableEnhancedMic(room);
+      } else {
+        await room.localParticipant.setMicrophoneEnabled(false);
+      }
       setVoiceMuted((muted) => !muted);
     } catch (err) {
       setVoiceStatusMsg(formatClientError(err, "Could not change microphone status."));
