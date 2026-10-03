@@ -1,10 +1,10 @@
 "use client";
+import { ModalPortal } from "../components/ModalPortal";
 
 // Assistant Studio: Voice & Chat prompts, TTS voice selector, model configuration,
 // document knowledge integration, and real-time live deployment controls.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   Bot,
@@ -1412,8 +1412,8 @@ color: "var(--claude-text-2)",
         {showSiteModal && <SiteAgentModal onClose={() => setShowSiteModal(false)} onCreated={async () => { setShowSiteModal(false); showToast("Agent created — prompt + fallback doc ready ✓", "success"); await refreshAgent(); }} />}
         
         {/* Styled Channel Disable Confirmation Modal */}
-        {channelToDisable && typeof document !== "undefined" && createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in duration-150">
+        {channelToDisable && (
+          <ModalPortal label="Disable channel" onClose={() => setChannelToDisable(null)}><div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in duration-150">
             <div className="bg-white rounded-2xl w-full max-w-sm p-6 border border-gray-200 shadow-2xl flex flex-col gap-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0 border border-amber-200">
@@ -1459,8 +1459,7 @@ color: "var(--claude-text-2)",
                 </button>
               </div>
             </div>
-          </div>,
-          document.body
+          </div></ModalPortal>
         )}
       </main>
     </OwnerShell>

@@ -6,7 +6,7 @@ import { Room, RoomEvent, Track, createAudioAnalyser } from "livekit-client";
 import { VoiceSpectrum } from "./components/voice/VoiceSpectrum";
 import { NetworkBanner } from "./components/voice/NetworkBanner";
 import { useCallQuality, VOICE_ROOM_OPTIONS } from "./components/voice/useCallQuality";
-import { enableEnhancedMic } from "./components/voice/micEnhancement";
+import { enableEnhancedMic, stopMicrophone } from "./components/voice/micEnhancement";
 import { useAudioDeviceSwitching } from "./components/voice/useAudioDeviceSwitching";
 import { personaForVoice } from "./components/voice/voicePersona";
 import { VOICE_DATA_PACKETS } from "./components/voice/voiceEvents";
@@ -266,7 +266,7 @@ export function VoiceCallModal({
     // re-enters teardown or surfaces a spurious "ended unexpectedly".
     const room = roomRef.current;
     roomRef.current = null;
-    room?.disconnect();
+    if (room) { stopMicrophone(room); void room.disconnect(true); }
     setActiveRoom(null);
     setDeviceNotice(null);
     setActiveSpeaker(null);
@@ -286,7 +286,9 @@ export function VoiceCallModal({
   useEffect(() => {
     return () => {
       cancelAnimationFrame(rafRef.current);
-      roomRef.current?.disconnect();
+      const room = roomRef.current;
+      roomRef.current = null;
+      if (room) { stopMicrophone(room); void room.disconnect(true); }
     };
   }, []);
 
@@ -589,6 +591,7 @@ export function VoiceCallModal({
       });
 
       await room.connect(url, token);
+      if (roomRef.current !== room) { await room.disconnect(true); return; }
 
       // Scan existing participants for state attribute immediately after connecting
       for (const p of room.remoteParticipants.values()) {
@@ -614,7 +617,8 @@ export function VoiceCallModal({
       // cancellation (primary speaker kept, nearby voices suppressed) when
       // the model loads — plain MIC_CAPTURE fallback otherwise, never a
       // failed call. See components/voice/micEnhancement.ts.
-      await enableEnhancedMic(room);
+      await enableEnhancedMic(room, undefined, () => roomRef.current === room);
+      if (roomRef.current !== room) { stopMicrophone(room); await room.disconnect(true); return; }
 
       // Analyser on the mic → orb reacts to the user's voice too.
       const micTrack = room.localParticipant.getTrackPublication(

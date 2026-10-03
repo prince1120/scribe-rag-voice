@@ -72,6 +72,8 @@ async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncS
 # place indefinitely. Types are spelled to be valid in both SQLite and
 # Postgres, which is the only dialect pair this app runs on.
 _ADDED_COLUMNS: list[tuple[str, str, str]] = [
+    ("bookings", "customer_name", "VARCHAR(120)"),
+    ("bookings", "customer_phone", "VARCHAR(20)"),
     ("agents", "published_config", "TEXT"),
     ("agents", "active_snapshot_id", "VARCHAR(36)"),
     ("agents", "llm_model", "VARCHAR(120)"),

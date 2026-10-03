@@ -567,7 +567,7 @@ async def _collect_pages_for_agent(identity: Identity, url: str) -> tuple[list[d
 async def generate_agent_preview(request: Request, body: SiteAgentRequest, identity: Identity = Depends(get_identity)):
     """Extract content from site/docs and generate high-quality Voice & Chat prompts for owner review."""
     _require_workspace_owner(identity)
-    from app.services.site_ingest import build_prompt_with_mistral
+    from app.services.site_ingest import build_agent_prompts
     url = (body.url or "").strip()
     try:
         pages, _, _ = await _collect_pages_for_agent(identity, url)
@@ -579,7 +579,8 @@ async def generate_agent_preview(request: Request, body: SiteAgentRequest, ident
         raise HTTPException(status_code=400, detail="No readable content found at that URL — check the link or upload a PDF instead.")
 
     try:
-        prompt = await build_prompt_with_mistral(pages, {"name": body.name, "business": body.business, "goal": body.goal, "tone": body.tone})
+        credentials = await owner_service.resolve_credentials(identity.tenant_id)
+        prompt = await build_agent_prompts(pages, {"name": body.name, "business": body.business, "goal": body.goal, "tone": body.tone}, sarvam_api_key=credentials.get("sarvam_api_key", ""))
     except Exception as e:
         logger.warning("generate-preview LLM failed: %s", e)
         raise HTTPException(status_code=502, detail="AI is temporarily unavailable — try again in a moment.")
@@ -602,7 +603,7 @@ async def generate_agent_preview(request: Request, body: SiteAgentRequest, ident
 async def create_from_site(request: Request, body: SiteAgentRequest, identity: Identity = Depends(get_identity)):
     """Create a draft agent from a site link or PDF docs."""
     _require_workspace_owner(identity)
-    from app.services.site_ingest import build_prompt_with_mistral
+    from app.services.site_ingest import build_agent_prompts
     import uuid
     import re as _re
     url = (body.url or "").strip()
@@ -632,7 +633,8 @@ async def create_from_site(request: Request, body: SiteAgentRequest, identity: I
         }
     else:
         try:
-            prompt = await build_prompt_with_mistral(pages, {"name": body.name, "business": body.business, "goal": body.goal, "tone": body.tone})
+            credentials = await owner_service.resolve_credentials(identity.tenant_id)
+            prompt = await build_agent_prompts(pages, {"name": body.name, "business": body.business, "goal": body.goal, "tone": body.tone}, sarvam_api_key=credentials.get("sarvam_api_key", ""))
         except Exception as e:
             logger.warning("from-site LLM failed, using rule builder: %s", e)
             from app.services.site_ingest import build_prompt_from_site
@@ -655,7 +657,7 @@ async def create_from_site(request: Request, body: SiteAgentRequest, identity: I
         status="draft", published_config="", deployed_at=None,
         llm_model=_svc.SARVAM_VOICE_MODEL, llm_base_url=_svc.SARVAM_LLM_URL, llm_api_key="",
         voice_model="", chat_model="", voice_base_url="", chat_base_url="", voice_api_key="", chat_api_key="",
-        voice_rag_enabled=False, chat_rag_enabled=False,
+        voice_rag_enabled=bool(pages), chat_rag_enabled=bool(pages),
         voice_id=None,
         language=body.language or "unknown",
         script=fallback_script,
@@ -692,7 +694,7 @@ async def create_from_site(request: Request, body: SiteAgentRequest, identity: I
     except Exception:
         logger.warning("Failed to save snapshot %s", snapshot_id, exc_info=True)
     # ONE consolidated fallback RAG doc per agent (full verbatim, not per-page). Linked to snapshot for cascade delete.
-    # RAG is OFF by default — this doc is fallback only when owner enables voice_rag/chat_rag.
+    # New source-based agents use this fallback only when a needed fact is absent from their compact prompt.
     if pages:
         try:
             from app.api.routes import _ingest_file as _ingest_site_file

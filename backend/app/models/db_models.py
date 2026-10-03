@@ -391,6 +391,8 @@ class BookingRecord(Base):
     tenant_id: Mapped[str] = mapped_column(String(128), index=True)
     service_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     contact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    customer_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    customer_phone: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     title: Mapped[str] = mapped_column(String(200))
     start_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     end_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))

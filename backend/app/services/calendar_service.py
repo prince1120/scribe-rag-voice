@@ -11,10 +11,10 @@ from zoneinfo import ZoneInfo
 from typing import Dict, List, Optional
 from uuid import uuid4
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import and_, delete, func, select, update
 
 from app.database import async_session
-from app.models.db_models import AvailabilityRecord, BookingRecord, HolidayRecord, ServiceRecord, CalendarSettingsRecord, ContactRecord
+from app.models.db_models import AvailabilityRecord, BookingRecord, HolidayRecord, ServiceRecord, CalendarSettingsRecord, ContactRecord, OwnerRecord
 from app.repositories.business import transaction_lock
 from app.services.notification_service import notify
 
@@ -175,6 +175,18 @@ async def free_slots(tenant_id: str, service_id_or_name: str, date_str: str) -> 
             return []
 
 
+def normalize_booking_customer(name: str, phone: str) -> tuple[str, str]:
+    """Validate caller-provided details without guessing a country code."""
+    import re
+    name = name.strip()
+    phone = re.sub(r"[\s().-]", "", phone.strip())
+    if not name or len(name) > 120:
+        raise ValueError("Please provide the customer's name (up to 120 characters).")
+    if not re.fullmatch(r"\+?[0-9]{7,15}", phone):
+        raise ValueError("Please provide a valid phone number, including country code if needed.")
+    return name, phone
+
+
 async def create_booking(
     tenant_id: str,
     service_id_or_name: str,
@@ -183,8 +195,12 @@ async def create_booking(
     contact_id: Optional[str] = None,
     source: str = "voice",
     idempotency_key: Optional[str] = None,
+    customer_name: Optional[str] = None,
+    customer_phone: Optional[str] = None,
 ) -> BookingRecord:
     """Create a new booking with collision prevention and notification."""
+    if customer_name is not None or customer_phone is not None:
+        customer_name, customer_phone = normalize_booking_customer(customer_name or "", customer_phone or "")
     svc = await resolve_service(tenant_id, service_id_or_name)
     if not svc:
         raise ValueError("Service not found. Please choose a listed service.")
@@ -218,6 +234,8 @@ async def create_booking(
             existing.status = "confirmed"
             existing.title = title[:200] if title else f"{sname} booking"
             existing.source = source
+            existing.customer_name = customer_name
+            existing.customer_phone = customer_phone
             await session.commit()
             await session.refresh(existing)
             return existing
@@ -247,6 +265,8 @@ async def create_booking(
             tenant_id=tenant_id,
             service_id=sid,
             contact_id=contact_id,
+            customer_name=customer_name,
+            customer_phone=customer_phone,
             title=title[:200] if title else f"{sname} booking",
             start_ts=start_ts,
             end_ts=end_ts,
@@ -384,6 +404,33 @@ async def get_booking(tenant_id: str, booking_id: str) -> Optional[BookingRecord
             )
         )
         return r.scalar_one_or_none()
+
+
+async def booking_details(tenant_id: str, booking_id: str) -> Optional[dict]:
+    """Fetch the appointment and its tenant-scoped caller/service in one query."""
+    async with async_session() as session:
+        row = (await session.execute(
+            select(BookingRecord, ContactRecord.name, ServiceRecord.name, OwnerRecord.business_name)
+            .outerjoin(ContactRecord, and_(ContactRecord.contact_id == BookingRecord.contact_id,
+                                         ContactRecord.owner_tenant_id == BookingRecord.tenant_id))
+            .outerjoin(ServiceRecord, and_(ServiceRecord.service_id == BookingRecord.service_id,
+                                         ServiceRecord.tenant_id == BookingRecord.tenant_id))
+            .outerjoin(OwnerRecord, OwnerRecord.tenant_id == BookingRecord.tenant_id)
+            .where(BookingRecord.tenant_id == tenant_id, BookingRecord.booking_id == booking_id)
+        )).first()
+        if row is None:
+            return None
+        booking, caller_name, service_name, business_name = row
+        return {
+            "booking_id": booking.booking_id, "title": booking.title,
+            "contact_id": booking.contact_id, "contact_name": booking.customer_name or caller_name,
+            "customer_phone": booking.customer_phone,
+            "service_id": booking.service_id, "service_name": service_name,
+            "business_name": business_name, "status": booking.status, "source": booking.source,
+            "start_ts": as_utc(booking.start_ts).isoformat(),
+            "end_ts": as_utc(booking.end_ts).isoformat(),
+            "created_at": as_utc(booking.created_at).isoformat() if booking.created_at else None,
+        }
 
 
 async def list_bookings(

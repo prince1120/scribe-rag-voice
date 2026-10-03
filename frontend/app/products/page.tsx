@@ -1,4 +1,5 @@
 "use client";
+import { ModalPortal } from "../components/ModalPortal";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -268,7 +269,7 @@ export default function ProductsPage() {
 
         {/* Modal: Register Product */}
         {modalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in duration-150">
+          <ModalPortal label="Products"><div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in duration-150">
             <div className="bg-white border border-gray-200 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-5">
               <div className="flex items-center justify-between border-b border-gray-100 pb-4">
                 <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
@@ -377,7 +378,7 @@ export default function ProductsPage() {
                 </div>
               </form>
             </div>
-          </div>
+          </div></ModalPortal>
         )}
       </div>
     </OwnerShell>

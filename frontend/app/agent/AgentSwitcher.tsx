@@ -1,4 +1,5 @@
 "use client";
+import { ModalPortal } from "../components/ModalPortal";
 import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import {
@@ -541,7 +542,7 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
 
       {/* Delete Confirmation Modal */}
       {deleteId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
+        <ModalPortal label="Delete agent version" onClose={() => { if (!deleting) setDeleteId(null); }}><div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
           <div className="bg-white rounded-2xl w-full max-w-sm p-5 border shadow-2xl flex flex-col gap-3" style={{ borderColor: "var(--claude-border)" }}>
             <div className="flex items-center gap-3 text-rose-600">
               <div className="p-2 rounded-full bg-rose-50">
@@ -570,7 +571,7 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
               </button>
             </div>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
     </div>
   );

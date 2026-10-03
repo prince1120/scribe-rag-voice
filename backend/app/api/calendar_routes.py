@@ -45,6 +45,8 @@ class BookingBody(BaseModel):
     time: str = Field(pattern=r"^\d{2}:\d{2}$")
     title: Optional[str] = Field(default=None, max_length=200)
     contact_id: Optional[str] = None
+    customer_name: Optional[str] = Field(default=None, max_length=120)
+    customer_phone: Optional[str] = Field(default=None, max_length=40)
 
 
 class RescheduleBody(BaseModel):
@@ -195,6 +197,15 @@ async def list_bookings(
     ]
 
 
+@router.get("/bookings/{booking_id}")
+async def get_booking_details(booking_id: str, identity: Identity = Depends(get_identity)):
+    _require_owner(identity)
+    details = await cal.booking_details(identity.tenant_id, booking_id)
+    if details is None:
+        raise HTTPException(status_code=404, detail="Booking not found.")
+    return details
+
+
 @router.post("/bookings")
 async def create_booking(body: BookingBody, identity: Identity = Depends(get_identity),
                          idempotency_key: Optional[str] = Header(default=None, max_length=128)):
@@ -211,6 +222,8 @@ async def create_booking(body: BookingBody, identity: Identity = Depends(get_ide
             title=body.title or "Direct Booking",
             contact_id=body.contact_id,
             source="manual",
+            customer_name=body.customer_name,
+            customer_phone=body.customer_phone,
             idempotency_key=f"manual:{idempotency_key}" if idempotency_key else None,
         )
         return {

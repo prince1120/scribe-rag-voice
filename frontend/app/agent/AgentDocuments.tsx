@@ -1,4 +1,5 @@
 "use client";
+import { ModalPortal } from "../components/ModalPortal";
 
 import { ownerFetch } from "../lib/ownerFetch";
 
@@ -233,7 +234,7 @@ export function AgentDocuments({
           )}
 
           {deleteDocTarget && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
+            <ModalPortal label="Agent documents"><div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
               <div className="bg-white rounded-2xl w-full max-w-xs p-5 border shadow-2xl flex flex-col gap-3">
                 <h4 className="text-xs font-bold text-gray-900">Remove Document?</h4>
                 <p className="text-[11px] text-gray-500">
@@ -256,7 +257,7 @@ export function AgentDocuments({
                   </button>
                 </div>
               </div>
-            </div>
+            </div></ModalPortal>
           )}
         </>
       )}

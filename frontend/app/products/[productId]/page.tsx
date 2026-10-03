@@ -1,4 +1,5 @@
 "use client";
+import { ModalPortal } from "../../components/ModalPortal";
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -512,7 +513,7 @@ export default function ProductDetailPage() {
 
         {/* Modal: Edit Product SKU */}
         {editModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm backdrop-blur-sm">
+          <ModalPortal label="Product"><div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm backdrop-blur-sm">
             <div className="product-admin-dialog bg-white border border-gray-200 shadow-sm rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4">
               <div className="flex items-center justify-between border-b border-gray-200 pb-3">
                 <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
@@ -599,12 +600,12 @@ export default function ProductDetailPage() {
                 </div>
               </form>
             </div>
-          </div>
+          </div></ModalPortal>
         )}
 
         {/* Modal: Link Document */}
         {docModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm backdrop-blur-sm">
+          <ModalPortal label="Product"><div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm backdrop-blur-sm">
             <div className="product-admin-dialog bg-white border border-gray-200 shadow-sm rounded-2xl w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto p-5 shadow-2xl space-y-3">
               <div className="flex items-center justify-between border-b border-gray-200 pb-3">
                 <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
@@ -660,12 +661,12 @@ export default function ProductDetailPage() {
                 </div>
               )}
             </div>
-          </div>
+          </div></ModalPortal>
         )}
 
         {/* Modal: Generate QR Link */}
         {qrModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm backdrop-blur-sm">
+          <ModalPortal label="Product"><div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm backdrop-blur-sm">
             <div className="product-admin-dialog bg-white border border-gray-200 shadow-sm rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4">
               <div className="flex items-center justify-between border-b border-gray-200 pb-3">
                 <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
@@ -753,7 +754,7 @@ export default function ProductDetailPage() {
                 </div>
               )}
             </div>
-          </div>
+          </div></ModalPortal>
         )}
       </div>
     </OwnerShell>

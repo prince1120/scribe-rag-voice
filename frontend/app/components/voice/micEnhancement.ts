@@ -25,31 +25,24 @@
 
 import type { Room } from "livekit-client";
 import type { TrackProcessor, AudioProcessorOptions } from "livekit-client";
-import { Track } from "livekit-client";
+import { ConnectionState, Track } from "livekit-client";
 import { MIC_CAPTURE } from "./useCallQuality";
 
 type AudioProc = TrackProcessor<Track.Kind.Audio, AudioProcessorOptions>;
-
-let cached: AudioProc | null = null;
-let attempted = false;
 
 function bvcDisabled(): boolean {
   return process.env.NEXT_PUBLIC_VOICE_BVC_ENABLED === "0";
 }
 
-/** Lazily loads the BVC model once per page lifetime. Never throws. */
+/** Lazily imports BVC; use a fresh processor for each microphone track. */
 export async function getVoiceIsolationProcessor(): Promise<AudioProc | undefined> {
   if (bvcDisabled()) return undefined;
-  if (cached) return cached;
-  if (attempted) return undefined;
-  attempted = true;
   try {
     const { KrispNoiseFilter, isKrispNoiseFilterSupported } = await import(
       "@livekit/krisp-noise-filter"
     );
     if (!isKrispNoiseFilterSupported()) return undefined;
-    cached = KrispNoiseFilter({ useBVC: true });
-    return cached;
+    return KrispNoiseFilter({ useBVC: true });
   } catch {
     // Offline CDN, blocked script, old browser — plain mic still works.
     return undefined;
@@ -63,9 +56,11 @@ export async function getVoiceIsolationProcessor(): Promise<AudioProc | undefine
  */
 export async function enableEnhancedMic(
   room: Room,
-  extra?: Record<string, unknown>
+  extra?: Record<string, unknown>,
+  isActive: () => boolean = () => true,
 ): Promise<void> {
   const processor = await getVoiceIsolationProcessor();
+  if (!isActive() || room.state !== ConnectionState.Connected) return;
   if (processor) {
     try {
       await room.localParticipant.setMicrophoneEnabled(true, {
@@ -73,13 +68,24 @@ export async function enableEnhancedMic(
         ...extra,
         processor,
       });
+      if (!isActive() || room.state !== ConnectionState.Connected) stopMicrophone(room);
       return;
     } catch (err) {
       console.warn("Krisp noise filter failed to attach, falling back to standard mic capture:", err);
     }
   }
+  if (!isActive() || room.state !== ConnectionState.Connected) return;
   await room.localParticipant.setMicrophoneEnabled(true, {
     ...MIC_CAPTURE,
     ...extra,
+  });
+  if (!isActive() || room.state !== ConnectionState.Connected) stopMicrophone(room);
+}
+
+/** Release capture immediately, even if signalling or disconnect fails. */
+export function stopMicrophone(room: Room): void {
+  room.localParticipant.audioTrackPublications.forEach(({ track }) => {
+    try { track?.mediaStreamTrack.stop(); } catch {}
+    try { track?.stop(); } catch {}
   });
 }

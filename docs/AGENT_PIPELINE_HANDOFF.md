@@ -141,6 +141,44 @@ customer channel tabs and call content share the viewport height. Retry button
 and alert semantics added. Browser automation surfaces were unavailable, so no
 visual browser screenshot or real microphone verification was performed.
 
+## Booking, dialogs and voice prompt follow-up (2026-10-03)
+
+- Shared `ModalPortal` moves owner dialogs to the body, above scrolled/transformed
+  containers, with viewport bounds, focus trapping/restoration and body scroll lock.
+  People & Calls, Calendar, Products and Agent dialogs use it; SiteAgentModal
+  already had its own working portal. Removed redundant nested portal in Agent.
+- Calendar now opens owner-only, tenant-scoped booking details: caller name/phone,
+  full request, service, business/team, dates, created time, source and status.
+  No individual staff assignment is fabricated. Legacy missing phone stays blank.
+- Booking has nullable customer_name/customer_phone snapshots and additive
+  migrations. Voice asks only for missing name/phone before booking; validates
+  normalized 7-15 digits with optional international +, without guessing country.
+  Manual API remains backward compatible; new fields are optional there.
+- Booking workflow owns one brief acknowledgement and one actual result.
+  StopResponse prevents the SDK's competing automatic model follow-up. Removed
+  artificial delay; write runs alongside acknowledgement. Pending requests are
+  deduplicated; existing DB locks/idempotency prevent slot collisions. Booking
+  control packets update the caller banner, not duplicate assistant transcript.
+  Availability tools read live DB; cancellation makes the slot available again.
+- Both call screens synchronously stop microphone tracks on teardown, even if
+  signalling fails. Capture checks room state and active-call identity around
+  asynchronous processor loading/enabling, preventing setup from reviving an
+  ended call. Fresh processor per track; imports remain lazy. Idle controls do
+  not capture. Analyser resources are cleaned on teardown.
+- Compact shared VOICE_DELIVERY plus VOICE_CALENDAR remove conflicting 'keep
+  talking' advice. Natural, brief replies, one clarification at a time, corrections,
+  language matching, verified actions, no repeated offers or fake human identity.
+  Website/upload generation now caps voice prompts at 4500 chars; concise facts
+  plus on-demand knowledge fallback enabled for newly created source agents.
+  Existing owner scripts are preserved. Generation prefers workspace Sarvam key
+  and conversational model with reasoning_effort=null; Groq fallback is async.
+- Guidance: https://docs.livekit.io/agents/start/prompting/ and
+  https://docs.vapi.ai/prompting-guide . No promise of zero latency or parity with
+  another vendor; actual audio/provider timings still need a live call.
+- Verification: 37 focused booking/prompt regressions passed; frontend TypeScript
+  passed; diff whitespace check passed. Local hybrid DB name/phone columns verified
+  ready. Browser automation surfaces unavailable: no visual or real microphone QA.
+
 ## Deployment prerequisites
 
 API and worker must share `INTERNAL_API_KEY` and the correct backend URL. Preserve

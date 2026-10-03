@@ -15,7 +15,7 @@ import {
 } from "livekit-client";
 import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
 import { useAgentStall, VOICE_ROOM_OPTIONS } from "../../components/voice/useCallQuality";
-import { enableEnhancedMic } from "../../components/voice/micEnhancement";
+import { enableEnhancedMic, stopMicrophone } from "../../components/voice/micEnhancement";
 import { SignalPill } from "../../components/voice/SignalPill";
 import { VOICE_DATA_PACKETS } from "../../components/voice/voiceEvents";
 import {
@@ -189,6 +189,7 @@ export function CallScreen({
 
   const teardown = useCallback(async () => {
     cancelAnimationFrame(rafRef.current);
+    void analyserRef.current?.cleanup().catch(() => {});
     analyserRef.current = null;
     audioElsRef.current.forEach((el) => {
       try {
@@ -201,13 +202,11 @@ export function CallScreen({
     const room = roomRef.current;
     roomRef.current = null;
     if (room) {
+      stopMicrophone(room);
       try {
         await room.localParticipant?.setMicrophoneEnabled(false);
-        room.localParticipant?.audioTrackPublications.forEach((pub) => {
-          try { pub.track?.stop(); } catch {}
-        });
-        await room.disconnect(true);
       } catch {}
+      try { await room.disconnect(true); } catch {}
     }
   }, []);
 
@@ -365,6 +364,8 @@ export function CallScreen({
               time: data.time,
             });
             setTimeout(() => setLiveBooking(null), data.type === "booking_pending" ? 15000 : 8000);
+            // Booking packets update status; spoken speech arrives via transcription.
+            return;
           }
           if (data.text) {
             const role = data.role === "user" ? "user" : "assistant";
@@ -409,14 +410,17 @@ export function CallScreen({
       });
 
       await room.connect(url, token);
+      if (roomRef.current !== room) { await room.disconnect(true); return; }
       // Preserves the caller's chosen input device and adds background-voice
       // cancellation (falls back to plain capture if the model can't load).
       await enableEnhancedMic(
         room,
         audioDevices.activeInputId && audioDevices.activeInputId !== "default"
           ? { deviceId: { exact: audioDevices.activeInputId } }
-          : undefined
+          : undefined,
+        () => roomRef.current === room,
       );
+      if (roomRef.current !== room) { stopMicrophone(room); await room.disconnect(true); return; }
 
       if (audioDevices.activeOutputId && audioDevices.activeOutputId !== "default") {
         await room.switchActiveDevice("audiooutput", audioDevices.activeOutputId).catch(() => {});

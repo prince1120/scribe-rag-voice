@@ -1,4 +1,5 @@
 "use client";
+import { ModalPortal } from "../components/ModalPortal";
 
 // People & Call History: Unique callers list, session history,
 // invite link management, custom delete modal, and full turn-by-turn dialogue transcript viewer.
@@ -877,7 +878,7 @@ export default function LinksPage() {
 
         {/* ── Create Link Modal ───────────────────────────────── */}
         {showCreateModal && (
-          <div style={S.modalBackdrop} onClick={() => setShowCreateModal(false)}>
+          <ModalPortal label="People and calls" onClose={() => setShowCreateModal(false)}><div style={S.modalBackdrop} onClick={() => setShowCreateModal(false)}>
             <div style={S.modalCard} onClick={(e) => e.stopPropagation()}>
               <div style={S.modalCardHeader}>
                 <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: "var(--claude-text)" }}>
@@ -954,12 +955,12 @@ export default function LinksPage() {
                 </div>
               </form>
             </div>
-          </div>
+          </div></ModalPortal>
         )}
 
         {/* ── Custom In-App Delete Confirmation Modal ─────────── */}
         {deleteTarget && (
-          <div style={S.modalBackdrop} onClick={() => !deleting && setDeleteTarget(null)}>
+          <ModalPortal label="People and calls" onClose={() => !deleting && setDeleteTarget(null)}><div style={S.modalBackdrop} onClick={() => !deleting && setDeleteTarget(null)}>
             <div style={S.confirmCard} onClick={(e) => e.stopPropagation()}>
               <div style={S.confirmIconWrap}>
                 <AlertTriangle size={24} style={{ color: "var(--color-danger)" }} />
@@ -989,12 +990,12 @@ export default function LinksPage() {
                 </button>
               </div>
             </div>
-          </div>
+          </div></ModalPortal>
         )}
 
         {/* ── Conversation Transcript Viewer Modal ────────────── */}
         {transcriptModal && (
-          <div style={S.modalBackdrop} onClick={() => setTranscriptModal(null)}>
+          <ModalPortal label="People and calls" onClose={() => setTranscriptModal(null)}><div style={S.modalBackdrop} onClick={() => setTranscriptModal(null)}>
             <div style={S.transcriptModalContent} onClick={(e) => e.stopPropagation()}>
               <div style={S.modalHeader}>
                 <div>
@@ -1147,7 +1148,7 @@ export default function LinksPage() {
                 )}
               </div>
             </div>
-          </div>
+          </div></ModalPortal>
         )}
       </main>
     </OwnerShell>

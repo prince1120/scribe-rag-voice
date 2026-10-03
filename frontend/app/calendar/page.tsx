@@ -1,4 +1,5 @@
 "use client";
+import { ModalPortal } from "../components/ModalPortal";
 import { useEffect, useState } from "react";
 import {
   Calendar,
@@ -22,6 +23,7 @@ import { OwnerShell } from "../components/owner/OwnerShell";
 import { ownerFetch, invalidateOwnerCache } from "../lib/ownerFetch";
 import { extractApiErrorMessage, formatClientError } from "../lib/apiErrors";
 import { CalendarTimezone } from "../components/business/CalendarTimezone";
+import { BookingDetailsDialog } from "./BookingDetailsDialog";
 
 interface ServiceItem {
   service_id: string;
@@ -93,6 +95,7 @@ export default function CalendarPage() {
 
   const [cancellingBooking, setCancellingBooking] = useState<BookingItem | null>(null);
   const [cancelReason, setCancelReason] = useState("");
+  const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
 
   const showToast = (msg: string, type: "success" | "error" = "success") => {
     setToast({ msg, type });
@@ -610,9 +613,9 @@ export default function CalendarPage() {
                     <td className="py-3 text-xs font-mono font-medium text-gray-800">
                       {b.start_ts ? new Date(b.start_ts).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short", timeZone }) : "—"}
                     </td>
-                    <td className="text-xs font-semibold text-gray-900 truncate max-w-[240px]">
-                      {b.title}
-                      <span className="block text-[10px] text-gray-400 font-mono">ID: {b.booking_id}</span>
+                    <td className="text-xs font-semibold text-gray-900 max-w-[240px]">
+                      <button type="button" onClick={() => setSelectedBookingId(b.booking_id)} className="text-left hover:underline" title="View booking details">{b.title}</button>
+                      <span className="block text-[10px] text-gray-400">View caller and appointment details</span>
                     </td>
                     <td className="text-xs">
                       <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
@@ -632,6 +635,7 @@ export default function CalendarPage() {
                       </span>
                     </td>
                     <td className="text-right">
+                      <button type="button" onClick={() => setSelectedBookingId(b.booking_id)} className="px-2 py-1 text-[11px] font-semibold text-indigo-600 hover:underline">Details</button>
                       {b.status !== "cancelled" && (
                         <div className="flex items-center justify-end gap-1.5">
                           <button
@@ -665,6 +669,8 @@ export default function CalendarPage() {
             )}
           </div>
         </section>
+
+        {selectedBookingId && <BookingDetailsDialog key={selectedBookingId} bookingId={selectedBookingId} timeZone={timeZone} onClose={() => setSelectedBookingId(null)} />}
 
         {/* Notifications Section */}
         <section className="rounded-2xl p-4 sm:p-5 flex flex-col gap-3 bg-white border shadow-sm" style={{ borderColor: "var(--claude-border)" }}>
@@ -703,7 +709,7 @@ export default function CalendarPage() {
 
         {/* Modal: Add Service */}
         {showAddService && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
+          <ModalPortal label="Calendar"><div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
             <div className="bg-white rounded-2xl w-full max-w-sm p-5 border shadow-2xl flex flex-col gap-4" style={{ borderColor: "var(--claude-border)" }}>
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-bold text-gray-800">Add Bookable Service</h3>
@@ -745,12 +751,12 @@ export default function CalendarPage() {
                 </button>
               </form>
             </div>
-          </div>
+          </div></ModalPortal>
         )}
 
         {/* Modal: Reschedule */}
         {reschedulingBooking && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
+          <ModalPortal label="Calendar"><div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
             <div className="bg-white rounded-2xl w-full max-w-sm p-5 border shadow-2xl flex flex-col gap-4" style={{ borderColor: "var(--claude-border)" }}>
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-bold text-gray-800">Reschedule Appointment</h3>
@@ -791,12 +797,12 @@ export default function CalendarPage() {
                 </button>
               </div>
             </div>
-          </div>
+          </div></ModalPortal>
         )}
 
         {/* Modal: Cancel */}
         {cancellingBooking && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
+          <ModalPortal label="Calendar"><div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
             <div className="bg-white rounded-2xl w-full max-w-sm p-5 border shadow-2xl flex flex-col gap-4" style={{ borderColor: "var(--claude-border)" }}>
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-bold text-rose-700">Cancel Appointment</h3>
@@ -834,7 +840,7 @@ export default function CalendarPage() {
                 </button>
               </div>
             </div>
-          </div>
+          </div></ModalPortal>
         )}
       </main>
     </OwnerShell>
