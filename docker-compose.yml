@@ -187,6 +187,8 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        NEXT_PUBLIC_VOICE_LATENCY_TIMER: ${NEXT_PUBLIC_VOICE_LATENCY_TIMER:-false}
     restart: unless-stopped
     profiles: ["docker-app"]
     environment:

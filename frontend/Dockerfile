@@ -7,6 +7,8 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+ARG NEXT_PUBLIC_VOICE_LATENCY_TIMER=false
+ENV NEXT_PUBLIC_VOICE_LATENCY_TIMER=$NEXT_PUBLIC_VOICE_LATENCY_TIMER
 RUN npm run build
 
 FROM node:20-alpine AS runner

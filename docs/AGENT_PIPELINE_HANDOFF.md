@@ -377,3 +377,21 @@ run it or rotate existing secrets casually. Never store plaintext keys in this f
 - Hedging stays disabled pending validated stream cancellation. Optional clause
   flush remains off; fallback flags are reserved, not implemented. Three focused
   timing/transport/clause-cancellation tests passed. Preserve earlier staged work.
+
+## Demo voice latency timer (2026-10-06)
+
+- Shared `VoiceLatencyTimer` appears on personal, owner-test, customer and Product
+  QR call screens when `NEXT_PUBLIC_VOICE_LATENCY_TIMER=true`. Default off; enabled
+  in local root `.env` and frontend `.env.local` for this demo. Set false to hide.
+  `start_frontend.ps1` forwards the root flag; Docker Compose passes a build arg.
+  Restart dev after changing it; rebuild the frontend image for production.
+- Browser monotonic timing starts at the last detected voiced mic sample after
+  150 ms silence confirmation, freezes on received audible remote audio with
+  playback allowed, and resets on sustained new user speech. Only existing call
+  tracks are analysed; no new capture, transcript/audio logs or provider changes.
+- Labelled client estimate: 40 ms sampling, fixed RMS threshold and 80 ms speech
+  confirmation are demo heuristics affected by noise/echo. It cannot measure
+  physical speaker output or identify whether the reply is a filler. Muting,
+  reconnecting, replacing the microphone or ending a call clears timing. Analyser
+  cleanup closes its own audio context without stopping shared microphone tracks.
+- Timer and existing lifecycle regression checks: 9 passed.

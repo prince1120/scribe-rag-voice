@@ -15,6 +15,7 @@ import { extractApiErrorMessage, formatClientError } from "../lib/apiErrors";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, Track, createAudioAnalyser } from "livekit-client";
 import { NetworkBanner } from "../components/voice/NetworkBanner";
+import { VoiceLatencyTimer } from "../components/voice/VoiceLatencyTimer";
 import { useCallQuality, VOICE_ROOM_OPTIONS } from "../components/voice/useCallQuality";
 import { enableEnhancedMic, stopMicrophone } from "../components/voice/micEnhancement";
 import { useCallAttempt } from "../components/voice/useCallAttempt";
@@ -225,6 +226,7 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
   return (
     <div className="vtest">
       <NetworkBanner warning={networkWarning} />
+      <VoiceLatencyTimer key={activeRoom?.name} room={activeRoom} active={phase === "live"} />
       <div className="vtest-main">
         <div
           ref={orbRef}

@@ -7,6 +7,7 @@ import type { RemoteTrack } from "livekit-client";
 import { VOICE_ROOM_OPTIONS } from "../../components/voice/useCallQuality";
 import { enableEnhancedMic, stopMicrophone } from "../../components/voice/micEnhancement";
 import { useCallAttempt } from "../../components/voice/useCallAttempt";
+import { VoiceLatencyTimer } from "../../components/voice/VoiceLatencyTimer";
 import { VOICE_DATA_PACKETS } from "../../components/voice/voiceEvents";
 import {
   Package,
@@ -95,6 +96,7 @@ export default function PublicProductQrPage() {
   const [voiceUnavailable, setVoiceUnavailable] = useState(false);
   const [voiceConnecting, setVoiceConnecting] = useState(false);
   const [voiceActive, setVoiceActive] = useState(false);
+  const [activeVoiceRoom, setActiveVoiceRoom] = useState<Room | null>(null);
   const [voiceStatusMsg, setVoiceStatusMsg] = useState<string | null>(null);
   const [voiceTranscript, setVoiceTranscript] = useState<VoiceTranscriptLine[]>([]);
   const [voiceConsentAccepted, setVoiceConsentAccepted] = useState(false);
@@ -441,6 +443,7 @@ export default function PublicProductQrPage() {
     cancelCall();
     const room = roomRef.current;
     roomRef.current = null;
+    setActiveVoiceRoom(null);
     if (room) {
       room.removeAllListeners();
       stopMicrophone(room);
@@ -528,6 +531,7 @@ export default function PublicProductQrPage() {
       if (!isCurrentCall(attempt)) return;
       const room = new Room(VOICE_ROOM_OPTIONS);
       roomRef.current = room;
+      setActiveVoiceRoom(room);
 
       room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
         if (track.kind !== Track.Kind.Audio) return;
@@ -768,6 +772,7 @@ export default function PublicProductQrPage() {
 
       {(voiceActive || voiceConnecting) && (
         <section className="voice-session-bar" aria-label="Voice support controls">
+          <VoiceLatencyTimer key={activeVoiceRoom?.name} room={activeVoiceRoom} active={voiceActive} />
           <div className="voice-session-bar__inner">
             <div className="voice-session-bar__status">
               <span className={voiceActive ? "voice-session-bar__pulse" : "voice-session-bar__pulse is-connecting"} aria-hidden="true" />

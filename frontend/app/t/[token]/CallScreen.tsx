@@ -17,6 +17,7 @@ import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
 import { useAgentStall, VOICE_ROOM_OPTIONS } from "../../components/voice/useCallQuality";
 import { enableEnhancedMic, stopMicrophone } from "../../components/voice/micEnhancement";
 import { useCallAttempt } from "../../components/voice/useCallAttempt";
+import { VoiceLatencyTimer } from "../../components/voice/VoiceLatencyTimer";
 import { SignalPill } from "../../components/voice/SignalPill";
 import { VOICE_DATA_PACKETS } from "../../components/voice/voiceEvents";
 import {
@@ -655,6 +656,7 @@ export function CallScreen({
             
             {/* Main Hero Card (Status + Orb + Sound Bars + Self-Contained Symmetrical Controls) */}
             <section className="live-hero-card">
+              <VoiceLatencyTimer key={activeRoom?.name} room={activeRoom} active={phase === "live"} />
               <div className="inline-flex items-center gap-2 py-1.5 px-4 rounded-full bg-[var(--claude-surface-2)] border border-[var(--claude-border)] text-xs font-semibold text-[var(--claude-text)] shadow-xs">
                 <Sparkles size={13} className="text-[var(--claude-accent)]" />
                 <span>{status}</span>

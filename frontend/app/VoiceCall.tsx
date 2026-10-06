@@ -5,6 +5,7 @@ import { Room, RoomEvent, Track, createAudioAnalyser } from "livekit-client";
 
 import { VoiceSpectrum } from "./components/voice/VoiceSpectrum";
 import { NetworkBanner } from "./components/voice/NetworkBanner";
+import { VoiceLatencyTimer } from "./components/voice/VoiceLatencyTimer";
 import { useCallQuality, VOICE_ROOM_OPTIONS } from "./components/voice/useCallQuality";
 import { enableEnhancedMic, stopMicrophone } from "./components/voice/micEnhancement";
 import { useAudioDeviceSwitching } from "./components/voice/useAudioDeviceSwitching";
@@ -785,6 +786,7 @@ export function VoiceCallModal({
       {/* Above the top bar so a weak connection is the first thing read, and
           so it never covers the call controls. */}
       <NetworkBanner warning={networkWarning} />
+      <VoiceLatencyTimer key={activeRoom?.name} room={activeRoom} active={state === "connected"} />
 
       {/* Top bar */}
       <div className="flex items-center justify-between px-6 h-16 flex-shrink-0 border-b" style={{ borderColor: "var(--claude-border)" }}>

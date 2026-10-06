@@ -4,6 +4,8 @@
 Write-Host "=== Scribe Frontend - Windows host ===" -ForegroundColor Cyan
 try { $v = node --version 2>&1; Write-Host "Found: $v" -ForegroundColor Green } catch { Write-Host "Node.js not found!" -ForegroundColor Red; exit 1 }
 . (Join-Path $PSScriptRoot "infra\Set-HybridEnvironment.ps1")
+$latencyTimerFlag = Get-ScribeDotEnvValue -Path (Join-Path $PSScriptRoot ".env") -Name "NEXT_PUBLIC_VOICE_LATENCY_TIMER"
+if ($latencyTimerFlag) { $env:NEXT_PUBLIC_VOICE_LATENCY_TIMER = $latencyTimerFlag }
 $env:BACKEND_ORIGIN = "http://127.0.0.1:8000"
 $env:BACKEND_API_KEY = Get-ScribeDotEnvValue -Path (Join-Path $PSScriptRoot "backend\.env") -Name "API_KEY"
 if (-not $env:BACKEND_API_KEY) {

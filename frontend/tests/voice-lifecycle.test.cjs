@@ -36,6 +36,7 @@ function harness({ slowConnect = false } = {}) {
     '../lib/ownerFetch': { ownerFetch() { count.requests++; return token.promise; } },
     '../lib/apiErrors': { formatClientError: () => 'Call failed', extractApiErrorMessage: async () => 'Call failed' },
     '../components/voice/NetworkBanner': { NetworkBanner: 'banner' },
+    '../components/voice/VoiceLatencyTimer': { VoiceLatencyTimer: 'latency-timer' },
     '../components/voice/useCallQuality': { VOICE_ROOM_OPTIONS: {}, useCallQuality: () => ({}) },
     '../components/voice/micEnhancement': {
       async enableEnhancedMic(room, extra, isActive) { if (!isActive || isActive()) count.capture++; },
