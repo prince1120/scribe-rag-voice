@@ -395,3 +395,15 @@ run it or rotate existing secrets casually. Never store plaintext keys in this f
   reconnecting, replacing the microphone or ending a call clears timing. Analyser
   cleanup closes its own audio context without stopping shared microphone tracks.
 - Timer and existing lifecycle regression checks: 9 passed.
+
+## Windows repeated-call credential fix (2026-10-06)
+
+- Agent leaving before microphone publication traced to credential retrieval
+  failing with RuntimeError. Reproduced: process-global aiohttp pool retained
+  the previous Windows job thread's closed event loop. `rag_client` now uses
+  LiveKit's job-context HTTP pool: persistent during a call, isolated between
+  jobs, and SDK-closed on shutdown. Do not restore a process-global async client.
+- Regression plus credential tests: 14 passed. Worker watcher reloaded the fix.
+  Live synthetic frozen-credential call produced reply audio successfully.
+  `test_live_voice_worker.py --verify-credentials` checks the actual internal
+  credential route rather than relying on environment-only test dispatch.

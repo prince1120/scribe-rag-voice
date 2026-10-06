@@ -17,6 +17,16 @@ from app.services.voice.latency import percentiles
 async def main():
     settings = VoiceSettings()
     room_name = "latency-test-" + uuid.uuid4().hex[:12]
+    metadata = {"rag_enabled": False, "greet_on_connect": False}
+    credential_call = None
+    if "--verify-credentials" in sys.argv:
+        from app.repositories.business import create_call
+        credential_call = await create_call(room_name, None, credentials={
+            "sarvam_api_key": settings.SARVAM_API_KEY,
+            "custom_llm_api_key": settings.CUSTOM_LLM_API_KEY,
+            "groq_api_key": settings.GROQ_API_KEY,
+        })
+        metadata.update(tenant_id=room_name, call_id=credential_call)
     client = api.LiveKitAPI(settings.LIVEKIT_URL, settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET)
     room = rtc.Room()
     ready = asyncio.Event()
@@ -50,7 +60,7 @@ async def main():
         await room.connect(settings.LIVEKIT_URL, token)
         await client.agent_dispatch.create_dispatch(api.CreateAgentDispatchRequest(
             agent_name=settings.VOICE_AGENT_NAME, room=room_name,
-            metadata=json.dumps({"rag_enabled": False, "greet_on_connect": False})))
+            metadata=json.dumps(metadata)))
         await asyncio.wait_for(ready.wait(), timeout=45)
         await asyncio.sleep(0.3)
         for index in range(3):
@@ -75,6 +85,17 @@ async def main():
             await client.room.delete_room(api.DeleteRoomRequest(room=room_name))
         finally:
             await client.aclose()
+            if credential_call:
+                from sqlalchemy import delete
+                from app.database import async_session, engine
+                from app.models.db_models import VoiceCallRecord, ConversationRecord
+                async with async_session() as database:
+                    await database.execute(delete(VoiceCallRecord).where(
+                        VoiceCallRecord.call_id == credential_call, VoiceCallRecord.tenant_id == room_name))
+                    await database.execute(delete(ConversationRecord).where(
+                        ConversationRecord.tenant_id == room_name))
+                    await database.commit()
+                await engine.dispose()
 
 
 if __name__ == "__main__":

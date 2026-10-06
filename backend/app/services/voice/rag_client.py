@@ -12,17 +12,13 @@ from collections import OrderedDict
 from typing import Optional
 
 import aiohttp
+from livekit.agents.utils import http_context
 
 logger = logging.getLogger(__name__)
 
-# One connection pool for the whole worker process, rather than a fresh
-# ClientSession per lookup. A new session meant a new TCP handshake — and TLS
-# handshake when the API is behind HTTPS — on every single conversational
-# turn, before retrieval even began. Reusing a keep-alive connection removes
-# that from the critical path between the user finishing a sentence and the
-# assistant starting to speak.
-_session: Optional[aiohttp.ClientSession] = None
-_session_lock = asyncio.Lock()
+# LiveKit owns a persistent pool per job context and closes it on job shutdown.
+# Windows jobs use threads with separate loops: a process-global ClientSession
+# can retain a previous call's closed loop and fail before credentials are fetched.
 
 # A caller will often repeat a question after an interruption ("what was the
 # price again?") or clarify it with identical words.  Sending that exact query
@@ -78,32 +74,7 @@ async def _cache_context(key: tuple, chunks: list[str]) -> None:
 
 
 async def _get_session() -> aiohttp.ClientSession:
-    global _session
-    if _session is None or _session.closed:
-        async with _session_lock:
-            # Re-checked inside the lock: several turns can race here on the
-            # first lookup of a call.
-            if _session is None or _session.closed:
-                _session = aiohttp.ClientSession(
-                    connector=aiohttp.TCPConnector(
-                        limit=16,
-                        # Keep sockets warm across the gaps between turns; the
-                        # default 15s would expire during any normal pause in
-                        # conversation and force a reconnect.
-                        keepalive_timeout=90,
-                        ttl_dns_cache=300,
-                    )
-                )
-    return _session
-
-
-async def close_session() -> None:
-    """Release the pool on worker shutdown so aiohttp doesn't log unclosed
-    session warnings and sockets are torn down deterministically."""
-    global _session
-    if _session is not None and not _session.closed:
-        await _session.close()
-    _session = None
+    return http_context.http_session()
 
 
 async def fetch_context(
