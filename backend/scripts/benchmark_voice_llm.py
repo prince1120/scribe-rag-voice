@@ -20,9 +20,11 @@ async def sample(client, model, key):
     first = last = None
     usage = {}
     try:
-        async with client.stream("POST", "https://api.sarvam.ai/v1/chat/completions",
+        endpoint = "https://api.sarvam.ai/v2/chat/completions" if model == "gemma4" else "https://api.sarvam.ai/v1/chat/completions"
+        reasoning = {} if model == "gemma4" else {"reasoning_effort": None}
+        async with client.stream("POST", endpoint,
                                  headers={"Authorization": f"Bearer {key}"}, json={
-            "model": model, "stream": True, "reasoning_effort": None,
+            "model": model, "stream": True, **reasoning,
             "max_tokens": 220, "temperature": 0.3,
             "messages": [{"role": "system", "content": build_instructions(rag_enabled=False) +
                           " Opening hours are 9 AM to 5 PM; consultations cost 500 rupees. Check availability before booking."},
@@ -69,6 +71,8 @@ async def main(args):
                 row = await sample(client, model, settings.SARVAM_API_KEY)
                 rows.append(row)
                 print(json.dumps({"model": model, "sample": index + 1, **row}), flush=True)
+                if row.get("status") in (400, 401, 402, 403, 404, 429):
+                    break  # Do not hammer inaccessible models or exhausted quotas.
             print(json.dumps({"model": model, "http2_enabled": args.http2, "prewarm": args.prewarm,
                               "errors": sum("error_type" in r for r in rows),
                               "ttft_ms": percentiles([r.get("ttft_ms") for r in rows]),
