@@ -16,6 +16,7 @@ supported route is `ChatMessage.metrics` via `conversation_item_added`, which
 is what this uses.
 """
 import logging
+from app.services.voice.latency import emit, turn_record
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +48,16 @@ def attach(session, *, room_name: str, room=None) -> None:
     import asyncio
     from app.services.voice.domain.interfaces import VoiceDataPacket
 
+    last_user_metrics = {}
+
     @session.on("conversation_item_added")
     def _on_item(event) -> None:  # pragma: no cover - needs a live session
+        nonlocal last_user_metrics
         try:
             item = event.item
+            if getattr(item, "role", None) == "user":
+                last_user_metrics = dict(getattr(item, "metrics", None) or {})
+                return
             # Assistant turns carry the latency stages. User turns carry only
             # transcription timings, which are already included in the
             # assistant turn's end-to-end number.
@@ -59,6 +66,8 @@ def attach(session, *, room_name: str, room=None) -> None:
             m = getattr(item, "metrics", None) or {}
             if not m:
                 return
+            emit("turn", **turn_record(item, last_user_metrics))
+            m = {**last_user_metrics, **m}
 
             e2e = m.get("e2e_latency")
             started = m.get("started_speaking_at")
