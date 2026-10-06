@@ -407,3 +407,19 @@ run it or rotate existing secrets casually. Never store plaintext keys in this f
   Live synthetic frozen-credential call produced reply audio successfully.
   `test_live_voice_worker.py --verify-credentials` checks the actual internal
   credential route rather than relying on environment-only test dispatch.
+
+## Sarvam first-audio and pause tuning (2026-10-06)
+
+- See `VOICE_TURN_TUNING.md` for research, actual speech baseline, provider
+  comparisons and limitations. Sarvam remains STT/LLM/TTS; other vendors are
+  research references only. No semantic model downloaded or provider switched.
+- Opt-in STT silence-frame settings, punctuation/phrase-aware endpointing and
+  existing clause flush. Local intended values: silence frames 8, high sensitivity
+  false, smart hints true, clause flush true. New settings default off in code.
+- Weak punctuation/ellipsis are separate from strong endings; incomplete words
+  take priority over ASR punctuation, and interim punctuation cannot use the
+  fast final-sentence path. Hindi combining marks are retained. Number tails wait.
+- Benchmarks show moderate STT p50 savings ~337–375 ms, and clause-flush fixture
+  savings ~495 ms. Small synthetic samples, not proven microphone-to-speaker SLO.
+- `benchmark_voice_stt.py --silence-frames 8` reports numeric timings, synthetic
+  word preservation and punctuation classes without transcript/audio output.
