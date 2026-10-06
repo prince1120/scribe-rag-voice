@@ -19,6 +19,9 @@ from app.services.voice.config import VoiceSettings
 
 
 class ObservedLLM(lk_openai.LLM):
+    def bind_latency_call(self, call_id):
+        self._client._client.call_id = call_id
+
     def configure_prewarm(self, settings):
         self._prewarm_enabled = settings.VOICE_LLM_PREWARM
         self._keepalive_seconds = max(10, settings.VOICE_LLM_KEEPALIVE_SECONDS)
@@ -78,9 +81,10 @@ def build_custom_openai_llm(settings: VoiceSettings) -> llm.LLM:
     model.configure_prewarm(settings)
     @model.on("metrics_collected")
     def record_usage(metrics):
-        emit("llm_stream", request_id=metrics.request_id, speech_id=metrics.speech_id,
+        emit("llm_stream", call_id=client._client.call_id,
+             request_id=metrics.request_id, speech_id=metrics.speech_id,
              request_to_first_chunk_ms=milliseconds(metrics.ttft),
-             request_to_last_chunk_ms=milliseconds(metrics.duration),
+             request_to_stream_end_ms=milliseconds(metrics.duration),
              cancelled=metrics.cancelled, input_tokens=metrics.prompt_tokens,
              cached_input_tokens=metrics.prompt_cached_tokens, output_tokens=metrics.completion_tokens)
     return model

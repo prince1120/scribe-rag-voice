@@ -5,6 +5,10 @@ import math
 
 logger = logging.getLogger(__name__)
 
+# Reference budget, not a promise. STT and generation can overlap endpointing.
+BUDGET_MS = {"endpointing_ms": 300, "llm_ttft_ms": 450,
+             "first_token_to_audio_frame_ms": 200, "network_audio_ms": 75}
+
 
 def emit(kind: str, **fields) -> None:
     logger.info("VOICE_LATENCY %s", json.dumps({"kind": kind, **fields}, allow_nan=False))
@@ -20,6 +24,7 @@ def turn_record(item, user_metrics=None):
     return {
         "turn_id": item.id,
         "interrupted": item.interrupted,
+        "response_type": "llm_reply" if m.get("llm_node_ttft") is not None else "auxiliary_speech",
         "llm_ttft_ms": milliseconds(m.get("llm_node_ttft")),
         "first_token_to_audio_frame_ms": milliseconds(m.get("tts_node_ttfb")),
         "speech_end_to_server_audio_ms": milliseconds(m.get("e2e_latency")),
@@ -28,6 +33,10 @@ def turn_record(item, user_metrics=None):
         "turn_hook_ms": milliseconds(user_metrics.get("on_user_turn_completed_delay")),
         # Default RoomAudioOutput reports track publication, not browser playback.
         "speech_end_to_client_playback_ms": None,
+        "budget_ms": BUDGET_MS,
+        "budget_total_ms": sum(BUDGET_MS.values()),
+        "target_p50_ms": 1000,
+        "target_p95_ms": 1500,
     }
 
 

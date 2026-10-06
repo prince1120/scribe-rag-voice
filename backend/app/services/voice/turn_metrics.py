@@ -16,6 +16,7 @@ supported route is `ChatMessage.metrics` via `conversation_item_added`, which
 is what this uses.
 """
 import logging
+import uuid
 from app.services.voice.latency import emit, milliseconds, turn_record
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,11 @@ def attach(session, *, room_name: str, room=None) -> None:
     from app.services.voice.domain.interfaces import VoiceDataPacket
 
     last_user_metrics = {}
+    last_user_id = None
+    call_id = uuid.uuid4().hex
+    bind_call = getattr(getattr(session, "llm", None), "bind_latency_call", None)
+    if bind_call:
+        bind_call(call_id)
 
     # The installed 1.6.6 still exposes provider stream/acquisition metrics here.
     # ChatMessage.metrics lacks last-token and WebSocket acquisition timings.
@@ -56,7 +62,7 @@ def attach(session, *, room_name: str, room=None) -> None:
     def _on_provider_metrics(event):
         m = event.metrics
         if m.type in ("stt_metrics", "tts_metrics", "llm_metrics"):
-            emit(m.type, request_id=m.request_id, speech_id=getattr(m, "speech_id", None),
+            emit(m.type, call_id=call_id, request_id=m.request_id, speech_id=getattr(m, "speech_id", None),
                  duration_ms=milliseconds(m.duration),
                  first_chunk_ms=milliseconds(getattr(m, "ttft", getattr(m, "ttfb", None))),
                  connection_acquire_ms=milliseconds(getattr(m, "acquire_time", None)),
@@ -65,11 +71,12 @@ def attach(session, *, room_name: str, room=None) -> None:
 
     @session.on("conversation_item_added")
     def _on_item(event) -> None:  # pragma: no cover - needs a live session
-        nonlocal last_user_metrics
+        nonlocal last_user_metrics, last_user_id
         try:
             item = event.item
             if getattr(item, "role", None) == "user":
                 last_user_metrics = dict(getattr(item, "metrics", None) or {})
+                last_user_id = item.id
                 return
             # Assistant turns carry the latency stages. User turns carry only
             # transcription timings, which are already included in the
@@ -79,7 +86,12 @@ def attach(session, *, room_name: str, room=None) -> None:
             m = getattr(item, "metrics", None) or {}
             if not m:
                 return
-            emit("turn", **turn_record(item, last_user_metrics))
+            # Proactive speech/greetings have no speech-end latency; do not attach
+            # the last caller's timings to those turns.
+            user_metrics = last_user_metrics if m.get("e2e_latency") is not None else {}
+            emit("turn", call_id=call_id,
+                 user_turn_id=last_user_id if user_metrics else None,
+                 **turn_record(item, user_metrics))
             m = {**last_user_metrics, **m}
 
             e2e = m.get("e2e_latency")

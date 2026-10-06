@@ -11,6 +11,7 @@ class ObservedClient(httpx.AsyncClient):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.transport_id = uuid.uuid4().hex
+        self.call_id = None
 
     async def send(self, request, **kwargs):
         started = time.perf_counter()
@@ -27,7 +28,7 @@ class ObservedClient(httpx.AsyncClient):
 
         request.extensions["trace"] = trace
         record = {"request_id": uuid.uuid4().hex, "transport_id": self.transport_id,
-                  "http_version": None, "alpn": None}
+                  "call_id": self.call_id, "http_version": None, "alpn": None}
         try:
             response = await super().send(request, **kwargs)
             record["http_version"] = response.http_version
