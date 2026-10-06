@@ -5,7 +5,8 @@ from app.services.voice.turn_hints import punctuation_kind
 
 def test_thinking_or_incomplete_phrase_wins_over_asr_punctuation():
     settings = VoiceSettings()
-    for text in ("I want to.", "Because...", "Um.", "Let me think.", "मुझे चाहिए क्योंकि।"):
+    for text in ("I want to.", "Because...", "Um.", "Let me think.", "मुझे चाहिए क्योंकि।",
+                 "I want to know about like.", "Do you?", "I want to know.", "Tell me about."):
         options = endpointing_options(text, settings, True)
         assert options["min_delay"] == 0.65
         assert options["max_delay"] == 1.0

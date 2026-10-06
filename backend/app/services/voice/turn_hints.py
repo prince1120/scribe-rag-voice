@@ -5,12 +5,14 @@ from app.services.voice.config import VoiceSettings
 
 _INCOMPLETE_ENDINGS = {
     "and", "or", "but", "because", "so", "to", "for", "with", "about", "if",
-    "when", "that", "is", "are", "was", "want", "need",
+    "when", "that", "is", "are", "was", "want", "need", "like",
     "aur", "ya", "lekin", "ki", "toh", "matlab", "kyunki",
     "um", "uh", "umm", "uhh", "erm", "hmm",
     "और", "लेकिन", "क्योंकि", "मतलब", "कि",
 }
-_THINKING_ENDINGS = ("let me think", "let me see", "one second", "just a second", "ek minute")
+_THINKING_ENDINGS = ("let me think", "let me see", "one second", "just a second", "ek minute",
+                    "do you", "can you", "would you", "could you", "i want to know",
+                    "i wanted to know", "tell me about")
 
 
 def punctuation_kind(text: str) -> str:

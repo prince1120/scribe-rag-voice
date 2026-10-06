@@ -4,6 +4,7 @@ Randomized per turn from fixed lists the model never sees; saves TTS tokens
 and keeps agent from sounding hesitant ("um/uh" removed from prompt).
 """
 import asyncio
+import inspect
 import logging
 import random
 from typing import Optional
@@ -65,16 +66,22 @@ def start_thinking_filler(agent, delay: float) -> None:
             await asyncio.sleep(delay)
             if agent.session.current_speech is not None:
                 return
+            if getattr(agent.session, "user_state", None) == "speaking":
+                return
             lang = getattr(agent, "_last_user_lang", "en-IN") or "en-IN"
             filler = pick_thinking_filler(lang)
-            # `say` is async in the installed LiveKit Agents version. Awaiting
-            # it queues the bridge reliably but does not wait for its full
-            # playback, so it never stalls the reply pipeline.
-            await agent.session.say(
+            # The installed SDK's say returns an awaitable SpeechHandle:
+            # awaiting it waits for PLAYBACK, not merely scheduling. Keep the
+            # filler scheduling task separate so reply TTS cannot cancel it
+            # midway through its own synthesis/playback.
+            handle = agent.session.say(
                 filler,
                 allow_interruptions=True,
                 add_to_chat_ctx=False,
             )
+            if inspect.iscoroutine(handle):
+                handle = await handle
+            agent._filler_handle = handle
         except asyncio.CancelledError:
             pass
         except Exception:

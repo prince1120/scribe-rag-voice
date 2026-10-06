@@ -374,7 +374,7 @@ export default function AgentPage() {
       setSaved(true);
       setLastSavedAt(new Date().toLocaleTimeString());
       await loadChannels();
-      showToast(hasUnsaved ? "Changes saved ✓" : "Assistant saved ✓", "success");
+      showToast("Draft saved. Publish changes to update customer links.", "success");
       setTimeout(() => setSaved(false), 2500);
       return true;
     } catch (err) {
@@ -636,7 +636,7 @@ export default function AgentPage() {
                   {isLive ? "Deployed Live ✓" : "Draft (Offline)"}
                 </span>
                 <p style={{ margin: "2px 0 0", fontSize: 11, color: isLive ? "#166534" : "var(--claude-text-2)" }}>
-                  {isLive ? "Customer links active" : "Save then deploy to publish"}
+                  {isLive && config.has_draft_changes ? "Draft changes not published" : isLive ? "Customer links active" : "Save then deploy to publish"}
                 </p>
               </div>
             </div>
@@ -645,12 +645,19 @@ export default function AgentPage() {
               <button
                 type="button"
                 onClick={save}
-                disabled={saving}
+                disabled={saving || deploying}
                 style={{ ...S.headerSaveBtn, opacity: hasUnsaved ? 1 : 0.85, borderColor: hasUnsaved ? "var(--claude-accent)" : "var(--claude-border)" }}
               >
                 <Save size={14} />
-                <span>{saving ? "Saving…" : saved ? "Saved ✓" : hasUnsaved ? "Save changes *" : "Save"}</span>
+                <span>{saving ? "Saving…" : saved ? "Draft saved ✓" : hasUnsaved ? "Save draft *" : "Save draft"}</span>
               </button>
+
+              {isLive && (hasUnsaved || config.has_draft_changes) && (
+                <button type="button" onClick={() => deploy(true)} disabled={saving || deploying}
+                  style={{ ...S.deployBtn, background: "var(--claude-accent)", color: "var(--claude-surface)" }}>
+                  {deploying ? "Publishing…" : "Publish changes"}
+                </button>
+              )}
 
               <button
                 type="button"
@@ -1378,8 +1385,15 @@ color: "var(--claude-text-2)",
               style={S.mainSaveBtn}
             >
               <Save size={16} />
-              <span>{saving ? "Saving Changes…" : saved ? "Changes Saved!" : "Save Assistant Changes"}</span>
+              <span>{saving ? "Saving draft…" : saved ? "Draft saved!" : "Save draft"}</span>
             </button>
+
+            {isLive && (hasUnsaved || config.has_draft_changes) && (
+              <button type="button" onClick={() => deploy(true)} disabled={saving || deploying}
+                style={S.mainDeployBtn}>
+                <Radio size={15} /> {deploying ? "Publishing…" : "Publish changes"}
+              </button>
+            )}
 
             <button
               type="button"
@@ -1405,7 +1419,7 @@ color: "var(--claude-text-2)",
 
           {saved && (
             <span style={{ fontSize: 13, fontWeight: 600, color: "var(--color-success)", display: "flex", alignItems: "center", gap: 6 }}>
-              <CheckCircle2 size={16} /> All configuration saved & updated
+              <CheckCircle2 size={16} /> Draft saved; publish to update customer links
             </span>
           )}
         </div>

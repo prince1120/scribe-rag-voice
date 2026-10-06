@@ -26,6 +26,37 @@ logger = logging.getLogger(__name__)
 SLOW_TURN_S = 2.0
 
 
+def attach_vad_events(session, *, room, silence_seconds: float) -> None:
+    """Send content-free SDK/VAD speech boundaries for the optional demo timer."""
+    import asyncio
+    import json
+
+    sequence = 0
+    pending = set()
+
+    async def publish(packet):
+        try:
+            await asyncio.wait_for(room.local_participant.publish_data(
+                packet, reliable=True, topic="voice.vad"), timeout=2)
+        except Exception:
+            logger.debug("Could not deliver VAD timing boundary")
+
+    @session.on("user_state_changed")
+    def on_state(event):
+        nonlocal sequence
+        if event.new_state not in ("speaking", "listening"):
+            return
+        if event.new_state == "listening" and event.old_state != "speaking":
+            return
+        sequence += 1
+        packet = json.dumps({"type": "user_vad", "speaking": event.new_state == "speaking",
+                             "sequence": sequence,
+                             "confirmation_ms": round(silence_seconds * 1000) if event.new_state == "listening" else 0}).encode()
+        task = asyncio.create_task(publish(packet))
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+
+
 def _fmt(seconds) -> str:
     """Milliseconds, or a dash when the stage didn't report.
 

@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-require-imports -- Test the actual timer with synthetic monotonic timestamps. */
+/* eslint-disable @typescript-eslint/no-require-imports -- Run the actual timer with synthetic timestamps. */
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -11,42 +11,47 @@ const exportsObject = {};
 vm.runInNewContext(code, { exports: exportsObject });
 const { LatencyTimer } = exportsObject;
 
-test('counts from last voiced sample, freezes on reply audio, resets on next speech', () => {
+test('only VAD starts/reset speech, VAD silence counts, first reply freezes', () => {
   const timer = new LatencyTimer();
-  assert.equal(timer.sample(0, false, true).phase, 'idle'); // Greeting is not a reply.
-  timer.sample(100, true, false);
-  assert.equal(timer.sample(200, true, false).phase, 'speaking');
-  timer.sample(300, true, false);
-  assert.equal(timer.sample(400, false, false).phase, 'speaking');
-  assert.equal(timer.sample(460, false, false).ms, 160);
-  const reply = timer.sample(900, false, true);
-  assert.equal(reply.phase, 'done');
-  assert.equal(reply.ms, 600);
-  assert.equal(timer.sample(1200, false, false).ms, 600);
-  timer.sample(1300, true, true);
-  assert.equal(timer.sample(1400, true, true).ms, 0);
-  assert.equal(timer.sample(1400, true, true).phase, 'speaking');
-  assert.equal(timer.sample(1600, false, false).phase, 'waiting');
+  assert.equal(timer.sample(100, true).phase, 'idle'); // Greeting does not start a turn.
+  assert.equal(timer.speech(200, true).ms, 0);
+  assert.equal(timer.sample(400, false).phase, 'speaking');
+  assert.equal(timer.speech(640, false, 240).ms, 240);
+  assert.equal(timer.sample(900, false).ms, 500);
+  assert.equal(timer.sample(1000, true).ms, 600);
+  assert.equal(timer.sample(2000, true).ms, 600);
+  assert.equal(timer.sample(2500, false).ms, 600);
+  assert.equal(timer.speech(2600, true).ms, 0);
 });
 
-test('short noise and brief speech pauses do not create a turn', () => {
+test('playback and its gaps cannot reset or restart a finished turn', () => {
   const timer = new LatencyTimer();
-  timer.sample(10, true, false);
-  assert.equal(timer.sample(50, false, false).phase, 'idle');
-  timer.sample(100, true, false);
-  timer.sample(200, true, false);
-  assert.equal(timer.sample(300, false, false).phase, 'speaking');
-  timer.sample(320, true, false);
-  timer.sample(420, true, false);
-  assert.equal(timer.sample(600, false, true).ms, 180);
+  timer.speech(0, true);
+  timer.speech(200, false);
+  assert.equal(timer.sample(500, true).ms, 300);
+  for (const [now, audible] of [[600, false], [700, true], [800, false], [900, true]]) {
+    assert.equal(timer.sample(now, audible).phase, 'done');
+    assert.equal(timer.sample(now, audible).ms, 300);
+  }
 });
 
-test('records fast audio arriving during the silence confirmation window', () => {
+test('confirmed barge-in resets even while the assistant is audible', () => {
   const timer = new LatencyTimer();
-  timer.sample(0, true, false);
-  timer.sample(100, true, false);
-  timer.sample(140, false, true);
-  const reply = timer.sample(260, false, false);
-  assert.equal(reply.phase, 'done');
-  assert.equal(reply.ms, 40);
+  timer.speech(0, true);
+  timer.speech(200, false);
+  timer.sample(500, true);
+  timer.speech(600, true);
+  assert.equal(timer.sample(640, true).phase, 'speaking');
+  assert.equal(timer.sample(640, true).ms, 0);
+  timer.speech(1000, false);
+  assert.equal(timer.sample(1200, false).ms, 200);
+});
+
+test('duplicate silence events do not start a timer', () => {
+  const timer = new LatencyTimer();
+  assert.equal(timer.speech(0, false).phase, 'idle');
+  timer.speech(100, true);
+  timer.speech(200, false);
+  timer.speech(400, false);
+  assert.equal(timer.sample(500, true).ms, 300);
 });

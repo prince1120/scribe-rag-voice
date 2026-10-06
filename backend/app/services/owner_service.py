@@ -441,6 +441,10 @@ async def save_agent_config(
         style_rules_enabled=style_rules_enabled,
         **channel_fields,
     )
+    # Legacy/manual agents need a saved identity for the gallery to show edits.
+    if existing is not None and not record.active_snapshot_id:
+        from app.repositories.agent_addresses import ensure_address
+        await ensure_address(tenant_id)
     return {
         "voice_script": getattr(record, "voice_script", None),
         "status": getattr(record, "status", DRAFT),

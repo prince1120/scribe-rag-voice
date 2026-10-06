@@ -50,5 +50,6 @@ def build_sarvam_tts(settings: VoiceSettings, *, http_session=None) -> tts.TTS:
         loudness=1.0,
         enable_preprocessing=True,
         min_buffer_size=settings.VOICE_TTS_MIN_BUFFER_CHARS,
+        output_audio_codec=settings.VOICE_TTS_OUTPUT_CODEC,
         **({"http_session": http_session} if http_session is not None else {}),
     )

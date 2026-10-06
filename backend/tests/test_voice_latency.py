@@ -95,3 +95,58 @@ def test_clause_flush_emits_before_later_text_and_cleans_up():
         assert stream.closed
 
     asyncio.run(run())
+
+
+def test_provider_final_event_does_not_drop_later_clauses():
+    from app.services.voice.streaming_tts import clause_audio
+
+    async def run():
+        opened = []
+
+        class Stream:
+            frame = None
+            emitted = False
+            finished = False
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_):
+                self.finished = True
+
+            def push_text(self, text):
+                if self.frame is None:
+                    self.frame = text
+
+            def flush(self):
+                pass
+
+            def end_input(self):
+                pass
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                # Sarvam's first `final` ends this stream's entire output.
+                if self.emitted:
+                    raise StopAsyncIteration
+                while self.frame is None:
+                    await asyncio.sleep(0)
+                self.emitted = True
+                return SimpleNamespace(frame=self.frame)
+
+        def stream(**_):
+            instance = Stream()
+            opened.append(instance)
+            return instance
+
+        async def text():
+            for clause in ("FIRST", "SECOND", "THIRD"):
+                yield clause
+
+        frames = [frame async for frame in clause_audio(SimpleNamespace(stream=stream), text())]
+        assert frames == ["FIRST", "SECOND", "THIRD"]
+        assert all(instance.finished for instance in opened)
+
+    asyncio.run(run())

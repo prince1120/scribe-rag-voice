@@ -6,6 +6,7 @@ import { Room, RoomEvent, Track, createAudioAnalyser } from "livekit-client";
 import { VoiceSpectrum } from "./components/voice/VoiceSpectrum";
 import { NetworkBanner } from "./components/voice/NetworkBanner";
 import { VoiceLatencyTimer } from "./components/voice/VoiceLatencyTimer";
+import { mergeTranscript } from "./components/voice/mergeTranscript";
 import { useCallQuality, VOICE_ROOM_OPTIONS } from "./components/voice/useCallQuality";
 import { enableEnhancedMic, stopMicrophone } from "./components/voice/micEnhancement";
 import { useAudioDeviceSwitching } from "./components/voice/useAudioDeviceSwitching";
@@ -516,13 +517,11 @@ export function VoiceCallModal({
           const role: "user" | "agent" = participant?.isLocal ? "user" : "agent";
           if (role === "agent") markAgentAlive();
           setTranscript((prev) => {
-            const next = [...prev];
+            let next = [...prev];
             for (const seg of segments) {
               if (!seg.text) continue;
-              const idx = next.findIndex((l) => l.id === seg.id);
               const line: TranscriptLine = { id: seg.id, role, text: seg.text, final: seg.final };
-              if (idx >= 0) next[idx] = line;
-              else next.push(line);
+              next = mergeTranscript(next, line);
             }
             return next;
           });
@@ -535,6 +534,7 @@ export function VoiceCallModal({
           const str = new TextDecoder().decode(payload);
           const data = JSON.parse(str);
           if (data.type === VOICE_DATA_PACKETS.CALL_ENDED || data.type === VOICE_DATA_PACKETS.END_CALL) {
+            if (data.reason === "technical_issue") setError("The call ended because the assistant encountered a technical issue. Please try again.");
             teardown();
             setState("idle");
             return;

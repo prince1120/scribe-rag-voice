@@ -423,3 +423,139 @@ run it or rotate existing secrets casually. Never store plaintext keys in this f
   savings ~495 ms. Small synthetic samples, not proven microphone-to-speaker SLO.
 - `benchmark_voice_stt.py --silence-frames 8` reports numeric timings, synthetic
   word preservation and punctuation classes without transcript/audio output.
+
+## Sarvam clause output correction (2026-10-06, uncommitted)
+
+- Earlier clause-flush first-frame savings are invalid for complete replies:
+  SDK final events close the whole emitter and dropped later flushed segments.
+  `clause_audio` now creates one output stream per clause, keeping the provider's
+  WebSocket pool. Eleven focused tests pass, including the reproduced regression.
+- Live synthetic two-clause output: 115 frames, 5,538 ms decoded duration;
+  cold first frame 1,678 ms (n=1, not a percentile or speaker measurement).
+  Benchmark now includes duration/frame count. No further commits authorized.
+- Browser mute uses LiveKit `setMicrophoneEnabled(false)`: track disabled, speech
+  not transmitted, VAD remains loaded. Device capture may remain open because
+  SDK stop-on-mute is false; silence/idle prompts can still occur while muted.
+
+## Save, gallery and republishing (2026-10-06, uncommitted)
+
+- User confirmed Save remains draft-only; Publish changes updates customers.
+  Live Studio now offers Publish changes for unsaved/saved draft edits, instead
+  of only Take Offline. Save messages and status distinguish unpublished edits.
+- Older manual records without active_snapshot_id receive a saved identity on
+  editing via the existing ensure_address allocator. This makes current edits
+  visible in My Agents; subsequent saves update that exact snapshot. Unrelated
+  historical snapshots stay intact. Published config stays unchanged until the
+  existing validated deploy route is called. Existing calls retain frozen config.
+- Focused agent pipeline: 16 passed, including legacy gallery identity and
+  draft/published isolation. Restart API to load this save-path change.
+
+## Demo timer echo correction (2026-10-06, uncommitted)
+
+- Reply audio takes priority over microphone energy when waiting for a reply.
+  Frozen results ignore mic energy during playback and for a 200 ms echo tail;
+  next sustained speech after playback resets to zero. This only changes the
+  demo display, not real barge-in or provider endpointing. RMS remains a heuristic
+  and cannot classify all non-speech background noise. Four timer tests pass,
+  including simultaneous first reply/mic echo and next-turn reset.
+
+## Demo timer uses worker VAD (2026-10-06, uncommitted)
+
+- Supersedes the microphone RMS timer and playback echo guard above. The shared
+  component never analyses mic energy: only worker user_state_changed boundaries
+  from the existing Silero/session pipeline reset/start the timer. Content-free
+  reliable data packets use topic voice.vad, sequence numbers and speaking bool;
+  only agent-origin packets are accepted, with mute/connection checks.
+- Speaking resets immediately on event receipt; listening starts counting with
+  configured VAD silence approximately included. First audible attached remote
+  audio freezes it until the next VAD speech start, including real barge-in.
+  Playback gaps do not restart it. Remote PCM remains the audio-arrival probe.
+- This remains a client estimate: boundary delivery/inference add uncertainty,
+  and VAD can still misclassify noise/uncancelled acoustic echo. No extra model,
+  microphone capture, audio/transcript telemetry or provider changes were added.
+- Four timer regressions and one worker telemetry test passed; TypeScript passed.
+  Existing NEXT_PUBLIC_VOICE_LATENCY_TIMER flag still controls visibility.
+  Load the updated worker and frontend, then start a fresh call for browser QA.
+
+## Latest delay diagnosis and error termination (2026-10-06, uncommitted)
+
+- Screenshot 2,982 ms corresponds closely to latest server turn 2,968 ms:
+  STT final 529 ms, endpointing 576 ms (includes/overlaps STT), LLM TTFT 455 ms,
+  TTS first audio 1,264 ms, hook 2 ms. Remaining ~674 ms is not attributed by
+  these aggregates. Do not add STT on top of endpointing or blame user bandwidth.
+- Latest call transport logs showed HTTP/1.1 and repeated handshakes. Earlier
+  HTTP/2 enabled launch-time overrides had not been saved in local env files.
+  Root/backend .env now explicitly set VOICE_LLM_HTTP2=true; provider, secrets,
+  prewarm and hedging unchanged. Watcher was touched after the env edit. Existing
+  sessions retain old clients. The unauthenticated HTTP/2 HEAD verification
+  timed out at connection setup; new-call ALPN/savings are not yet confirmed.
+- User explicitly requests termination on session errors. Shared worker handler
+  registered before session start now disables audio input, interrupts current
+  output, attempts a bounded six-second direct-TTS technical-issue goodbye,
+  then emits call_ended/technical_issue, closes the session and disconnects the
+  room with bounded operations. Recursive/duplicate errors cannot trigger more
+  closing attempts. Error logs contain class only, not provider payloads.
+- All four call screens show a technical-issue ending notice, including failed
+  TTS. No promise of spoken goodbye when TTS/network itself is unavailable.
+- Thirteen focused error/idle tests passed; final six error tests rechecked after
+  input disable. Actual provider-error injection in a live call is not performed.
+
+## Fragment, filler and connection follow-up (2026-10-06, uncommitted)
+
+- New real call confirms ALPN h2 with reused LLM requests (no DNS/TLS spans after
+  the first). Slow turns still include endpointing 2,456 ms or TTS 2,387 ms.
+  Browser connection quality does not establish worker-to-Sarvam network quality.
+- A paired unauthenticated HEAD check returned 405 on HTTP/2: 468 ms cold vs
+  101 ms reused. Local root/backend env now enable VOICE_LLM_PREWARM=true;
+  existing pooled warm loop runs during the session and is cancelled on close.
+  This 367 ms difference measures connection/request reuse, not proven end-to-end
+  savings. Earlier prewarm comparisons did not show a general TTFT improvement.
+- Filler scheduling now resolves only coroutine-returning say implementations;
+  native SDK say returns a SpeechHandle and awaiting it waits for playback.
+  Scheduling no longer remains cancellable throughout filler playback. Skip
+  fillers when user speech has resumed. VAD cancels pending filler timers only;
+  browser flush packets are sent by interrupted SpeechHandle done callbacks,
+  never raw VAD. Existing SDK adaptive interruption remains responsible for cuts.
+- Phrase hints use accumulated final STT fragments until the user turn commits.
+  Unfinished 'like', 'do you', 'I want to know' and 'tell me about' retain the
+  longer pause path even with ASR punctuation. These remain bounded heuristics,
+  not a semantic turn detector or a guarantee for arbitrarily long pauses.
+- Shared frontend mergeTranscript groups consecutive user STT segments without
+  dropping words, tracks segment IDs for interim replacement, and separates
+  turns when an assistant reply appears. Customer, personal and Product QR
+  transcript screens use it. Display grouping does not fabricate ASR text.
+- TTS codec benchmark, alternating three complete synthetic replies per codec:
+  MP3 p50 2,354 ms / p95-p99 4,598; linear16 p50 2,118 / p95-p99 2,526.
+  All samples emitted 5.15-6.01 seconds decoded audio. Warm-only results did not
+  consistently favor PCM. Default stays MP3; VOICE_TTS_OUTPUT_CODEC is opt-in
+  mp3/linear16. No codec latency improvement claimed/applied locally.
+  Sarvam codec reference: https://docs.sarvam.ai/api/api-guides-tutorials/text-to-speech/how-to/set-audio-format-for-output
+- Twenty focused filler/hints/error tests passed; six frontend timer/transcript
+  tests and TypeScript passed. New microphone turns are still needed to verify
+  natural pauses, complete filler playback and before/after first-audio latency.
+
+## Clause gap reproduction and bounded lookahead (2026-10-06)
+
+- Fresh synthetic worker call after the earlier fixes: text-to-received-audio
+  3,788 / 2,143 / 2,556 ms (p50 2,556; n=3 tail 3,788). These bypass microphone
+  endpointing and do not establish an end-to-end improvement. Prewarm 405/h2
+  events are now present in worker logs; warm LLM requests retain h2 and no
+  handshake spans. Provider/path timing still varies substantially.
+- Reproduced a local sequencing gap using a short first clause: serial output
+  simulated playback gaps 366 / 857 ms. Added opt-in bounded lookahead: at most
+  current + next clause, eight-frame application queues, separate provider
+  emitters, pooled connections, ordered output and cancellation of both streams.
+  Lookahead starts only after the first clause has produced its first frame;
+  the initial variant started too early and was corrected before local enabling.
+- Corrected candidate: simulated gaps 391 / 131 ms, decoded duration 3.76 / 3.50
+  seconds, first audio 1,514 / 641 ms. Warm fixture gap reduction ~726 ms; cold
+  gap did not improve. These are n=2 synthetic estimates, not measured speaker
+  playback or proven TTFT savings. Provider jitter confounds the small comparison.
+- VOICE_TTS_CLAUSE_PREFETCH defaults false; local root/backend env enable true.
+  Only active with VOICE_TTS_FLUSH_CLAUSES=true. Disable prefetch to restore
+  serial clauses if provider concurrency/quality regresses. No transport/provider
+  switch, new infrastructure or model download. SDK internal buffer memory is
+  not profiled; application queues and stream concurrency are bounded.
+- Six streaming/latency tests passed, including concurrent lookahead, correct
+  clause order, full emissions and immediate cancellation cleanup; two lookahead
+  tests rechecked after first-frame gating. New real speech calls still required.

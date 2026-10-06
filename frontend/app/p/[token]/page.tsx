@@ -8,6 +8,7 @@ import { VOICE_ROOM_OPTIONS } from "../../components/voice/useCallQuality";
 import { enableEnhancedMic, stopMicrophone } from "../../components/voice/micEnhancement";
 import { useCallAttempt } from "../../components/voice/useCallAttempt";
 import { VoiceLatencyTimer } from "../../components/voice/VoiceLatencyTimer";
+import { mergeTranscript } from "../../components/voice/mergeTranscript";
 import { VOICE_DATA_PACKETS } from "../../components/voice/voiceEvents";
 import {
   Package,
@@ -553,12 +554,10 @@ export default function PublicProductQrPage() {
         const role: VoiceTranscriptLine["role"] =
           participant?.identity === room.localParticipant.identity ? "user" : "assistant";
         setVoiceTranscript((current) => {
-          const next = [...current];
+          let next = [...current];
           for (const segment of segments) {
             const line = { id: segment.id, role, text: segment.text, final: segment.final };
-            const existing = next.findIndex((item) => item.id === segment.id);
-            if (existing >= 0) next[existing] = line;
-            else next.push(line);
+            next = mergeTranscript(next, line);
           }
           return next.slice(-40);
         });
@@ -579,7 +578,9 @@ export default function PublicProductQrPage() {
           const packet = JSON.parse(new TextDecoder().decode(payload));
           if (packet.type === VOICE_DATA_PACKETS.END_CALL || packet.type === VOICE_DATA_PACKETS.CALL_ENDED) {
             teardownVoice();
-            setVoiceStatusMsg("Voice session ended. Text support remains available.");
+            setVoiceStatusMsg(packet.reason === "technical_issue"
+              ? "The call ended due to a technical issue. Please try again or use text support."
+              : "Voice session ended. Text support remains available.");
           } else if (packet.type === VOICE_DATA_PACKETS.INTERRUPT) {
             const elements = [...audioElementsRef.current];
             elements.forEach(element => element.pause());

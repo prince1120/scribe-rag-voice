@@ -86,10 +86,14 @@ async def main():
         finally:
             await client.aclose()
             if credential_call:
-                from sqlalchemy import delete
+                from sqlalchemy import delete, select
                 from app.database import async_session, engine
-                from app.models.db_models import VoiceCallRecord, ConversationRecord
+                from app.models.db_models import VoiceCallRecord, ConversationRecord, MessageRecord
                 async with async_session() as database:
+                    conversation_ids = select(ConversationRecord.conversation_id).where(
+                        ConversationRecord.tenant_id == room_name)
+                    await database.execute(delete(MessageRecord).where(
+                        MessageRecord.conversation_id.in_(conversation_ids)))
                     await database.execute(delete(VoiceCallRecord).where(
                         VoiceCallRecord.call_id == credential_call, VoiceCallRecord.tenant_id == room_name))
                     await database.execute(delete(ConversationRecord).where(

@@ -18,6 +18,7 @@ import { useAgentStall, VOICE_ROOM_OPTIONS } from "../../components/voice/useCal
 import { enableEnhancedMic, stopMicrophone } from "../../components/voice/micEnhancement";
 import { useCallAttempt } from "../../components/voice/useCallAttempt";
 import { VoiceLatencyTimer } from "../../components/voice/VoiceLatencyTimer";
+import { mergeTranscript } from "../../components/voice/mergeTranscript";
 import { SignalPill } from "../../components/voice/SignalPill";
 import { VOICE_DATA_PACKETS } from "../../components/voice/voiceEvents";
 import {
@@ -314,16 +315,8 @@ export function CallScreen({
           }
 
           setTranscripts((prev) => {
-            const idx = prev.findIndex((m) => m.id === seg.id);
-            if (idx >= 0) {
-              const copy = [...prev];
-              copy[idx] = { ...copy[idx], text: seg.text, isFinal: seg.final };
-              return copy;
-            }
-            return [
-              ...prev,
-              { id: seg.id, role, text: seg.text, time: nowTime, isFinal: seg.final },
-            ];
+            return mergeTranscript(prev,
+              { id: seg.id, role, text: seg.text, time: nowTime, isFinal: seg.final });
           });
         }
       });
@@ -334,6 +327,7 @@ export function CallScreen({
           const str = new TextDecoder().decode(payload);
           const data = JSON.parse(str);
           if (data.type === VOICE_DATA_PACKETS.CALL_ENDED || data.type === VOICE_DATA_PACKETS.END_CALL) {
+            if (data.reason === "technical_issue") setError("The call ended because the assistant encountered a technical issue. Please try again.");
             setPhase("ended");
             void persistSession();
             teardown();

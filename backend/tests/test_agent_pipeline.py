@@ -17,7 +17,7 @@ async def isolated(monkeypatch):
     sessions = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
-    for module in ("app.database", "app.repositories", "app.repositories.owners", "app.repositories.business"):
+    for module in ("app.database", "app.repositories", "app.repositories.owners", "app.repositories.business", "app.repositories.agent_addresses"):
         monkeypatch.setattr(f"{module}.async_session", sessions)
     monkeypatch.setattr(secrets_box.settings, "SESSION_SECRET", "isolated-agent-pipeline-secret")
     monkeypatch.setattr(secrets_box.settings, "GROQ_API_KEY", "")
@@ -69,6 +69,27 @@ async def test_endpoint_change_clears_previous_key(isolated):
     await owner_service.save_agent_config("change", llm_model="model", llm_base_url="https://old.example/v1", llm_api_key="old-secret")
     await owner_service.save_agent_config("change", llm_base_url="https://new.example/v1")
     assert not (await owners.get_agent("change")).llm_api_key_enc
+
+
+async def test_legacy_manual_edits_get_gallery_identity_without_publishing(isolated):
+    await owner_service.save_agent_config("manual-edit", name="Old name", script="Old prompt")
+    await owners.set_agent_status("manual-edit", "deployed")
+    await owner_service.save_agent_config("manual-edit", name="New name", script="New prompt")
+    current = await owners.get_agent("manual-edit")
+    assert current.active_snapshot_id
+    async with isolated() as session:
+        from sqlalchemy import select
+        snapshot = await session.scalar(select(AgentSnapshotRecord).where(
+            AgentSnapshotRecord.snapshot_id == current.active_snapshot_id))
+        assert snapshot.name == "New name" and snapshot.script == "New prompt"
+    assert published_agent(current).name == "Old name"
+    await owner_service.save_agent_config("manual-edit", name="Latest name", script="Latest prompt")
+    async with isolated() as session:
+        snapshot = await session.scalar(select(AgentSnapshotRecord).where(
+            AgentSnapshotRecord.snapshot_id == current.active_snapshot_id))
+        assert snapshot.name == "Latest name" and snapshot.script == "Latest prompt"
+    await owners.set_agent_status("manual-edit", "deployed")
+    assert published_agent(await owners.get_agent("manual-edit")).name == "Latest name"
 
 
 async def test_call_credentials_are_frozen_tenant_scoped_and_removed_on_completion(isolated):

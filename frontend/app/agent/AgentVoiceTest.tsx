@@ -137,6 +137,7 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
           const str = new TextDecoder().decode(payload);
           const data = JSON.parse(str);
           if (data.type === VOICE_DATA_PACKETS.END_CALL || data.type === VOICE_DATA_PACKETS.CALL_ENDED) {
+            if (data.reason === "technical_issue") setError("The call ended because the assistant encountered a technical issue. Please try again.");
             teardown();
             setPhase("ended");
             return;

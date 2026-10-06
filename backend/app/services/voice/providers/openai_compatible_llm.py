@@ -15,7 +15,9 @@ from app.services.voice.latency import emit, milliseconds
 import asyncio
 
 from app.services.voice.config import VoiceSettings
+import logging
 
+logger = logging.getLogger(__name__)
 
 
 class ObservedLLM(lk_openai.LLM):
@@ -87,6 +89,8 @@ def build_custom_openai_llm(settings: VoiceSettings) -> llm.LLM:
              request_to_stream_end_ms=milliseconds(metrics.duration),
              cancelled=metrics.cancelled, input_tokens=metrics.prompt_tokens,
              cached_input_tokens=metrics.prompt_cached_tokens, output_tokens=metrics.completion_tokens)
+        logger.info("[VOICE TOKENS] model=%s input=%s cached_input=%s output=%s", settings.VOICE_LLM_MODEL,
+                    metrics.prompt_tokens, metrics.prompt_cached_tokens, metrics.completion_tokens)
     return model
 
 

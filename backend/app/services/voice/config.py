@@ -13,6 +13,7 @@ subset of keys it actually needs.
 """
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
+from typing import Literal
 
 from app.services import prompt_rules
 
@@ -88,6 +89,7 @@ class VoiceSettings(BaseSettings):
     VOICE_LLM_MAX_TOKENS: int = 220
     VOICE_LLM_STYLED_MAX_TOKENS_CAP: int = 240
     VOICE_LLM_MAX_TOKENS_CAP: int = 350
+
     # Independent opt-ins; measure each on the deployment before combining.
     VOICE_LLM_HTTP2: bool = False
     VOICE_LLM_PREWARM: bool = False
@@ -100,7 +102,6 @@ class VoiceSettings(BaseSettings):
     VOICE_LLM_FALLBACK_PROVIDER: str = "groq"
     VOICE_LLM_FALLBACK_MODEL: str = "llama-3.1-8b-instant"
     VOICE_LLM_TTFT_TIMEOUT_SECONDS: float = 1.5
-
 
     # Generic OpenAI-compatible LLM (any provider: Mistral, OpenRouter, a
     # self-hosted server, ...). Set per-session from the token request's
@@ -166,6 +167,9 @@ class VoiceSettings(BaseSettings):
     VOICE_TTS_CHUNK_MAX_CHARS: int = 140
     VOICE_TTS_FLUSH_CLAUSES: bool = False
     VOICE_TTS_MIN_BUFFER_CHARS: int = 50
+    # PCM avoids MP3 decoder buffering; opt-in until measured on deployment.
+    VOICE_TTS_OUTPUT_CODEC: Literal["mp3", "linear16"] = "mp3"
+    VOICE_TTS_CLAUSE_PREFETCH: bool = False
 
     # Hard ceiling: no session longer than 15 minutes (900s). One live at a time
     # still bills owner's quota, so this is the global backstop for cost.

@@ -55,6 +55,12 @@ includes a deliberate 500 ms gap before its second clause, so its savings are
 specific to buffering; don't claim all answers gain 495 ms. Provider variability
 is substantial. No new end-of-speech-to-speaker before/after SLO is proven.
 
+An integrated frozen-credential worker test after enabling the flags received
+audible reply audio in 2,097 / 823 / 866 ms (text input, three turns). This confirms
+audio delivery, not a faster typical short answer or microphone SLO. Its initial
+cleanup hit a message foreign-key constraint; the harness now deletes only its
+synthetic tenant's messages before its temporary conversation.
+
 ## Implemented rules and configuration
 
 All new code defaults are off. Local root/backend `.env` can enable:
@@ -97,3 +103,17 @@ clause flush `false` if real call accuracy/prosody regresses.
 
 Under-1.5-second playback remains a target. Deliberately incomplete thoughts
 should wait longer; forcing all such pauses under a fixed SLO would cut users off.
+
+## Clause audio regression correction (2026-10-06)
+
+The previous first-frame-only clause benchmark missed a truncation bug: Sarvam's
+SDK final event closes the entire audio emitter, so multiple flushed segments in
+one output stream lost later sentences. Its apparent ~495 ms saving is not a
+valid complete-reply improvement. Each clause now uses a fresh output stream on
+the same provider WebSocket pool. Eleven focused latency/idle tests passed,
+including a regression reproducing that final-event behavior. A live synthetic
+two-clause check emitted 115 frames / 5,538 ms decoded audio; first audio took
+1,678 ms on this single cold sample. No latency percentile improvement is claimed
+from this check, and physical speaker playback remains to be verified. The
+benchmark now reports total decoded duration as well as first-frame latency.
+These corrective changes are uncommitted as requested.

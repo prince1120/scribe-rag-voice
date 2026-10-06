@@ -1,36 +1,25 @@
 export type LatencyReading = { phase: "idle" | "speaking" | "waiting" | "done"; ms: number };
 
-// Local audio estimate: reject brief noise and timestamp the last voiced sample,
-// rather than adding the silence-confirmation delay to the measured latency.
+// Speech boundaries come from worker VAD, never microphone volume.
 export class LatencyTimer {
-  private onset: number | null = null;
-  private lastVoice = 0;
   private started: number | null = null;
-  private firstReply: number | null = null;
   private reading: LatencyReading = { phase: "idle", ms: 0 };
 
-  sample(now: number, userAudio: boolean, replyAudio: boolean): LatencyReading {
-    if (userAudio) {
-      this.firstReply = null;
-      this.onset ??= now;
-      this.lastVoice = now;
-      if (now - this.onset >= 80) {
-        this.started = null;
-        this.reading = { phase: "speaking", ms: 0 };
-      }
-      return this.reading;
+  speech(now: number, speaking: boolean, confirmationMs = 0): LatencyReading {
+    if (speaking) {
+      this.started = null;
+      this.reading = { phase: "speaking", ms: 0 };
+    } else if (this.reading.phase === "speaking") {
+      // Approximate the last voiced sample by subtracting configured VAD silence.
+      this.started = now - Math.max(0, confirmationMs);
+      this.reading = { phase: "waiting", ms: now - this.started };
     }
-    this.onset = null;
-    if (this.reading.phase === "speaking") {
-      if (replyAudio) this.firstReply ??= now;
-      if (now - this.lastVoice < 150) return this.reading;
-      this.started = this.lastVoice;
-      this.reading = this.firstReply === null
-        ? { phase: "waiting", ms: now - this.lastVoice }
-        : { phase: "done", ms: this.firstReply - this.lastVoice };
-    }
+    return this.reading;
+  }
+
+  sample(now: number, replyAudio: boolean): LatencyReading {
     if (this.reading.phase === "waiting" && this.started !== null) {
-      this.reading = { phase: replyAudio ? "done" : "waiting", ms: now - this.started };
+      this.reading = { phase: replyAudio ? "done" : "waiting", ms: Math.max(0, now - this.started) };
     }
     return this.reading;
   }

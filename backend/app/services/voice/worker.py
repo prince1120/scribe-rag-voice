@@ -355,6 +355,8 @@ async def entrypoint(ctx: JobContext) -> None:
         )
         # Before start(), so the very first turn of the call is measured too.
         turn_metrics.attach(session, room_name=ctx.room.name, room=ctx.room)
+        turn_metrics.attach_vad_events(session, room=ctx.room,
+                                      silence_seconds=params.settings.VOICE_VAD_MIN_SILENCE)
     except BaseException:
         # If the session build raises, the history fetch above must not be
         # left running unawaited — cancel and reap it before propagating.
@@ -394,74 +396,27 @@ async def entrypoint(ctx: JobContext) -> None:
     assistant._call_id = params.call_id
     # Capture only this call's committed turns, excluding seeded chat history.
     call_turns = []
+    turn_hint_text = ""
     @session.on("conversation_item_added")
     def _capture_turn(event):
+        nonlocal turn_hint_text
         item = event.item
         role = getattr(item, "role", None)
+        if role == "user":
+            turn_hint_text = ""
         content = getattr(item, "text_content", "") or ""
         if role in ("user", "assistant") and content.strip() and len(call_turns) < 500:
             call_turns.append({"role": role, "content": content.strip()[:12000]})
+    _attach_error_termination(session, ctx.room)
     await session.start(
         agent=assistant,
         room=ctx.room,
     )
 
-    # An exhausted/temporarily unavailable LLM used to fail silently after
-    # the provider retries. The client then showed "Still thinking" forever
-    # even though the WebRTC connection itself was healthy. Keep the call
-    # alive, notify the browser, and use TTS directly for a short recovery
-    # line (no second LLM request required).
-    last_llm_failure_notice = 0.0
-
-    @session.on("error")
-    def _on_session_error(event):
-        nonlocal last_llm_failure_notice
-        error = getattr(event, "error", event)
-        error_type = str(getattr(error, "type", "")).lower()
-        error_text = str(error).lower()
-        if "llm" not in error_type and not any(marker in error_text for marker in ("rate limit", "429", "completion", "language model")):
-            return
-        now = time.monotonic()
-        if now - last_llm_failure_notice < 12:
-            return
-        last_llm_failure_notice = now
-        reason = "rate_limited" if any(marker in error_text for marker in ("rate limit", "429", "quota", "tpm")) else "provider_busy"
-        logger.warning("[LLM %s] Reply generation unavailable (%s): %s", ctx.room.name, reason, error)
-
-        async def _notify_caller():
-            try:
-                await ctx.room.local_participant.publish_data(
-                    VoiceDataPacket.agent_unavailable(reason), reliable=True
-                )
-            except Exception:
-                logger.debug("[LLM %s] Could not publish recovery notice", ctx.room.name, exc_info=True)
-            try:
-                await session.say(
-                    "I’m temporarily unable to respond. Please try again in a moment.",
-                    allow_interruptions=True,
-                    add_to_chat_ctx=False,
-                )
-            except Exception:
-                logger.debug("[LLM %s] Could not speak recovery notice", ctx.room.name, exc_info=True)
-
-        _track_task(_notify_caller())
-
-    _last_interim_text = ""
-
-    # Broadcast an immediate interrupt packet to the client via WebRTC DataChannel
-    # the exact millisecond the user interrupts active agent speech, so the browser
-    # can flush and mute its audio hardware sink immediately (<30ms) without waiting
-    # for WebRTC track buffer draining.
-    def _send_interrupt_signal(*_):
-        if getattr(session, "current_speech", None) is None:
-            return
-        from app.services.voice.speech_clean import is_backchannel
-        # Only current-utterance interims gate this packet — see
-        # _on_user_started_speaking, which clears the held text the moment a
-        # new utterance begins so a stale "yeah" from the previous exchange
-        # can never swallow a real barge-in.
-        if _last_interim_text and is_backchannel(_last_interim_text):
-            logger.info("[BACKCHANNEL %s] Suppressing interruption for backchannel '%s'", ctx.room.name, _last_interim_text)
+    # Flush browser audio only after the SDK confirms a speech interruption.
+    # Raw VAD/backchannels must not cut a word or override adaptive interruption.
+    def _send_interrupt_signal(handle):
+        if not handle.interrupted:
             return
 
         if ctx.room and hasattr(ctx.room, "local_participant") and ctx.room.local_participant:
@@ -476,16 +431,13 @@ async def entrypoint(ctx: JobContext) -> None:
             except Exception:
                 pass
 
-    def _on_user_started_speaking(*_):
-        # A fresh utterance has no interims yet: whatever text is held belongs
-        # to the *previous* one. Clear it before sending the instant packet —
-        # gating on it here suppressed real interruptions whenever the last
-        # exchange ended with a backchannel ("yeah"/"okay"). Server-side
-        # adaptive interruption still handles false positives; for the rest of
-        # this utterance the gate above sees only its own interim text.
-        nonlocal _last_interim_text
-        _last_interim_text = ""
-        _send_interrupt_signal()
+    def _on_user_started_speaking(event):
+        if getattr(event, "new_state", None) != "speaking":
+            return
+        from app.services.voice.filler import cancel_thinking_filler
+        cancel_thinking_filler(assistant)
+        # Do not flush browser playback on raw VAD. The SDK's adaptive
+        # interruption detector owns the decision to cut active speech.
 
     # Dynamic Syntactic End-Of-Thought (EOT) Predictor:
     # Analyzes trailing tokens of user speech. If sentence has terminal punctuation (? . ! ।),
@@ -501,13 +453,12 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
     def _on_transcribed(ev):
-        nonlocal _last_interim_text
+        nonlocal turn_hint_text
         try:
             text = getattr(ev, "transcript", None) or getattr(ev, "text", "") or ""
             text = text.strip()
             if not text:
                 return
-            _last_interim_text = text
 
             from app.services.voice.speech_clean import is_backchannel, is_stt_hallucination
 
@@ -518,14 +469,17 @@ async def entrypoint(ctx: JobContext) -> None:
             # If agent is speaking and user gave a short backchannel ("yeah", "okay", "hmm", "haan"):
             # Suppress interruption and continue assistant speech
             if getattr(session, "current_speech", None) is not None and is_backchannel(text):
-                logger.info("[BACKCHANNEL %s] User acknowledged with '%s' while agent was speaking; continuing speech", ctx.room.name, text)
+                logger.info("[BACKCHANNEL %s] User acknowledged during assistant speech", ctx.room.name)
                 return
 
             if params.settings.VOICE_SMART_TURN_HINTS:
                 from app.services.voice.turn_hints import endpointing_options, punctuation_kind
                 from app.services.voice.latency import emit
                 final = bool(getattr(ev, "is_final", False))
-                options = endpointing_options(text, params.settings, final)
+                hint_text = f"{turn_hint_text} {text}".strip()
+                if final:
+                    turn_hint_text = hint_text[-16000:]
+                options = endpointing_options(hint_text, params.settings, final)
                 session.update_options(endpointing_opts=options)
                 emit("turn_hint", call_id=params.call_id, room_name=ctx.room.name,
                      punctuation=punctuation_kind(text), final=final,
@@ -550,8 +504,10 @@ async def entrypoint(ctx: JobContext) -> None:
             )
 
     try:
-        session.on("user_started_speaking", _on_user_started_speaking)
-        session.on("interrupted", _send_interrupt_signal)
+        session.on("user_state_changed", _on_user_started_speaking)
+        @session.on("speech_created")
+        def _on_speech_created(event):
+            event.speech_handle.add_done_callback(_send_interrupt_signal)
         session.on("user_input_transcribed", _on_transcribed)
     except Exception:
         pass
@@ -638,6 +594,52 @@ async def _say_bounded(session, text: str, *, timeout: float = 10.0, **options) 
         if handle is not None:
             await handle
     await asyncio.wait_for(play(), timeout=timeout)
+
+
+def _attach_error_termination(session, room) -> None:
+    """One bounded closing attempt on any session error, including TTS failure."""
+    closing = False
+
+    @session.on("error")
+    def on_error(event):
+        nonlocal closing
+        if closing:
+            return
+        closing = True
+        error = getattr(event, "error", event)
+        # Error messages can include provider payloads; log only the class.
+        logger.warning("Voice call ending after session error (error_class=%s)", type(error).__name__)
+        _track_task(finish())
+
+    async def finish():
+        try:
+            session.input.set_audio_enabled(False)
+        except Exception:
+            pass
+        try:
+            await asyncio.wait_for(session.interrupt(force=True), timeout=1)
+        except Exception:
+            pass
+        try:
+            await _say_bounded(session,
+                "I'm facing a technical issue, so I need to end this call. Please try again. Goodbye.",
+                timeout=6, allow_interruptions=False, add_to_chat_ctx=False)
+        except Exception:
+            logger.debug("Technical issue closing audio unavailable")
+        try:
+            await asyncio.wait_for(room.local_participant.publish_data(
+                b'{"type":"call_ended","reason":"technical_issue"}', reliable=True), timeout=2)
+        except Exception:
+            pass
+        try:
+            await asyncio.wait_for(session.aclose(), timeout=3)
+        except Exception:
+            pass
+        finally:
+            try:
+                await asyncio.wait_for(room.disconnect(), timeout=3)
+            except Exception:
+                pass
 
 
 def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> Optional[asyncio.Task]:

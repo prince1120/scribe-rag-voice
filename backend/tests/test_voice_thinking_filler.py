@@ -126,6 +126,38 @@ class TestItCanBeTurnedOff:
         assert session.said == []
 
 
+async def test_scheduling_does_not_await_speech_handle_and_cannot_cancel_playback():
+    from types import SimpleNamespace
+    from app.services.voice.filler import start_thinking_filler, cancel_thinking_filler
+
+    class Handle:
+        awaited = False
+        def __await__(self):
+            self.awaited = True
+            raise AssertionError("Filler scheduler must not await playback")
+            yield
+
+    handle = Handle()
+    session = SimpleNamespace(current_speech=None, user_state="listening",
+                              say=lambda *args, **kwargs: handle)
+    agent = SimpleNamespace(session=session)
+    start_thinking_filler(agent, 0.001)
+    await agent._filler_task
+    cancel_thinking_filler(agent)
+    assert agent._filler_handle is handle and not handle.awaited
+
+
+async def test_no_filler_when_user_has_resumed_speaking():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from app.services.voice.filler import start_thinking_filler
+    session = SimpleNamespace(current_speech=None, user_state="speaking", say=Mock())
+    agent = SimpleNamespace(session=session)
+    start_thinking_filler(agent, 0.001)
+    await agent._filler_task
+    session.say.assert_not_called()
+
+
 class TestSamplingIsUnchanged:
     def test_llm_temperature_stays_low(self):
         """Variation is bought in delivery, never in sampling. Raising this is

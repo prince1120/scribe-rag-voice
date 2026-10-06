@@ -330,7 +330,8 @@ class VoiceAssistant(Agent):
         if self._settings.VOICE_TTS_FLUSH_CLAUSES and self.session.tts.capabilities.streaming:
             from app.services.voice.streaming_tts import clause_audio
             audio = clause_audio(self.session.tts, chunks_stream,
-                                 conn_options=self.session.conn_options.tts_conn_options)
+                                 conn_options=self.session.conn_options.tts_conn_options,
+                                 prefetch=self._settings.VOICE_TTS_CLAUSE_PREFETCH)
         else:
             audio = Agent.default.tts_node(self, chunks_stream, model_settings)
         async for frame in audio:
