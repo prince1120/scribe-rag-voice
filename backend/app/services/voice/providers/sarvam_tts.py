@@ -14,7 +14,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def build_sarvam_tts(settings: VoiceSettings) -> tts.TTS:
+def build_sarvam_tts(settings: VoiceSettings, *, http_session=None) -> tts.TTS:
     if not settings.SARVAM_API_KEY:
         raise ValueError(
             "SARVAM_API_KEY is required for the Sarvam TTS voice provider. Set it in .env."
@@ -49,4 +49,6 @@ def build_sarvam_tts(settings: VoiceSettings) -> tts.TTS:
         pitch=0.0,
         loudness=1.0,
         enable_preprocessing=True,
+        min_buffer_size=settings.VOICE_TTS_MIN_BUFFER_CHARS,
+        **({"http_session": http_session} if http_session is not None else {}),
     )

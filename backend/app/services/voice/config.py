@@ -158,6 +158,8 @@ class VoiceSettings(BaseSettings):
     VOICE_TTS_FIRST_CHUNK_MIN_CHARS: int = 18
     VOICE_TTS_SUBSEQUENT_CHUNK_MIN_CHARS: int = 48
     VOICE_TTS_CHUNK_MAX_CHARS: int = 140
+    VOICE_TTS_FLUSH_CLAUSES: bool = False
+    VOICE_TTS_MIN_BUFFER_CHARS: int = 50
 
     # Hard ceiling: no session longer than 15 minutes (900s). One live at a time
     # still bills owner's quota, so this is the global backstop for cost.

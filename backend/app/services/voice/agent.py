@@ -327,7 +327,13 @@ class VoiceAssistant(Agent):
             max_chunk_chars=self._settings.VOICE_TTS_CHUNK_MAX_CHARS,
         )
 
-        async for frame in Agent.default.tts_node(self, chunks_stream, model_settings):
+        if self._settings.VOICE_TTS_FLUSH_CLAUSES and self.session.tts.capabilities.streaming:
+            from app.services.voice.streaming_tts import clause_audio
+            audio = clause_audio(self.session.tts, chunks_stream,
+                                 conn_options=self.session.conn_options.tts_conn_options)
+        else:
+            audio = Agent.default.tts_node(self, chunks_stream, model_settings)
+        async for frame in audio:
             yield frame
 
     def _start_thinking_filler(self) -> None:
