@@ -82,6 +82,7 @@ class VoiceSettings(BaseSettings):
     VOICE_LLM_MAX_TOKENS: int = 220
     VOICE_LLM_STYLED_MAX_TOKENS_CAP: int = 240
     VOICE_LLM_MAX_TOKENS_CAP: int = 350
+    VOICE_LLM_HTTP2: bool = False
 
     # Generic OpenAI-compatible LLM (any provider: Mistral, OpenRouter, a
     # self-hosted server, ...). Set per-session from the token request's

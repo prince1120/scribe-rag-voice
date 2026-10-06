@@ -21,7 +21,7 @@ pydantic-settings==2.6.1
 aiofiles==24.1.0
 redis==5.2.0
 requests==2.32.3
-httpx==0.28.1
+httpx[http2]==0.28.1
 tenacity==8.3.0
 tiktoken==0.8.0
 sqlalchemy==2.0.51

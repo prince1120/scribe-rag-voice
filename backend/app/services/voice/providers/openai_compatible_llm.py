@@ -38,7 +38,7 @@ def build_custom_openai_llm(settings: VoiceSettings) -> llm.LLM:
     options = {"extra_body": {"max_tokens": settings.VOICE_LLM_MAX_TOKENS, "reasoning_effort": None}} if sarvam else {"max_completion_tokens": settings.VOICE_LLM_MAX_TOKENS}
     client = AsyncOpenAI(api_key=settings.CUSTOM_LLM_API_KEY,
                          base_url=settings.CUSTOM_LLM_BASE_URL,
-                         max_retries=0, http_client=observed_client())
+                         max_retries=0, http_client=observed_client(http2=settings.VOICE_LLM_HTTP2))
     model = ObservedLLM(
         client=client,
         model=settings.VOICE_LLM_MODEL,
