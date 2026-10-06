@@ -16,7 +16,7 @@ supported route is `ChatMessage.metrics` via `conversation_item_added`, which
 is what this uses.
 """
 import logging
-from app.services.voice.latency import emit, turn_record
+from app.services.voice.latency import emit, milliseconds, turn_record
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,19 @@ def attach(session, *, room_name: str, room=None) -> None:
     from app.services.voice.domain.interfaces import VoiceDataPacket
 
     last_user_metrics = {}
+
+    # The installed 1.6.6 still exposes provider stream/acquisition metrics here.
+    # ChatMessage.metrics lacks last-token and WebSocket acquisition timings.
+    @session.on("metrics_collected")
+    def _on_provider_metrics(event):
+        m = event.metrics
+        if m.type in ("stt_metrics", "tts_metrics", "llm_metrics"):
+            emit(m.type, request_id=m.request_id, speech_id=getattr(m, "speech_id", None),
+                 duration_ms=milliseconds(m.duration),
+                 first_chunk_ms=milliseconds(getattr(m, "ttft", getattr(m, "ttfb", None))),
+                 connection_acquire_ms=milliseconds(getattr(m, "acquire_time", None)),
+                 connection_reused=getattr(m, "connection_reused", None),
+                 cancelled=getattr(m, "cancelled", False))
 
     @session.on("conversation_item_added")
     def _on_item(event) -> None:  # pragma: no cover - needs a live session

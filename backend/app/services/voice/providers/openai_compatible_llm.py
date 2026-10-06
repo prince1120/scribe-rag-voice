@@ -9,11 +9,18 @@ process's own .env — the whole point is the user brings their own endpoint.
 """
 from livekit.agents import llm
 from livekit.plugins import openai as lk_openai
+from openai import AsyncOpenAI
+from app.services.voice.providers.llm_transport import observed_client
+from app.services.voice.latency import emit, milliseconds
 
 from app.services.voice.config import VoiceSettings
-import logging
 
-logger = logging.getLogger(__name__)
+
+
+class ObservedLLM(lk_openai.LLM):
+    async def aclose(self):
+        await super().aclose()
+        await self._client.close()
 
 
 def build_custom_openai_llm(settings: VoiceSettings) -> llm.LLM:
@@ -29,7 +36,11 @@ def build_custom_openai_llm(settings: VoiceSettings) -> llm.LLM:
         )
     sarvam = is_sarvam_endpoint(settings.CUSTOM_LLM_BASE_URL)
     options = {"extra_body": {"max_tokens": settings.VOICE_LLM_MAX_TOKENS, "reasoning_effort": None}} if sarvam else {"max_completion_tokens": settings.VOICE_LLM_MAX_TOKENS}
-    model = lk_openai.LLM(
+    client = AsyncOpenAI(api_key=settings.CUSTOM_LLM_API_KEY,
+                         base_url=settings.CUSTOM_LLM_BASE_URL,
+                         max_retries=0, http_client=observed_client())
+    model = ObservedLLM(
+        client=client,
         model=settings.VOICE_LLM_MODEL,
         api_key=settings.CUSTOM_LLM_API_KEY,
         base_url=settings.CUSTOM_LLM_BASE_URL,
@@ -38,8 +49,11 @@ def build_custom_openai_llm(settings: VoiceSettings) -> llm.LLM:
     )
     @model.on("metrics_collected")
     def record_usage(metrics):
-        logger.info("[VOICE TOKENS] model=%s input=%s cached_input=%s output=%s", settings.VOICE_LLM_MODEL,
-                    metrics.prompt_tokens, metrics.prompt_cached_tokens, metrics.completion_tokens)
+        emit("llm_stream", request_id=metrics.request_id, speech_id=metrics.speech_id,
+             request_to_first_chunk_ms=milliseconds(metrics.ttft),
+             request_to_last_chunk_ms=milliseconds(metrics.duration),
+             cancelled=metrics.cancelled, input_tokens=metrics.prompt_tokens,
+             cached_input_tokens=metrics.prompt_cached_tokens, output_tokens=metrics.completion_tokens)
     return model
 
 

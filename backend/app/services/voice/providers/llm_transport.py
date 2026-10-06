@@ -8,6 +8,10 @@ from app.services.voice.latency import emit, milliseconds
 
 
 class ObservedClient(httpx.AsyncClient):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.transport_id = uuid.uuid4().hex
+
     async def send(self, request, **kwargs):
         started = time.perf_counter()
         spans = {}
@@ -22,10 +26,12 @@ class ObservedClient(httpx.AsyncClient):
             # Never serialize info: it may contain credentials and response text.
 
         request.extensions["trace"] = trace
-        record = {"request_id": uuid.uuid4().hex, "http_version": None, "alpn": None}
+        record = {"request_id": uuid.uuid4().hex, "transport_id": self.transport_id,
+                  "http_version": None, "alpn": None}
         try:
             response = await super().send(request, **kwargs)
             record["http_version"] = response.http_version
+            record["provider_request_id"] = response.headers.get("x-request-id")
             stream = response.extensions.get("network_stream")
             ssl = stream.get_extra_info("ssl_object") if stream else None
             record["alpn"] = ssl.selected_alpn_protocol() if ssl else None
