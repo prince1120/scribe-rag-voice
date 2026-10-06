@@ -357,3 +357,23 @@ API and worker must share `INTERNAL_API_KEY` and the correct backend URL. Preser
 `SESSION_SECRET`, which protects saved keys. LiveKit URL/key/secret are required.
 `infra/Initialize-ProductionSecrets.ps1` already exists from prior edits; do not
 run it or rotate existing secrets casually. Never store plaintext keys in this file.
+
+## Voice measurement checkpoint (2026-10-06)
+
+- Steps 1–2 only: research and measurement; await approval for resilience,
+  fallback and load testing. See `VOICE_PRODUCTION_RESEARCH.md` and
+  `VOICE_LATENCY_BASELINE.md` for sources, flags, budgets and limitations.
+- Live hybrid deployment verified: Docker infrastructure and native API/worker.
+  Both health checks returned 200. Sarvam remains the model/provider; no local
+  LLM loaded, credentials rotated, or `.env` changed. API/worker were launched
+  with HTTP/2 enabled and prewarm disabled in their process environment.
+- Three live synthetic text turns: LLM TTFT p50 155.9 ms, p95/p99 646.6 ms;
+  text-to-received-audible-audio p50 885.3 ms, p95/p99 1349.4 ms. ALPN `h2`
+  confirmed. TTS first chunk ~446 ms. These bypass STT/endpointing and do not
+  measure speaker playback or prove a production SLO. Test room was deleted.
+- New timing records are content-free. Use `scripts/voice_latency_report.py
+  voice_worker.log --last-call --format markdown` from backend. Live harness:
+  `scripts/test_live_voice_worker.py`; it reads existing private configuration.
+- Hedging stays disabled pending validated stream cancellation. Optional clause
+  flush remains off; fallback flags are reserved, not implemented. Three focused
+  timing/transport/clause-cancellation tests passed. Preserve earlier staged work.
