@@ -1,39 +1,44 @@
 import json
-
-import httpx
-
-from app.services import prompt_rules, site_ingest
+import pytest
+from app.services import site_ingest, owner_service
 
 
-def test_source_prompt_keeps_contact_and_bounds_voice_context():
-    pages = [{"title": "Clinic", "url": "", "text": "CONTACT INFO:\n- Phone: +91 9876543210\n\nConsultation costs 500 rupees. " + "Our team offers consultation by appointment. " * 300}]
-    prompt = site_ingest.build_prompt_from_site(pages, {"name": "Asha", "business": "Clinic"})
-    assert len(prompt["voice_script"]) <= 4500
-    assert "9876543210" in prompt["voice_script"]
-    assert "Asha" in prompt["voice_script"]
-    assert "name and phone" in prompt["voice_script"]
-    assert "invite the caller to keep talking" not in prompt_rules.VOICE_DELIVERY
-    assert len(prompt_rules.VOICE_DELIVERY) < 1600
+def test_source_prompt_preserves_end_of_documents_and_same_title_pages():
+    pages = [
+        {"title": "Clinic", "url": "https://example.com/fees", "text": "Phone +91 9876543210. " + "Consultation by appointment. " * 160 + "Refunds require a receipt within 17 days."},
+        {"title": "Clinic", "url": "https://example.com/policy", "text": "Emergency visits cost 875 rupees, excluding imaging."},
+    ]
+    prompt = site_ingest.build_prompt_from_site(site_ingest._dedupe_pages(pages), {"name": "Asha"})
+    for channel in ("voice_script", "chat_script"):
+        context = prompt[channel].split("SOURCE DATA JSON\n", 1)[1].split("\n\nCONVERSATION", 1)[0]
+        assert [item["content"] for item in json.loads(context)] == [page["text"] for page in pages]
+        assert len(prompt[channel]) <= 20000
+        assert "untrusted reference data" in prompt[channel]
+        assert "completed callback" in prompt[channel]
 
 
-async def test_generation_uses_workspace_sarvam_key_without_thinking(monkeypatch):
-    observed = []
-    original_client = httpx.AsyncClient
+def test_oversize_source_is_rejected_instead_of_cut():
+    with pytest.raises(site_ingest.PromptCapacityError, match="No source facts have been silently cut"):
+        site_ingest.build_prompt_from_site([{"title": "Book", "text": "Long policy. " * 2000}])
 
-    async def respond(request):
-        observed.append(request)
-        result = {"voice_script": "You are Asha, the assistant for Clinic. Answer only from verified business facts and use available tools for current availability. Ask only for missing customer details.",
-                  "chat_script": "You are Asha, the assistant for Clinic. Answer only from verified business facts and use available tools for current availability. Ask only for missing customer details.", "greeting": "Hi, I'm Asha from Clinic. How can I help?"}
-        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(result)}}]})
 
-    monkeypatch.setattr(site_ingest.httpx, "AsyncClient", lambda **kwargs: original_client(transport=httpx.MockTransport(respond), **kwargs))
-    result = await site_ingest.build_agent_prompts([{ "title": "Clinic", "url": "", "text": "Consultation by appointment."}], {"name": "Asha"}, sarvam_api_key="workspace-test-key")
-    assert len(observed) == 1
-    request = observed[0]
-    assert str(request.url) == "https://api.sarvam.ai/v1/chat/completions"
-    assert request.headers["authorization"] == "Bearer workspace-test-key"
-    payload = json.loads(request.content)
-    assert payload["model"] == "sarvam-105b-conversations"
-    assert payload["reasoning_effort"] is None
-    assert "untrusted business data" in payload["messages"][1]["content"]
-    assert result["voice_script"].startswith("You are Asha")
+async def test_generation_is_deterministic_without_provider_calls(monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Compilation must not spend provider tokens")
+    monkeypatch.setattr(site_ingest.httpx, "AsyncClient", forbidden)
+    pages = [{"title": "Clinic", "text": "Consultation costs 500 rupees."}]
+    assert await site_ingest.build_agent_prompts(pages, sarvam_api_key="test") == site_ingest.build_prompt_from_site(pages)
+
+
+def test_prompt_cache_prefix_does_not_change_with_clock(monkeypatch):
+    from app.services.rag_pipeline import RAGPipeline
+    pipeline = RAGPipeline("test-key")
+    def messages(clock):
+        monkeypatch.setattr(owner_service, "current_context_line", lambda _: "\n\nCURRENT DATE AND TIME\n" + clock)
+        prompt = owner_service.build_agent_prompt(script="Verified prices: consultation 500 rupees.", agent_name="Asha", channel="chat")
+        return pipeline._prepare_request("Price?", [], [], None, None, prompt, "TEST")[0]
+    first, second = messages("Monday 10:00"), messages("Monday 10:01")
+    marker = "\n\nCURRENT DATE AND TIME\n"
+    assert first[0]["content"].split(marker)[0] == second[0]["content"].split(marker)[0]
+    assert first[0]["content"] != second[0]["content"]
+    assert first[1] == second[1]

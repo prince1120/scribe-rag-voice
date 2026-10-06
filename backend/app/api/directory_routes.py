@@ -16,10 +16,10 @@ surface in the app, so the guards are the important part of this file:
 """
 import logging
 from typing import Optional
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app import contacts, repositories
 from app.config import settings
@@ -110,19 +110,18 @@ async def connect_to_agent(
     """
     # Resolved from the handle. A rotated handle stops resolving here, which is
     # what makes rotation an actual remedy rather than cosmetic.
-    owner = await repositories.get_owner_by_handle(body.handle)
-    if owner is None:
+    from app.repositories.agent_addresses import resolve_address, public_agent
+    resolved = await resolve_address(body.handle)
+    if resolved is None:
         raise HTTPException(
             status_code=404,
             detail="This assistant is no longer available.",
         )
 
-    agent = await repositories.get_agent(owner.tenant_id)
-    if agent is None or agent.status != "deployed":
-        raise HTTPException(
-            status_code=404,
-            detail="This assistant is not currently available or deployed.",
-        )
+    owner, agent = resolved
+    channels = public_agent(owner, agent)
+    if (body.mode in ("voice", "both") and not channels["has_voice"]) or (body.mode in ("chat", "both") and not channels["has_chat"]):
+        raise HTTPException(status_code=409, detail="The requested channel is not enabled for this assistant.")
 
     # Cross-tenant velocity. Every other limit in this app is scoped to one
     # workspace, so a caller working through the directory looks unremarkable to
@@ -164,6 +163,7 @@ async def connect_to_agent(
         mode=body.mode,
         source=DIRECTORY_SOURCE,
         client_id=(x_client_id or "").strip() or None,
+        agent_snapshot_id=getattr(agent, "active_snapshot_id", None),
     )
     logger.info(
         "Directory connect: new guest contact for tenant %s (mode=%s)",
@@ -177,3 +177,47 @@ async def connect_to_agent(
         "agent_name": agent.name or "Assistant",
         "mode": body.mode,
     }
+
+
+@router.get("/agents/{address}")
+@limiter.limit("30/minute")
+async def get_public_agent(request: Request, response: Response, address: str):
+    from app.repositories.agent_addresses import find_address, public_agent
+    if not 8 <= len(address) <= 32 or not all(c.isascii() and (c.isalnum() or c in "-_") for c in address):
+        raise HTTPException(status_code=404, detail="Assistant not found.")
+    resolved = await find_address(address)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="Assistant not found. Check the code or link.")
+    response.headers["Cache-Control"] = "no-store"
+    owner, agent, _, online = resolved
+    return {**public_agent(owner, agent), "online": online}
+
+
+class OfflineMessageRequest(BaseModel):
+    request_id: UUID
+    name: str = Field(min_length=1, max_length=100)
+    message: str = Field(min_length=3, max_length=2000)
+    reply_to: str = Field(min_length=3, max_length=200)
+
+    @field_validator("name", "message", "reply_to", mode="before")
+    @classmethod
+    def strip_text(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
+@router.post("/agents/{address}/messages")
+@limiter.limit("3/minute")
+async def leave_offline_message(request: Request, address: str, body: OfflineMessageRequest):
+    from app.repositories.agent_addresses import find_address
+    from app.repositories.offline_messages import save_offline_message
+    resolved = await find_address(address)
+    if not resolved:
+        raise HTTPException(status_code=404, detail="Assistant not found.")
+    owner, agent, identity, online = resolved
+    if online:
+        raise HTTPException(status_code=409, detail="This assistant is now online. Refresh to start a conversation.")
+    try:
+        reference = await save_offline_message(owner, agent, identity, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from None
+    return {"request_id": reference, "status": "received"}

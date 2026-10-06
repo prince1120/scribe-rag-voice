@@ -117,6 +117,7 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
 
     # Contacts
     ("contacts", "source", "VARCHAR(16) NOT NULL DEFAULT 'owner'"),
+    ("contacts", "agent_snapshot_id", "VARCHAR(36)"),
     ("contacts", "client_id", "VARCHAR(64)"),
     ("contacts", "bound_device", "VARCHAR(64)"),
     ("contacts", "pin", "VARCHAR(12)"),

@@ -16,6 +16,7 @@ import {
 import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
 import { useAgentStall, VOICE_ROOM_OPTIONS } from "../../components/voice/useCallQuality";
 import { enableEnhancedMic, stopMicrophone } from "../../components/voice/micEnhancement";
+import { useCallAttempt } from "../../components/voice/useCallAttempt";
 import { SignalPill } from "../../components/voice/SignalPill";
 import { VOICE_DATA_PACKETS } from "../../components/voice/voiceEvents";
 import {
@@ -64,6 +65,7 @@ export function CallScreen({
   name?: string;
   onSwitchToChat?: () => void;
 }) {
+  const { beginCall, cancelCall, isCurrentCall } = useCallAttempt();
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState("");
   const [muted, setMuted] = useState(false);
@@ -79,10 +81,11 @@ export function CallScreen({
   const [deviceNotice, setDeviceNotice] = useState<string | null>(null);
 
   const roomRef = useRef<Room | null>(null);
-  const audioDevices = useAudioDevices(roomRef.current);
+  const [activeRoom, setActiveRoom] = useState<Room | null>(null);
+  const audioDevices = useAudioDevices(activeRoom);
 
   useAudioDeviceSwitching({
-    room: roomRef.current,
+    room: activeRoom,
     enabled: phase === "live",
     onSwitch: (label, reason) => {
       setDeviceNotice(
@@ -188,6 +191,7 @@ export function CallScreen({
   }, []);
 
   const teardown = useCallback(async () => {
+    cancelCall();
     cancelAnimationFrame(rafRef.current);
     void analyserRef.current?.cleanup().catch(() => {});
     analyserRef.current = null;
@@ -201,14 +205,16 @@ export function CallScreen({
     audioElsRef.current = [];
     const room = roomRef.current;
     roomRef.current = null;
+    setActiveRoom(null);
     if (room) {
+      room.removeAllListeners();
       stopMicrophone(room);
       try {
         await room.localParticipant?.setMicrophoneEnabled(false);
       } catch {}
       try { await room.disconnect(true); } catch {}
     }
-  }, []);
+  }, [cancelCall]);
 
   useEffect(() => {
     return () => {
@@ -217,17 +223,18 @@ export function CallScreen({
   }, [teardown]);
 
   const start = useCallback(async () => {
-    if (phase === "connecting") return;
-    if (roomRef.current) {
-      await teardown();
-      await new Promise((r) => setTimeout(r, 250));
-    }
+    const attempt = beginCall();
+    if (!attempt) return;
     callIdRef.current = null;
     persistedRef.current = null;
     setSaveState("idle");
     setLiveBooking(null);
     setError("");
     setSeconds(0);
+    setMuted(false);
+    setAgentSpeaking(false);
+    setWaitingForAgent(false);
+    setAgentIssue("");
     setTranscripts([]);
     setPhase("connecting");
     setAgentHasSpoken(false);
@@ -236,11 +243,13 @@ export function CallScreen({
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
       setPhase("error");
       setError("Your microphone needs a secure connection. Open this link over https.");
+      cancelCall();
       return;
     }
 
     try {
       const response = await fetch("/api/v1/voice/token", {
+        signal: attempt.signal,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -263,6 +272,7 @@ export function CallScreen({
       }
 
       const { token, url, call_id } = await response.json();
+      if (!isCurrentCall(attempt)) return;
       callIdRef.current = call_id || null;
       const room = new Room(VOICE_ROOM_OPTIONS);
       roomRef.current = room;
@@ -326,7 +336,6 @@ export function CallScreen({
             setPhase("ended");
             void persistSession();
             teardown();
-            try { room.disconnect(); } catch {}
             return;
           }
           if (data.type === VOICE_DATA_PACKETS.INTERRUPT) {
@@ -426,6 +435,7 @@ export function CallScreen({
         await room.switchActiveDevice("audiooutput", audioDevices.activeOutputId).catch(() => {});
       }
       setPhase("live");
+      setActiveRoom(room);
 
       // Audio analysis visualizer tick
       let lastSpokeAt = 0;
@@ -446,23 +456,28 @@ export function CallScreen({
         rafRef.current = requestAnimationFrame(tick);
       };
       rafRef.current = requestAnimationFrame(tick);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      if (!isCurrentCall(attempt)) return;
       setPhase("error");
-      if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError" || err?.message?.toLowerCase().includes("permission")) {
+      if (err instanceof Error && (err.name === "NotAllowedError" || err.name === "PermissionDeniedError" || err.message.toLowerCase().includes("permission"))) {
         setError("Microphone permission was denied. Please allow microphone access in your browser settings to speak.");
       } else {
         setError(formatClientError(err, "Could not start the call."));
       }
       teardown();
     }
-  }, [persistSession, teardown]);
+  }, [persistSession, teardown, beginCall, cancelCall, isCurrentCall, audioDevices.activeInputId, audioDevices.activeOutputId]);
 
   const toggleMute = useCallback(async () => {
     const room = roomRef.current;
     if (!room) return;
     const next = !muted;
-    await room.localParticipant.setMicrophoneEnabled(!next);
-    setMuted(next);
+    try {
+      await room.localParticipant.setMicrophoneEnabled(!next);
+      if (roomRef.current === room) setMuted(next);
+    } catch {
+      if (roomRef.current === room) setError("Could not change the microphone. Check its permission and connection.");
+    }
   }, [muted]);
 
   const end = useCallback(() => {

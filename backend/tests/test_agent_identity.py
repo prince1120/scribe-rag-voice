@@ -102,7 +102,9 @@ class TestUnchangedBehaviour:
     def test_delivery_rules_still_apply_to_a_named_persona(self):
         """Skipping the identity block must not skip how it speaks — the two are
         independent, and a pizza agent still has to sound like a phone call."""
-        assert "HOW YOU SPEAK" in _prompt(PIZZA)
+        from app.services.prompt_rules import VOICE_DELIVERY
+        assert VOICE_DELIVERY in _prompt(PIZZA)
 
     def test_style_rules_off_still_honoured(self):
-        assert "HOW YOU SPEAK" not in _prompt(PIZZA, style_rules=False)
+        from app.services.prompt_rules import VOICE_DELIVERY
+        assert VOICE_DELIVERY not in _prompt(PIZZA, style_rules=False)

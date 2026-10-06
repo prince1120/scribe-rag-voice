@@ -26,4 +26,5 @@ def published_agent(record):
     return SimpleNamespace(
         **json.loads(record.published_config), tenant_id=record.tenant_id,
         status=record.status, deployed_at=record.deployed_at,
+        active_snapshot_id=getattr(record, "active_snapshot_id", None),
     )

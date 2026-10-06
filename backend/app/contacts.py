@@ -147,3 +147,11 @@ def default_expiry(days: Optional[int]) -> Optional[datetime]:
     if not days or days <= 0:
         return None
     return datetime.now(timezone.utc) + timedelta(days=days)
+
+
+def check_agent_available(contact, agent) -> None:
+    """A guest session for one saved agent must never follow an agent switch."""
+    target = getattr(contact, "agent_snapshot_id", None)
+    if target and (not agent or getattr(agent, "status", "draft") != "deployed"
+                   or getattr(agent, "active_snapshot_id", None) != target):
+        raise ContactError("This agent is offline. Open its original QR or link to leave a message.")

@@ -251,6 +251,7 @@ export default function DirectoryPage() {
         </div>
 
         <div className="flex items-center gap-3">
+          <Link href="/talk" className="text-sm font-semibold underline">Enter assistant code</Link>
           <Link
             href="/signin"
             className="text-xs font-medium px-3.5 py-1.5 rounded-lg text-white transition-opacity hover:opacity-90 shadow-xs"

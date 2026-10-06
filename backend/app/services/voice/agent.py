@@ -148,6 +148,16 @@ def _is_goodbye_turn(text: str) -> bool:
     normalized = re.sub(r"[^\w\s]", "", (text or "").strip().lower())
     if not normalized:
         return False
+    # Mentioning a farewell or explicitly refusing to hang up is not consent.
+    if re.search(r"\b(?:dont|don t|do not|not|never|mat|nahi)\b", normalized):
+        return False
+    if re.search(r"\b(?:say|word|means|meaning)\b", normalized):
+        return False
+    if re.fullmatch(
+        r"(?:please |can you |could you )?(?:hang up|end (?:the |this )?call|disconnect (?:the |this )?call)(?: please| now)?",
+        normalized,
+    ):
+        return True
 
     # Never treat queries/requests as goodbyes — even if they end with "that's it"
     # e.g. "tell me pricing, that's it" is a pricing request, not a goodbye.
@@ -236,7 +246,13 @@ class VoiceAssistant(Agent):
             "search_knowledge_base. Answer from supplied knowledge and be honest "
             "when information is missing."
         )
-        super().__init__(instructions=instructions + retrieval_policy + VOICE_CALENDAR, chat_ctx=chat_ctx)
+        # The clock and caller details vary per call. Append fixed policies
+        # before that suffix so they remain in the reusable prompt prefix.
+        static, separator, dynamic = instructions.partition("\n\nCURRENT DATE AND TIME\n")
+        assembled = static + retrieval_policy + VOICE_CALENDAR
+        if separator:
+            assembled += separator + dynamic
+        super().__init__(instructions=assembled, chat_ctx=chat_ctx)
         self._settings = settings
         self._rag_enabled = rag_enabled
         self._tenant_id = tenant_id
@@ -661,11 +677,13 @@ class VoiceAssistant(Agent):
         except Exception:
             pass
 
-    @llm.function_tool(description="End the voice call ONLY when the caller says an explicit farewell like 'bye', 'goodbye', 'alvida', 'phir milenge', 'see you'. NEVER call this when the user says 'that's it', 'that's all', 'done', 'bas', 'ho gaya' after a request (e.g. 'tell me pricing, that's it') — those mean 'that's all I need on this topic', not 'end the call'. If the same turn asks for info (price, breakdown, demo, details) and ends with 'that's it', ANSWER FIRST and wait for a real bye.")
+    @llm.function_tool(description="End the voice call ONLY when the caller says an explicit farewell like 'bye', 'goodbye', 'alvida', 'phir milenge', 'see you', or explicitly requests hang up/end the call. NEVER call this for 'that's it', 'done', 'bas', a quoted farewell, or a request not to end the call. Answer information requests before waiting for a real farewell.")
     async def end_call(self):
         """LLM-triggered graceful hangup. Schedules disconnect after reply is spoken."""
         if getattr(self, "_ending", False):
             return "Call is already ending."
+        if not _is_goodbye_turn(getattr(self, "_last_user_query", "")):
+            return "Call remains open. The caller has not requested a hangup; continue helping them."
         self._ending = True  # type: ignore[attr-defined]
         asyncio.create_task(self._auto_hangup_after_delay(2.0))
         return "Call will end after closing statement."
@@ -679,7 +697,7 @@ class VoiceAssistant(Agent):
                 speech = getattr(self.session, "current_speech", None)
                 if speech is not None:
                     try:
-                        await speech
+                        await asyncio.wait_for(speech, timeout=10.0)
                     except Exception:
                         pass
                     break
@@ -714,6 +732,7 @@ class VoiceAssistant(Agent):
         speech, and ignoring someone who said "okay" is its own bug.
         """
         query = new_message.text_content
+        self._last_user_query = query or ""
 
         if _is_empty_turn(query or ""):
             logger.info(

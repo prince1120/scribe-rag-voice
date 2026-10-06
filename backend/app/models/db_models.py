@@ -90,6 +90,7 @@ class ContactRecord(Base):
     # attacker-controllable in everything but its token, so nothing may ever
     # look one up by an attribute the caller supplied.
     source: Mapped[str] = mapped_column(String(16), default="owner")
+    agent_snapshot_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     # The browser that requested this link, for directory contacts.
     #
     # Velocity limiting keyed on IP does not work: a phone's IPv6 address
@@ -233,6 +234,16 @@ class OwnerRecord(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class AgentAddressRecord(Base):
+    """Permanent public routing identity, separate from editable agent settings."""
+    __tablename__ = "agent_addresses"
+    identity_key: Mapped[str] = mapped_column(String(200), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    snapshot_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    handle: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    code: Mapped[str] = mapped_column(String(8), unique=True, index=True)
 
 
 class AgentRecord(Base):

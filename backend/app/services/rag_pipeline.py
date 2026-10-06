@@ -458,9 +458,12 @@ class RAGPipeline:
             (c.get("payload", c) or {}).get("is_image") for c in context_chunks
         )
         has_text_context = bool(context.strip())
+        static_prompt, clock_marker, clock = (agent_prompt or "").partition("\n\nCURRENT DATE AND TIME\n")
         system_prompt = self._build_system_prompt(
-            has_images, has_text_context, agent_prompt=agent_prompt,
+            has_images, has_text_context, agent_prompt=static_prompt or None,
         )
+        if clock_marker:
+            system_prompt += clock_marker + clock
 
         newline = "\n"
         history_block = f"Conversation History:{newline}{history_str}{newline}" if history_str else ""
@@ -532,6 +535,7 @@ Answer with citations using ONLY the valid IDs listed above:"""
                 **self._model_extra_kwargs(model_to_use),
             )
 
+            self._log_cache_usage(getattr(response, "usage", None), model_to_use)
             raw = self._strip_think_tag(response.choices[0].message.content)
             filtered = filter_output(raw)
             if filtered.blocked:
@@ -585,6 +589,10 @@ Answer with citations using ONLY the valid IDs listed above:"""
 
             if not uses_think_tags:
                 for chunk in stream:
+                    if getattr(chunk, "usage", None):
+                        self._log_cache_usage(chunk.usage, model_to_use)
+                    if not chunk.choices:
+                        continue
                     delta = chunk.choices[0].delta.content
                     if delta:
                         yield delta
@@ -593,6 +601,10 @@ Answer with citations using ONLY the valid IDs listed above:"""
                 in_think = False
                 buffer = ""
                 for chunk in stream:
+                    if getattr(chunk, "usage", None):
+                        self._log_cache_usage(chunk.usage, model_to_use)
+                    if not chunk.choices:
+                        continue
                     delta = chunk.choices[0].delta.content
                     if not delta:
                         continue
@@ -642,3 +654,13 @@ Answer with citations using ONLY the valid IDs listed above:"""
     def count_tokens(self, text: str) -> int:
         """Count tokens in text."""
         return len(self.encoding.encode(text))
+
+    @staticmethod
+    def _log_cache_usage(usage, model: str) -> None:
+        if not usage:
+            return
+        details = getattr(usage, "prompt_tokens_details", None)
+        cached = getattr(details, "cached_tokens", None) if details else None
+        logger.info("[CHAT TOKENS] model=%s input=%s cached_input=%s output=%s", model,
+                    getattr(usage, "prompt_tokens", None), cached if cached is not None else "unreported",
+                    getattr(usage, "completion_tokens", None))

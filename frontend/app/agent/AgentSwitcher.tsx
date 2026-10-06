@@ -2,6 +2,7 @@
 import { ModalPortal } from "../components/ModalPortal";
 import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Clock,
   Globe,
@@ -16,7 +17,6 @@ import {
   Mic,
   MessageSquare,
   Search,
-  Filter,
   Sparkles,
   ChevronDown,
   ChevronUp,
@@ -26,6 +26,8 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { ownerFetch } from "../lib/ownerFetch";
+import { DirectoryHandle } from "../components/owner/DirectoryHandle";
+import { revalidateWorkspace } from "../lib/workspaceCache";
 import { extractApiErrorMessage, formatClientError } from "../lib/apiErrors";
 
 export interface SnapshotItem {
@@ -46,6 +48,7 @@ export interface SnapshotItem {
 }
 
 export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
+  const router = useRouter();
   const [snapshots, setSnapshots] = useState<SnapshotItem[]>([]);
   const [activeAgent, setActiveAgent] = useState<{ name: string; status: string } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -57,6 +60,7 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
   
   // Expanded prompt preview tracking
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [sharingId, setSharingId] = useState<string | null>(null);
 
   // Editing state
   const [editing, setEditing] = useState<string | null>(null);
@@ -89,8 +93,8 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
       }
       const j = await r.json();
       setSnapshots(j.snapshots || []);
-      if (j.active_agent) setActiveAgent(j.active_agent);
-    } catch (err: any) {
+      setActiveAgent(j.active_agent ?? null);
+    } catch (err: unknown) {
       showToast(formatClientError(err, "Could not load agents"), "error");
     } finally {
       setLoading(false);
@@ -109,10 +113,12 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
         const detail = await extractApiErrorMessage(res, `Failed to activate`);
         throw new Error(detail);
       }
-      showToast(`✓ "${name}" is now live!`, "success");
+      showToast(`"${name}" loaded as a draft. Test and publish it in Studio.`, "success");
+      await revalidateWorkspace(true);
       onSwitch?.();
       void load();
-    } catch (e: any) {
+      router.push("/agent");
+    } catch (e: unknown) {
       showToast(formatClientError(e, "Failed to make live"), "error");
     } finally {
       setActivating(null);
@@ -129,7 +135,7 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
       }
       showToast("Agent cloned successfully ✓", "success");
       void load();
-    } catch (e: any) {
+    } catch (e: unknown) {
       showToast(formatClientError(e, "Failed to duplicate"), "error");
     } finally {
       setDuplicating(null);
@@ -148,7 +154,7 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
       showToast("Agent snapshot removed", "success");
       setDeleteId(null);
       void load();
-    } catch (e: any) {
+    } catch (e: unknown) {
       showToast(formatClientError(e, "Delete failed"), "error");
     } finally {
       setDeleting(false);
@@ -177,6 +183,7 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
         }),
       });
       if (res.ok) {
+        await revalidateWorkspace(true);
         showToast("Agent prompt & details updated ✓");
         setEditing(null);
         void load();
@@ -184,7 +191,7 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
         const detail = await extractApiErrorMessage(res, "Update failed");
         showToast(detail, "error");
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       showToast(formatClientError(err, "Error updating agent"), "error");
     } finally {
       setSavingEdit(false);
@@ -235,11 +242,12 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search agents by name or URL…"
+            aria-label="Search agents by name or URL"
             className="w-full pl-9 pr-3 py-1.5 rounded-xl border text-xs outline-none bg-white focus:ring-1 focus:ring-indigo-500"
             style={{ borderColor: "var(--claude-border)" }}
           />
           {searchQuery && (
-            <button onClick={() => setSearchQuery("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+            <button aria-label="Clear search" onClick={() => setSearchQuery("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
               <X size={12} />
             </button>
           )}
@@ -282,8 +290,15 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
             </button>
           </div>
 
+          <select aria-label="Sort agents" value={sortBy} onChange={event => setSortBy(event.target.value === "name" ? "name" : "newest")}
+            className="rounded-lg border bg-white p-1.5 text-xs">
+            <option value="newest">Newest first</option>
+            <option value="name">Name A–Z</option>
+          </select>
           <button
             onClick={() => void load(true)}
+            disabled={loading}
+            aria-label="Refresh agents"
             title="Refresh agents"
             className="p-1.5 rounded-lg border text-gray-600 hover:bg-gray-50"
             style={{ borderColor: "var(--claude-border)" }}
@@ -309,7 +324,7 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
             </p>
           </div>
           <Link
-            href="/agent"
+            href="/agent?create=1"
             className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition-all flex items-center gap-1.5"
           >
             <Plus size={13} /> Create New Agent in Studio
@@ -405,12 +420,12 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
                     ) : (
                       <button
                         onClick={() => void activate(s.snapshot_id, s.name)}
-                        disabled={activating === s.snapshot_id}
-                        title="Make this agent the live active version"
+                        disabled={activating !== null}
+                        title="Load this agent as a draft to test and publish in Studio"
                         className="h-8 px-3.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 flex items-center gap-1.5 disabled:opacity-50 transition-all shadow-xs"
                       >
                         <Play size={12} className={activating === s.snapshot_id ? "animate-spin" : ""} />
-                        {activating === s.snapshot_id ? "Activating…" : "Make Live"}
+                        {activating === s.snapshot_id ? "Loading…" : "Load in Studio"}
                       </button>
                     )}
 
@@ -424,6 +439,11 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
                       <Copy size={13} className={duplicating === s.snapshot_id ? "animate-spin" : ""} />
                     </button>
 
+                    <button type="button" onClick={() => setSharingId(sharingId === s.snapshot_id ? null : s.snapshot_id)}
+                      aria-expanded={sharingId === s.snapshot_id} className="h-8 px-3 rounded-xl border text-xs font-semibold" style={{ borderColor: "var(--claude-border)" }}>
+                      Share / QR
+                    </button>
+
                     <button
                       onClick={() => startEdit(s)}
                       title="Quick Edit Prompts"
@@ -435,8 +455,9 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
 
                     <button
                       onClick={() => setDeleteId(s.snapshot_id)}
-                      title="Delete Agent"
-                      className="h-8 w-8 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 flex items-center justify-center"
+                      disabled={isSelected}
+                      title={isSelected ? "Select another agent before deleting this one" : "Delete Agent"}
+                      className="h-8 w-8 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 flex items-center justify-center disabled:opacity-40"
                     >
                       <Trash2 size={13} />
                     </button>
@@ -444,6 +465,7 @@ export function AgentSwitcher({ onSwitch }: { onSwitch?: () => void }) {
                 </div>
 
                 {/* Inline Editing Form */}
+                {sharingId === s.snapshot_id && <div className="mt-4 border-t pt-4" style={{ borderColor: "var(--claude-border)" }}><DirectoryHandle snapshotId={s.snapshot_id} /></div>}
                 {editing === s.snapshot_id ? (
                   <div className="mt-3 pt-3 border-t flex flex-col gap-3" style={{ borderColor: "var(--claude-border)" }}>
                     <label className="flex flex-col gap-1 text-xs font-bold text-gray-700">

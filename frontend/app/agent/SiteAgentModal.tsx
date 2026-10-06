@@ -530,18 +530,19 @@ export function SiteAgentModal({ onCreated, onClose }: { onCreated: () => void; 
                   <span className="font-semibold text-gray-700 flex items-center gap-1">
                     <Volume2 size={13} className="text-red-500" /> Spoken Dialogue Instructions
                   </span>
-                  <span className="text-gray-500">{previewVoiceScript.length} / 4000 characters</span>
+                  <span className="text-gray-500">{previewVoiceScript.length} / 20000 characters</span>
                 </div>
                 <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] leading-4 text-amber-900 flex items-start gap-2">
                   <Sparkles size={14} className="mt-0.5 text-amber-600 flex-shrink-0" />
                   <span>
-                    <strong>Voice Optimized:</strong> Uses spoken contractions, 1–2 short sentences per turn, phonetic numbers/pricing, zero markdown, and graceful turn-taking.
+                    <strong>Self-contained voice prompt:</strong> Includes the complete extracted source. Replies stay brief and conversational. Review prices, policies and contact details before publishing.
                   </span>
                 </div>
                 <textarea
                   value={previewVoiceScript}
                   onChange={(e) => setPreviewVoiceScript(e.target.value)}
                   rows={6}
+                  maxLength={20000}
                   className="w-full rounded-xl border p-3 text-[12px] font-mono leading-relaxed outline-none focus:ring-2 focus:ring-indigo-300 bg-gray-50 text-gray-800"
                   style={{ borderColor: "var(--claude-border)" }}
                 />
@@ -555,18 +556,19 @@ export function SiteAgentModal({ onCreated, onClose }: { onCreated: () => void; 
                   <span className="font-semibold text-gray-700 flex items-center gap-1">
                     <MessageSquare size={13} className="text-indigo-500" /> Text Chat Guidelines
                   </span>
-                  <span className="text-gray-500">{previewChatScript.length} / 6000 characters</span>
+                  <span className="text-gray-500">{previewChatScript.length} / 20000 characters</span>
                 </div>
                 <div className="p-2.5 rounded-lg bg-indigo-50 border border-indigo-200 text-[11px] leading-4 text-indigo-900 flex items-start gap-2">
                   <Sparkles size={14} className="mt-0.5 text-indigo-600 flex-shrink-0" />
                   <span>
-                    <strong>Chat Optimized:</strong> Direct answer first, clean Markdown formatting, and knowledge base document citations.
+                    <strong>Self-contained chat prompt:</strong> Includes the same extracted source, with readable answers and source attribution. No extra knowledge lookup is needed for this material.
                   </span>
                 </div>
                 <textarea
                   value={previewChatScript}
                   onChange={(e) => setPreviewChatScript(e.target.value)}
                   rows={6}
+                  maxLength={20000}
                   className="w-full rounded-xl border p-3 text-[12px] font-mono leading-relaxed outline-none focus:ring-2 focus:ring-indigo-300 bg-gray-50 text-gray-800"
                   style={{ borderColor: "var(--claude-border)" }}
                 />

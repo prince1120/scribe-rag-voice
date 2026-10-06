@@ -1,6 +1,6 @@
 # Scribe agent pipeline — handoff
 
-Updated: 2026-10-03. Redesign implemented in source; not deployed or measured in a live call.
+Updated: 2026-10-05. Redesign implemented in source; not deployed or measured in a live call.
 
 ## Project
 
@@ -178,6 +178,178 @@ visual browser screenshot or real microphone verification was performed.
 - Verification: 37 focused booking/prompt regressions passed; frontend TypeScript
   passed; diff whitespace check passed. Local hybrid DB name/phone columns verified
   ready. Browser automation surfaces unavailable: no visual or real microphone QA.
+
+## Voice, source prompts and permanent sharing (2026-10-05)
+
+- Shared speech rules allow restrained acknowledgements, hesitation and natural
+  punctuation pauses, with calm emotional matching and clear names/prices/digits.
+  Avoid repeated stutters, staged emotion tags and fake human identity. Bulbul
+  infers delivery from text; no unsupported SSML/emotion API parameters were added.
+- Source generation is now a deterministic compiler: zero generation LLM calls,
+  both channel prompts embed the complete extracted source as JSON. Removed
+  4k upload cuts, page text cuts, title/prefix-based deduplication, lossy summaries
+  and creation-time fallback indexing. New source agents have RAG disabled;
+  existing owner scripts/RAG settings are preserved. Missing extracted uploads
+  fail visibly. 20,000-character prompt capacity returns 422 instead of silently
+  cutting facts; owners must reduce larger sources explicitly. This covers only
+  successfully extracted pages/document text, not inaccessible pages, images
+  without extraction, or unlimited websites. Crawling still has its existing
+  page/network limits. Edited previews remain owner-controlled.
+- Stable system instructions precede the changing date/time and caller suffix
+  in voice and chat, preserving the largest exact reusable prefix. Voice model
+  metrics and chat usage log input/cached-input/output token counts without
+  content or credentials. Streams tolerate usage-only chunks. Sarvam v1 does
+  not document a cache-control/retention switch; do not send invented parameters
+  or claim a guaranteed cache hit. Provider usage/billing must establish savings;
+  SDK voice cached-token defaults can be zero when details are absent.
+- `agent_addresses` is a new table created by normal init_db/create_all. Opaque
+  link handles and unique eight-digit numeric codes belong to an agent snapshot
+  (or the manual agent), separate from editable config. Allocation is locked,
+  database-unique, bounded-retry and idempotent. Codes are public addresses, not
+  authentication. Addresses stay reserved after deletion and are never reassigned.
+  Inactive/draft agents cannot answer; their addresses cannot drift to another
+  active agent. Existing workspace handles remain compatible workspace aliases.
+  One published agent per workspace remains the supported architecture.
+- Owner API: `/workspace/agents/{snapshot_id}/address`; existing
+  `/workspace/directory-handle` returns the selected agent's handle and code.
+  Public `/directory/agents/{address}` and `/directory/connect` resolve either
+  code or handle and enforce publication/channel checks. Existing guest/session,
+  tenant, velocity, duration and daily-budget admission remains. Documents are
+  optional for prompt-based chat and sharing.
+- Gallery Share / QR controls and Settings sharing panel use the same component,
+  with local QR generation/download, copy feedback and stable `/link/{handle}`.
+  Links open `/talk?agent={handle}`; `/talk` is public numeric-code entry, with
+  optional name and voice/chat choices. Home and Directory link to the dialler.
+  Existing customer session/call UI owns microphone consent and call startup.
+  Internet/browser access is required; bookmark/home-screen access is suggested.
+- Shared idle watcher asks once after 20 seconds of continuous inactivity (caps
+  legacy longer metadata values), then gives 13 seconds after check-in playback
+  to respond. Caller speech during or after the check-in resets it; the agent's
+  own speech does not count as an answer. Speaking/thinking suppress idle nudges.
+  Fixed the old watcher closure's missing nonlocal activity timer. No reply:
+  spoken goodbye, client end packet, room disconnect and session close. Existing
+  maximum-duration ceiling remains. Follow-up requests use the existing consented
+  owner-message tool; this is not an automatic outbound callback/SMS service.
+- Public rates checked 2026-10-05: STT Rs30/hour (Rs0.50/audio minute), Bulbul v3
+  Rs30/10k characters, conversational LLM Rs29.28 input / Rs10.98 cached input /
+  Rs73.20 output per million tokens. Formula: STT_seconds/120 + TTS_chars*0.003
+  + uncached_input*0.00002928 + cached_input*0.00001098 + output*0.0000732,
+  plus LiveKit/hosting/tax. E.g. 60 STT seconds + 300 TTS characters already cost
+  Rs1.40 before LLM/hosting. Cached input is cheaper, not fewer transmitted
+  tokens. Sub-Rs1/min is a target, not verified or guaranteed at these rates.
+  Sources: https://docs.sarvam.ai/api/getting-started/pricing,
+  https://docs.sarvam.ai/api-reference/chat/chat-completions-v1,
+  https://docs.sarvam.ai/api/getting-started/models/bulbul.
+- Verification: main focused regression run 46 passed; additional run 28 passed
+  and one stale header assertion failed (updated to check actual delivery rules).
+  TypeScript passed; new sharing/dialler ESLint passed. Final rechecks recorded
+  below. Final prompt/identity recheck: 16 passed. Production frontend build
+  passed, including TypeScript and /talk static output, after allowing the
+  existing Google Fonts network fetch. No deployment, real microphone/audio measurement or billed cache hit
+  has been verified. Restart API/worker to load code and create the address table.
+
+## Per-agent offline pages and owner messages (2026-10-05)
+
+- Every newly created source agent allocates its own permanent address/code;
+  sharing another saved/duplicated agent allocates a separate identity once.
+  Editing, publishing, disabling and switching never reassign that address.
+  Legacy manual agents are archived into an actual snapshot on first sharing
+  or before a new source agent replaces them. Existing manual addresses migrate
+  to that snapshot without changing their handle/code. Earlier content remains
+  available in the saved-agent gallery and can be activated again.
+- Public lookup now returns known offline agents with `online:false` and the
+  exact saved agent name, instead of returning an unavailable 404. Deleted or
+  unknown identities still return 404. `/talk` offers calls/chat only when online;
+  offline visitors see Agent offline and a message/contact form. Connect failures
+  caused by a status change refresh the same agent's availability. No substitution
+  with the newly selected workspace agent occurs.
+- `/directory/agents/{address}/messages` saves an offline visitor's name, issue
+  and reply contact directly into the existing tenant-scoped owner Inbox. The
+  message includes the targeted agent name and code. No model call, microphone,
+  guest session, outbound notification or callback promise is involved. Contact
+  and request insert atomically, with per-workspace locks, retry idempotency,
+  bounded/trimmed inputs, 3/minute IP admission and 100/workspace/day intake cap.
+  An agent that became online returns 409 so the visitor can refresh and connect.
+- New directory guest contacts bind to `agent_snapshot_id`; additive contacts
+  column migration included. Link opening, chat prompt resolution and voice
+  admission refuse a guest link when its original agent is no longer published
+  and selected. A prior /t/ guest link cannot switch to a different agent even
+  when the workspace changes between page lookup and call startup. Existing
+  owner-created/legacy unbound links retain their prior workspace behavior.
+- Verification: initial focused offline/address/directory checks 3 passed;
+  frontend TypeScript and dialler lint passed. Final bound-session regression
+  results: 26 passed; final dialler lint passed. API restart runs the additive contact migration.
+  Real browser/microphone flow and deployment remain unverified.
+
+## Site structure and UI correctness review (2026-10-05)
+
+- Preserved earlier uncommitted voice/sharing changes. No wholesale page rewrite,
+  dependency additions, provider changes, deployment or production data edits.
+- Shared workspace revalidation now coalesces concurrent consumers and uses
+  generation checks so old responses cannot restore signed-out data or replace
+  local edits/new agent selections. Forced refresh invalidates pending response
+  reuse. Either workspace or agent 401 clears cached owner data. Owner fetch
+  compares credential identity privately in memory and invalidates response reuse
+  when keys change; secret values never enter reusable response cache keys.
+- Gallery selection now says Load in Studio, navigates to the editor, refreshes
+  shared status/config and correctly describes draft restoration. It does not
+  claim activation publishes an agent. Existing test/publish controls remain the
+  only publishing flow. Removed stale generated-fallback-document claims, fixed
+  the empty gallery creation link, added sorting and accessible search/refresh.
+- Selected snapshots cannot be deleted: UI disables the action and backend
+  performs a tenant-scoped conditional DELETE excluding the selected snapshot,
+  returning 409 without cascading documents. Permanent addresses stay intact.
+- Agent document deletion checks HTTP failure, retains its retryable dialog,
+  prevents duplicate submissions and supports Escape. Uploads/toggles block
+  overlapping operations; partial uploads refresh the actual document list and
+  display sanitized errors. Upload keyboard controls also support Space.
+- Personal document editor ignores superseded/closed-editor load responses.
+  Save completion only updates its own editor and marks the submitted content
+  saved, preserving newer unsaved edits. Document-list requests ignore responses
+  after their session effect is cleaned up.
+- Passcode gate starts checking on protected routes to avoid an initial content
+  flash; privacy and terms are public entries.
+- Verification: 9 standalone client regressions passed (`node --test
+  tests/client-cache.test.cjs` from frontend); 18 focused backend tests passed
+  (delete guard, pipeline, addresses); TypeScript and production build passed.
+  Full lint baseline in this turn: 80 errors / 67 warnings, primarily existing
+  React hook/ref patterns and loose types; this review does not claim a lint-clean
+  repository. Browser inventory was empty, so visual responsive/browser/audio
+  verification remains unavailable. API restart is needed for the deletion guard.
+
+## Voice functionality review (2026-10-05)
+
+- Added shared `useCallAttempt` startup cancellation/deduplication to personal
+  VoiceCall, owner AgentVoiceTest, customer CallScreen and Product QR voice.
+  Closing/unmounting cancels a pending token request; late responses cannot
+  construct a room or start capture. Room/mic setup checks current attempt
+  around async connection and processor loading. Teardown removes listeners
+  before disconnect, stops microphone tracks synchronously and releases audio
+  elements/analysers. Old room events cannot tear down a replacement call.
+- Owner tests and Product QR voice now handle end-call/recovery packets and
+  remote worker departure. Product QR supports interrupt cutoff/resume too.
+  Retries reset mute/speaking status; failed mute/unmute operations stay visible
+  instead of rejecting an unhandled event promise. Consent still precedes
+  Product QR calls and no idle device control opens a microphone.
+- Customer audio hooks use reactive active-room state, synchronize SDK device
+  changes and rebuild the meter when microphone tracks change. Failed device
+  switches retain the prior UI selection and show an error. Removed document-wide
+  speaker routing: the SDK switches this room's output only.
+- Hangup tool checks the latest caller intent in code; the model cannot close a
+  call on its own. Explicit hang-up commands work; negated/quoted farewells,
+  topic closers and information requests do not trigger hangup. Speech scheduling
+  and playback for silence nudge/goodbye are bounded (10s maximum, nudge also
+  bounded by remaining call time); stalled TTS cannot block the termination
+  sequence forever. Existing 20s silence + 13s after-nudge grace remains.
+- Verification: initial focused backend run 98 passed / 2 failed. Both failures
+  were credential-test ASGITransport fixtures missing lifespan/database setup;
+  corrected those fixtures and all 13 credential checks passed independently.
+  Final silence/hangup checks 26 passed, including failed-speech scenarios.
+  Six actual owner-startup/device client regressions passed; the nine previous
+  cache/editor checks also passed. TypeScript, production build and targeted
+  owner-test/new-hook lint passed. Existing unrelated lint errors remain.
+  No real microphone, provider billing/latency measurement or deployment has
+  been performed. Restart API/worker to load backend speech/hangup changes.
 
 ## Deployment prerequisites
 

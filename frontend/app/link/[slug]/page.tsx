@@ -15,7 +15,7 @@ export default function DynamicLinkRedirect() {
     }
 
     // Redirect directly to directory with agent handle
-    router.replace(`/directory?handle=${encodeURIComponent(slug)}`);
+    router.replace(`/talk?agent=${encodeURIComponent(slug)}`);
   }, [params, router]);
 
   return (

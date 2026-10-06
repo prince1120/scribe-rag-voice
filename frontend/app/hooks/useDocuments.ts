@@ -54,6 +54,7 @@ export function useDocuments({ creds, sessionId, enabled, notify }: UseDocuments
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const [docEditor, setDocEditor] = useState<DocumentEditorState | null>(null);
+  const editorLoadId = useRef(0);
   // Ticked once a second while uploads run so "Xs elapsed" labels stay live.
   const [nowTick, setNowTick] = useState(0);
   // Latest credentials, readable from stable callbacks without re-creating them.
@@ -65,18 +66,21 @@ export function useDocuments({ creds, sessionId, enabled, notify }: UseDocuments
   // Restore the previously uploaded document list on session load.
   useEffect(() => {
     if (!enabled || !sessionId) return;
+    let active = true;
     documentsApi
       .list(credsRef.current)
-      .then((docs) =>
+      .then((docs) => {
+        if (!active) return;
         setDocuments(
           Array.isArray(docs) && docs.length > 0
             ? docs.map((d) => ({ ...d, selected: true }))
             : []
-        )
-      )
+        );
+      })
       .catch(() => {
         /* backend unreachable or no documents yet — non-fatal */
       });
+    return () => { active = false; };
   }, [sessionId, enabled]);
 
   useEffect(() => {
@@ -164,6 +168,7 @@ export function useDocuments({ creds, sessionId, enabled, notify }: UseDocuments
 
   const openDocument = useCallback(
     async (documentId: string) => {
+      const requestId = ++editorLoadId.current;
       setDocEditor({
         documentId,
         filename: "",
@@ -177,7 +182,8 @@ export function useDocuments({ creds, sessionId, enabled, notify }: UseDocuments
       });
       try {
         const data = await documentsApi.content(documentId, credsRef.current);
-        setDocEditor({
+        if (requestId !== editorLoadId.current) return;
+        setDocEditor((prev) => prev?.documentId === documentId ? {
           documentId,
           filename: data.filename,
           content: data.content,
@@ -187,11 +193,12 @@ export function useDocuments({ creds, sessionId, enabled, notify }: UseDocuments
           loading: false,
           saving: false,
           error: null,
-        });
+        } : prev);
       } catch (error) {
+        if (requestId !== editorLoadId.current) return;
         console.error("Load document content error:", error);
         setDocEditor((prev) =>
-          prev ? { ...prev, loading: false, error: "Failed to load document content" } : null
+          prev?.documentId === documentId ? { ...prev, loading: false, error: "Failed to load document content" } : prev
         );
         notify("Couldn't load that document's content.", "error");
       }
@@ -213,11 +220,13 @@ export function useDocuments({ creds, sessionId, enabled, notify }: UseDocuments
           d.document_id === docEditor.documentId ? { ...d, chunk_count: result.chunk_count } : d
         )
       );
-      setDocEditor((prev) => (prev ? { ...prev, saving: false, originalContent: prev.content } : null));
+      setDocEditor((prev) => (prev?.documentId === docEditor.documentId
+        ? { ...prev, saving: false, originalContent: docEditor.content } : prev));
       notify("Changes saved", "success");
     } catch (error) {
       console.error("Save document content error:", error);
-      setDocEditor((prev) => (prev ? { ...prev, saving: false, error: "Failed to save — try again" } : null));
+      setDocEditor((prev) => (prev?.documentId === docEditor.documentId
+        ? { ...prev, saving: false, error: "Failed to save — try again" } : prev));
       notify("Couldn't save your changes. Please try again.", "error");
     }
   }, [docEditor, notify]);

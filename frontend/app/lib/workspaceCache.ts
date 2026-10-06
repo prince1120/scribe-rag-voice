@@ -42,6 +42,8 @@ const EMPTY_CACHE: WorkspaceCacheData = {
 };
 
 let memoryCache: WorkspaceCacheData = { ...EMPTY_CACHE };
+let cacheGeneration = 0;
+let pendingRevalidation: Promise<WorkspaceCacheData> | null = null;
 
 // Initialize memory cache from localStorage on browser boot
 if (typeof window !== "undefined") {
@@ -59,6 +61,8 @@ if (typeof window !== "undefined") {
 /** Drop everything cached for the previous account. Must be called on sign-out
  *  and sign-in — otherwise the next user briefly sees the last one's business. */
 export function clearWorkspaceCache() {
+  cacheGeneration += 1;
+  pendingRevalidation = null;
   clearOwnerRequests();
   memoryCache = { ...EMPTY_CACHE };
   if (typeof window !== "undefined") {
@@ -102,6 +106,9 @@ function getServerSnapshot(): WorkspaceCacheData {
 
 /** Update the workspace cache in memory and localStorage, and notify all subscribers. */
 export function setWorkspaceCache(patch: Partial<WorkspaceCacheData>) {
+  // A local edit supersedes any older background response.
+  cacheGeneration += 1;
+  pendingRevalidation = null;
   memoryCache = {
     ...memoryCache,
     ...patch,
@@ -122,21 +129,37 @@ export function setWorkspaceCache(patch: Partial<WorkspaceCacheData>) {
 }
 
 /** Revalidate core workspace identity and status in background. */
-export async function revalidateWorkspace(force = false): Promise<WorkspaceCacheData> {
+export function revalidateWorkspace(force = false): Promise<WorkspaceCacheData> {
+  if (force) {
+    cacheGeneration += 1;
+    pendingRevalidation = null;
+    clearOwnerRequests();
+  }
   const isStale = Date.now() - memoryCache.lastUpdated > CACHE_TTL_MS;
   if (!force && !isStale && memoryCache.loaded) {
-    return memoryCache;
+    return Promise.resolve(memoryCache);
   }
+  if (pendingRevalidation) return pendingRevalidation;
+  const generation = cacheGeneration;
+  const request = loadWorkspace(generation);
+  pendingRevalidation = request;
+  void request.finally(() => {
+    if (pendingRevalidation === request) pendingRevalidation = null;
+  });
+  return request;
+}
 
+async function loadWorkspace(generation: number): Promise<WorkspaceCacheData> {
   try {
     const [wsRes, agRes] = await Promise.all([
       ownerFetch("/api/v1/workspace"),
       ownerFetch("/api/v1/workspace/agent"),
     ]);
+    if (generation !== cacheGeneration) return memoryCache;
 
     const patch: Partial<WorkspaceCacheData> = {};
 
-    if (wsRes.status === 401) {
+    if (wsRes.status === 401 || agRes.status === 401) {
       clearWorkspaceCache();
       return memoryCache;
     }
@@ -162,11 +185,13 @@ export async function revalidateWorkspace(force = false): Promise<WorkspaceCache
       patch.agentConfig = ag;
     }
 
-    if (Object.keys(patch).length > 0) {
+    if (generation === cacheGeneration && Object.keys(patch).length > 0) {
       setWorkspaceCache(patch);
     }
-  } catch (err: any) {
-    setWorkspaceCache({ syncError: err?.message || "Failed to reach workspace service" });
+  } catch (err: unknown) {
+    if (generation === cacheGeneration) {
+      setWorkspaceCache({ syncError: err instanceof Error ? err.message : "Failed to reach workspace service" });
+    }
   }
 
   return memoryCache;

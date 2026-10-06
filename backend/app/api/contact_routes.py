@@ -88,9 +88,7 @@ async def create_contact(
     visible. Only its hash is stored, so it cannot be shown again."""
     _require_owner(identity)
 
-    # A chat link with no documents behind it would hand someone an assistant
-    # that answers "I don't have that" to everything, so it is refused at
-    # creation rather than discovered by whoever was sent it.
+    # Channel readiness comes from the shared runtime; documents are optional.
     from app.services import owner_service
 
     channels = await owner_service.available_channels(identity.tenant_id)
@@ -410,6 +408,8 @@ async def open_link(request: Request, response: Response, body: OpenLinkRequest)
             expires_at=record.expires_at,
             blocked_at=record.blocked_at,
         )
+        if record.agent_snapshot_id:
+            contacts.check_agent_available(record, await repositories.get_agent(record.owner_tenant_id))
     except contacts.ContactError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
 

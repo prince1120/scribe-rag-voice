@@ -305,7 +305,7 @@ async def delete_agent(tenant_id: str) -> None:
 
 
 
-from app.models.db_models import AgentRecord, DocumentRecord, OwnerRecord
+from app.models.db_models import AgentRecord, OwnerRecord
 
 
 async def get_owner_by_handle(handle: str) -> Optional[OwnerRecord]:
@@ -379,17 +379,6 @@ async def list_deployed_agents() -> List[dict]:
         )
         rows = result.all()
 
-        # One grouped query instead of one per listed agent. This endpoint is
-        # public and unauthenticated, so an N+1 here is a database amplifier
-        # anyone can pull: ten listed businesses meant eleven queries per
-        # request, and it grew with the directory.
-        from sqlalchemy import distinct
-
-        doc_rows = await session.execute(
-            select(distinct(DocumentRecord.tenant_id))
-        )
-        tenants_with_documents = set(doc_rows.scalars().all())
-
         agents = []
         minted = False
         for agent, owner in rows:
@@ -403,15 +392,14 @@ async def list_deployed_agents() -> List[dict]:
             if owner.mode != "business" or not (owner.business_name or "").strip():
                 continue
 
-            has_documents = owner.tenant_id in tenants_with_documents
             v_override = getattr(agent, "voice_script", None)
             c_override = getattr(agent, "chat_script", None)
             if v_override is not None or c_override is not None:
                 has_voice = bool((v_override or "").strip())
-                has_chat = bool((c_override or "").strip()) and has_documents
+                has_chat = bool((c_override or "").strip())
             else:
                 has_voice = bool((agent.script or "").strip())
-                has_chat = bool((agent.script or "").strip()) and has_documents
+                has_chat = bool((agent.script or "").strip())
 
             # Must have at least one active, working channel (voice or chat)
             if not (has_voice or has_chat):

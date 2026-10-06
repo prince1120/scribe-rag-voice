@@ -24,11 +24,14 @@ export default function SessionGate({ children }: { children: React.ReactNode })
   const publicEntry =
     pathname === "/" ||
     pathname === "/signin" ||
+    pathname === "/privacy" ||
+    pathname === "/terms" ||
     pathname === "/directory" ||
+    pathname === "/talk" ||
     pathname?.startsWith("/t/") ||
     pathname?.startsWith("/link/") ||
     pathname?.startsWith("/p/");
-  const [state, setState] = useState<GateState>("open");
+  const [state, setState] = useState<GateState>(alreadyOpen ? "open" : "checking");
   const [passcode, setPasscode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);

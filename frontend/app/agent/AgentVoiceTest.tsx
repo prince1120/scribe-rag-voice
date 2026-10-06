@@ -16,13 +16,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, Track, createAudioAnalyser } from "livekit-client";
 import { NetworkBanner } from "../components/voice/NetworkBanner";
 import { useCallQuality, VOICE_ROOM_OPTIONS } from "../components/voice/useCallQuality";
-import { enableEnhancedMic } from "../components/voice/micEnhancement";
+import { enableEnhancedMic, stopMicrophone } from "../components/voice/micEnhancement";
+import { useCallAttempt } from "../components/voice/useCallAttempt";
 import { VOICE_DATA_PACKETS } from "../components/voice/voiceEvents";
 import type { RemoteAudioTrack, RemoteTrack } from "livekit-client";
 
 type Phase = "idle" | "connecting" | "live" | "ended" | "error";
 
 export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
+  const { beginCall, cancelCall, isCurrentCall } = useCallAttempt();
   const [phase, setPhase] = useState<Phase>("idle");
   const [activeRoom, setActiveRoom] = useState<Room | null>(null);
   const [error, setError] = useState("");
@@ -43,26 +45,35 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
   }, [phase]);
 
   const teardown = useCallback(() => {
+    cancelCall();
     cancelAnimationFrame(rafRef.current);
     analyserRef.current?.cleanup().catch(() => {});
     analyserRef.current = null;
     // Removed explicitly: an orphaned <audio> keeps the stream alive and the
     // device's in-call indicator lit after the call has visibly ended.
-    audioElsRef.current.forEach((el) => el.remove());
+    audioElsRef.current.forEach((el) => { el.pause(); el.srcObject = null; el.remove(); });
     audioElsRef.current = [];
     // Null before disconnect so the Disconnected handler's teardown call
     // can't re-enter a second disconnect on an intentional hangup.
     const room = roomRef.current;
     roomRef.current = null;
-    room?.disconnect();
+    if (room) {
+      room.removeAllListeners();
+      stopMicrophone(room);
+      void room.disconnect(true).catch(() => {});
+    }
     setActiveRoom(null);
-  }, []);
+  }, [cancelCall]);
 
   useEffect(() => teardown, [teardown]);
 
   const start = useCallback(async () => {
+    const attempt = beginCall();
+    if (!attempt) return;
     setError("");
     setSeconds(0);
+    setMuted(false);
+    setSpeaking(false);
     setPhase("connecting");
 
     // Checked before LiveKit touches it: on a plain-http origin the browser
@@ -71,11 +82,13 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
       setPhase("error");
       setError("Your microphone needs a secure connection. Open the console over https.");
+      cancelCall();
       return;
     }
 
     try {
       const response = await ownerFetch("/api/v1/voice/token", {
+        signal: attempt.signal,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // Empty body on purpose: the server reads voice, greeting, language
@@ -100,6 +113,7 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
       }
 
       const { token, url } = await response.json();
+      if (!isCurrentCall(attempt)) return;
       const room = new Room(VOICE_ROOM_OPTIONS);
       roomRef.current = room;
 
@@ -121,6 +135,15 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
         try {
           const str = new TextDecoder().decode(payload);
           const data = JSON.parse(str);
+          if (data.type === VOICE_DATA_PACKETS.END_CALL || data.type === VOICE_DATA_PACKETS.CALL_ENDED) {
+            teardown();
+            setPhase("ended");
+            return;
+          }
+          if (data.type === VOICE_DATA_PACKETS.AGENT_UNAVAILABLE) {
+            setError("The assistant is temporarily unable to respond. Please try again in a moment.");
+            return;
+          }
           if (data.type === VOICE_DATA_PACKETS.INTERRUPT) {
             audioElsRef.current.forEach((el) => {
               try {
@@ -143,11 +166,16 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
       });
 
       room.on(RoomEvent.Disconnected, () => { setPhase("ended"); teardown(); });
+      room.on(RoomEvent.ParticipantDisconnected, participant => {
+        if (!participant.isLocal) { teardown(); setPhase("ended"); }
+      });
 
       await room.connect(url, token);
+      if (!isCurrentCall(attempt)) { await room.disconnect(true); return; }
       // Same enhanced capture as a real call (BVC + EC/NS/AGC), so the owner
       // tunes against the audio conditions callers actually get.
-      await enableEnhancedMic(room);
+      await enableEnhancedMic(room, undefined, () => isCurrentCall(attempt) && roomRef.current === room);
+      if (!isCurrentCall(attempt)) { stopMicrophone(room); await room.disconnect(true); return; }
       setActiveRoom(room);
       setPhase("live");
 
@@ -161,23 +189,28 @@ export function AgentVoiceTest({ deployed }: { deployed: boolean }) {
         rafRef.current = requestAnimationFrame(tick);
       };
       rafRef.current = requestAnimationFrame(tick);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      if (!isCurrentCall(attempt)) return;
       setPhase("error");
-      if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError" || err?.message?.toLowerCase().includes("permission")) {
+      if (err instanceof Error && (err.name === "NotAllowedError" || err.name === "PermissionDeniedError" || err.message.toLowerCase().includes("permission"))) {
         setError("Microphone permission was denied. Please allow microphone access in your browser to test voice.");
       } else {
         setError(formatClientError(err, "Could not start the test call."));
       }
       teardown();
     }
-  }, [teardown]);
+  }, [teardown, beginCall, cancelCall, isCurrentCall]);
 
   async function toggleMute() {
     const room = roomRef.current;
     if (!room) return;
     const next = !muted;
-    await room.localParticipant.setMicrophoneEnabled(!next);
-    setMuted(next);
+    try {
+      await room.localParticipant.setMicrophoneEnabled(!next);
+      if (roomRef.current === room) setMuted(next);
+    } catch {
+      if (roomRef.current === room) setError("Could not change the microphone. Check its permission and connection.");
+    }
   }
 
   const status =

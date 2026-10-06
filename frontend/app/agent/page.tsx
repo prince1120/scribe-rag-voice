@@ -1308,7 +1308,7 @@ color: "var(--claude-text-2)",
             <FileText size={14} /> Knowledge Base (RAG fallback) — optional
           </div>
           <p className="text-[11px] leading-4 -mt-2" style={{ color: "var(--claude-muted)" }}>
-            Prompts define both channels. When &quot;Fallback&quot; is enabled, these documents provide supporting knowledge. Each automatically created document belongs to its saved agent.
+            Website and creation-document facts are included in the generated prompts. These optional documents provide additional knowledge when &quot;Fallback&quot; is enabled.
           </p>
           <AgentDocuments purpose="rag" />
         </div>
@@ -1409,7 +1409,7 @@ color: "var(--claude-text-2)",
             </span>
           )}
         </div>
-        {showSiteModal && <SiteAgentModal onClose={() => setShowSiteModal(false)} onCreated={async () => { setShowSiteModal(false); showToast("Agent created — prompt + fallback doc ready ✓", "success"); await refreshAgent(); }} />}
+        {showSiteModal && <SiteAgentModal onClose={() => setShowSiteModal(false)} onCreated={async () => { setShowSiteModal(false); showToast("Agent created — source facts included in both prompts", "success"); await refreshAgent(); }} />}
         
         {/* Styled Channel Disable Confirmation Modal */}
         {channelToDisable && (

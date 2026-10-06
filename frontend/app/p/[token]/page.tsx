@@ -5,7 +5,9 @@ import { useParams } from "next/navigation";
 import { Room, RoomEvent, Track } from "livekit-client";
 import type { RemoteTrack } from "livekit-client";
 import { VOICE_ROOM_OPTIONS } from "../../components/voice/useCallQuality";
-import { enableEnhancedMic } from "../../components/voice/micEnhancement";
+import { enableEnhancedMic, stopMicrophone } from "../../components/voice/micEnhancement";
+import { useCallAttempt } from "../../components/voice/useCallAttempt";
+import { VOICE_DATA_PACKETS } from "../../components/voice/voiceEvents";
 import {
   Package,
   ShieldCheck,
@@ -73,6 +75,7 @@ interface VoiceTranscriptLine {
 }
 
 export default function PublicProductQrPage() {
+  const { beginCall, cancelCall, isCurrentCall } = useCallAttempt();
   const params = useParams();
   const token = params?.token as string;
 
@@ -435,18 +438,18 @@ export default function PublicProductQrPage() {
   };
 
   const teardownVoice = useCallback(() => {
+    cancelCall();
     const room = roomRef.current;
     roomRef.current = null;
     if (room) {
-      try {
-        room.disconnect();
-      } catch {
-        // The room may already be disconnected.
-      }
+      room.removeAllListeners();
+      stopMicrophone(room);
+      void room.disconnect(true).catch(() => {});
     }
     for (const element of audioElementsRef.current) {
       try {
         element.pause();
+        element.srcObject = null;
         element.remove();
       } catch {
         // Best-effort DOM cleanup.
@@ -457,7 +460,7 @@ export default function PublicProductQrPage() {
     setVoiceConnecting(false);
     setVoiceMuted(false);
     setVoiceStartedAt(null);
-  }, []);
+  }, [cancelCall]);
 
   useEffect(() => () => teardownVoice(), [teardownVoice]);
 
@@ -473,6 +476,8 @@ export default function PublicProductQrPage() {
       setVoiceStatusMsg("Please confirm voice processing and transcript consent before connecting.");
       return;
     }
+    const attempt = beginCall();
+    if (!attempt) return;
 
     setVoiceConnecting(true);
     setVoiceUnavailable(false);
@@ -480,25 +485,33 @@ export default function PublicProductQrPage() {
 
     try {
       const res = await fetch("/api/v1/product-qr/public/voice/token", {
+        signal: attempt.signal,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ consent_accepted: voiceConsentAccepted }),
         credentials: "include",
       });
+      if (!isCurrentCall(attempt)) return;
 
       if (res.status === 403) {
+        cancelCall();
+        setVoiceConnecting(false);
         setVoiceUnavailable(true);
         setVoiceStatusMsg("Voice support is unavailable for this product. Text support remains available below.");
         return;
       }
 
       if (res.status === 429) {
+        cancelCall();
+        setVoiceConnecting(false);
         setVoiceUnavailable(true);
         setVoiceStatusMsg("Voice troubleshooting rate limit reached. Please wait a moment or use text chat below.");
         return;
       }
 
       if (res.status === 502 || res.status === 503) {
+        cancelCall();
+        setVoiceConnecting(false);
         setVoiceUnavailable(true);
         setVoiceStatusMsg(
           "Voice troubleshooting service is temporarily offline. Please use text chat below for instant assistance."
@@ -512,6 +525,7 @@ export default function PublicProductQrPage() {
       }
 
       const data = await res.json();
+      if (!isCurrentCall(attempt)) return;
       const room = new Room(VOICE_ROOM_OPTIONS);
       roomRef.current = room;
 
@@ -547,34 +561,55 @@ export default function PublicProductQrPage() {
       });
 
       room.on(RoomEvent.Disconnected, () => {
-        roomRef.current = null;
-        audioElementsRef.current.forEach((element) => element.remove());
-        audioElementsRef.current = [];
-        setVoiceActive(false);
-        setVoiceConnecting(false);
-        setVoiceMuted(false);
-        setVoiceStartedAt(null);
+        teardownVoice();
         setVoiceStatusMsg("Voice session ended. Text support remains available.");
+      });
+      room.on(RoomEvent.ParticipantDisconnected, participant => {
+        if (!participant.isLocal) {
+          teardownVoice();
+          setVoiceStatusMsg("Voice session ended. Text support remains available.");
+        }
+      });
+      room.on(RoomEvent.DataReceived, payload => {
+        try {
+          const packet = JSON.parse(new TextDecoder().decode(payload));
+          if (packet.type === VOICE_DATA_PACKETS.END_CALL || packet.type === VOICE_DATA_PACKETS.CALL_ENDED) {
+            teardownVoice();
+            setVoiceStatusMsg("Voice session ended. Text support remains available.");
+          } else if (packet.type === VOICE_DATA_PACKETS.INTERRUPT) {
+            const elements = [...audioElementsRef.current];
+            elements.forEach(element => element.pause());
+            setTimeout(() => {
+              if (roomRef.current !== room) return;
+              elements.forEach(element => { if (element.isConnected && element.paused) void element.play().catch(() => {}); });
+            }, 50);
+          } else if (packet.type === VOICE_DATA_PACKETS.AGENT_UNAVAILABLE) {
+            setVoiceStatusMsg("The assistant is temporarily unable to respond. Please try again or use text support.");
+          }
+        } catch { /* Ignore unrelated or malformed data packets. */ }
       });
 
       await room.connect(data.url, data.token);
-      await enableEnhancedMic(room);
+      if (!isCurrentCall(attempt)) { await room.disconnect(true); return; }
+      await enableEnhancedMic(room, undefined, () => isCurrentCall(attempt) && roomRef.current === room);
+      if (!isCurrentCall(attempt)) { stopMicrophone(room); await room.disconnect(true); return; }
       setVoiceActive(true);
       setVoiceHasConnected(true);
       setVoiceMuted(false);
       setVoiceStartedAt(Date.now());
       setVoiceDurationSeconds(0);
       setVoiceStatusMsg("Voice support connected. You can speak now.");
-    } catch (err: any) {
+    } catch (err: unknown) {
+      if (!isCurrentCall(attempt)) return;
       teardownVoice();
       setVoiceUnavailable(true);
-      if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError" || err?.message?.toLowerCase().includes("permission")) {
+      if (err instanceof Error && (err.name === "NotAllowedError" || err.name === "PermissionDeniedError" || err.message.toLowerCase().includes("permission"))) {
         setVoiceStatusMsg("Microphone access was denied. Please allow microphone permissions in your browser to speak, or use text chat below.");
       } else {
         setVoiceStatusMsg(formatClientError(err, "Could not connect to voice support. Text chat remains available."));
       }
     } finally {
-      setVoiceConnecting(false);
+      if (isCurrentCall(attempt)) setVoiceConnecting(false);
     }
   };
 
@@ -586,11 +621,11 @@ export default function PublicProductQrPage() {
       // voices don't sneak back in after the first mute cycle. Muting needs
       // no options.
       if (voiceMuted) {
-        await enableEnhancedMic(room);
+        await enableEnhancedMic(room, undefined, () => roomRef.current === room);
       } else {
         await room.localParticipant.setMicrophoneEnabled(false);
       }
-      setVoiceMuted((muted) => !muted);
+      if (roomRef.current === room) setVoiceMuted((muted) => !muted);
     } catch (err) {
       setVoiceStatusMsg(formatClientError(err, "Could not change microphone status."));
     }

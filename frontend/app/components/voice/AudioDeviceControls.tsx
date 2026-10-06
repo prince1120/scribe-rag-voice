@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Room } from "livekit-client";
-import { Track } from "livekit-client";
+import { RoomEvent, Track } from "livekit-client";
 import { Mic, Headphones, Volume2, Check, RefreshCw, ChevronDown } from "lucide-react";
 
 export interface AudioDeviceState {
@@ -12,12 +12,14 @@ export interface AudioDeviceState {
   activeOutputId: string;
   micLevel: number;
   sinkIdSupported: boolean;
+  deviceError: string;
   selectInput: (deviceId: string) => Promise<void>;
   selectOutput: (deviceId: string) => Promise<void>;
   refreshDevices: () => Promise<void>;
 }
 
 export function useAudioDevices(room: Room | null): AudioDeviceState {
+  const [deviceError, setDeviceError] = useState("");
   const [inputs, setInputs] = useState<MediaDeviceInfo[]>([]);
   const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([]);
   const [activeInputId, setActiveInputId] = useState<string>("default");
@@ -72,7 +74,7 @@ export function useAudioDevices(room: Room | null): AudioDeviceState {
   // Sync with live room active devices if room is connected
   useEffect(() => {
     if (!room) return;
-    try {
+    const sync = () => { try {
       const liveInput = room.getActiveDevice("audioinput");
       if (liveInput) setActiveInputId(liveInput);
 
@@ -80,7 +82,10 @@ export function useAudioDevices(room: Room | null): AudioDeviceState {
       if (liveOutput) setActiveOutputId(liveOutput);
     } catch {
       /* ignore */
-    }
+    } };
+    sync();
+    room.on(RoomEvent.ActiveDeviceChanged, sync);
+    return () => { room.off(RoomEvent.ActiveDeviceChanged, sync); };
   }, [room]);
 
   // Observe the call's existing microphone track. Never open a preview stream.
@@ -93,8 +98,14 @@ export function useAudioDevices(room: Room | null): AudioDeviceState {
 
     let isCancelled = false;
     let audioCtx: AudioContext | null = null;
+    const clearMeter = () => {
+      cancelAnimationFrame(testRafRef.current);
+      void audioCtx?.close().catch(() => {});
+      audioCtx = null;
+    };
 
     const monitorMicrophone = () => {
+      clearMeter();
       try {
         const track = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;
         if (!track) return;
@@ -136,26 +147,26 @@ export function useAudioDevices(room: Room | null): AudioDeviceState {
     };
 
     monitorMicrophone();
+    room.on(RoomEvent.LocalTrackPublished, monitorMicrophone);
+    room.on(RoomEvent.LocalTrackUnpublished, monitorMicrophone);
 
     return () => {
       isCancelled = true;
-      cancelAnimationFrame(testRafRef.current);
-      if (audioCtx) {
-        audioCtx.close().catch(() => {});
-      }
+      room.off(RoomEvent.LocalTrackPublished, monitorMicrophone);
+      room.off(RoomEvent.LocalTrackUnpublished, monitorMicrophone);
+      clearMeter();
       setMicLevel(0);
     };
   }, [room, activeInputId, refreshDevices]);
 
   const selectInput = useCallback(
     async (deviceId: string) => {
-      setActiveInputId(deviceId);
-      if (room) {
-        try {
-          await room.switchActiveDevice("audioinput", deviceId);
-        } catch {
-          /* fallback */
-        }
+      try {
+        if (room && !(await room.switchActiveDevice("audioinput", deviceId))) throw new Error("Device unavailable");
+        setActiveInputId(deviceId);
+        setDeviceError("");
+      } catch {
+        setDeviceError("Could not switch microphone. Your previous microphone remains selected.");
       }
     },
     [room]
@@ -163,23 +174,12 @@ export function useAudioDevices(room: Room | null): AudioDeviceState {
 
   const selectOutput = useCallback(
     async (deviceId: string) => {
-      setActiveOutputId(deviceId);
-      if (room) {
-        try {
-          await room.switchActiveDevice("audiooutput", deviceId).catch(() => {});
-        } catch {
-          /* fallback */
-        }
-      }
-      // Apply setSinkId directly to any playing audio elements
-      if (typeof document !== "undefined" && "setSinkId" in HTMLMediaElement.prototype) {
-        document.querySelectorAll("audio").forEach((el) => {
-          try {
-            (el as any).setSinkId(deviceId).catch(() => {});
-          } catch {
-            /* ignore */
-          }
-        });
+      try {
+        if (room && !(await room.switchActiveDevice("audiooutput", deviceId))) throw new Error("Device unavailable");
+        setActiveOutputId(deviceId);
+        setDeviceError("");
+      } catch {
+        setDeviceError("Could not switch speakers. Your previous output remains selected.");
       }
     },
     [room]
@@ -192,6 +192,7 @@ export function useAudioDevices(room: Room | null): AudioDeviceState {
     activeOutputId,
     micLevel,
     sinkIdSupported,
+    deviceError,
     selectInput,
     selectOutput,
     refreshDevices,
@@ -236,6 +237,7 @@ export function AudioDeviceSelector({
       )}
 
       {/* Microphone Selection */}
+      {state.deviceError && <p role="alert" className="text-xs text-red-700">{state.deviceError}</p>}
       <div className="space-y-1">
         <div className="flex items-center justify-between">
           <label className="text-[11px] font-semibold text-gray-600 flex items-center gap-1">
@@ -258,6 +260,7 @@ export function AudioDeviceSelector({
 
         <div className="relative">
           <select
+            aria-label="Microphone"
             value={activeInputId}
             onChange={(e) => void selectInput(e.target.value)}
             className="w-full h-8.5 pl-2.5 pr-7 rounded-xl border bg-gray-50/70 hover:bg-gray-50 focus:bg-white text-[11.5px] font-medium text-gray-800 outline-none focus:ring-1 focus:ring-indigo-300 transition-colors appearance-none cursor-pointer truncate"
@@ -290,6 +293,7 @@ export function AudioDeviceSelector({
 
           <div className="relative">
             <select
+              aria-label="Headphones or speakers"
               value={activeOutputId}
               onChange={(e) => void selectOutput(e.target.value)}
               className="w-full h-8.5 pl-2.5 pr-7 rounded-xl border bg-gray-50/70 hover:bg-gray-50 focus:bg-white text-[11.5px] font-medium text-gray-800 outline-none focus:ring-1 focus:ring-indigo-300 transition-colors appearance-none cursor-pointer truncate"

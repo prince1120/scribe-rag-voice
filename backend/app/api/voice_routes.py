@@ -94,6 +94,7 @@ def _require_voice_caller(identity: Identity, contact, agent) -> None:
             expires_at=contact.expires_at,
             blocked_at=contact.blocked_at,
         )
+        contacts.check_agent_available(contact, agent)
     except contacts.ContactError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     if (getattr(contact, "mode", "both") or "both") == "chat":

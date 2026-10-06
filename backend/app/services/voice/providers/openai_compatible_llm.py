@@ -11,6 +11,9 @@ from livekit.agents import llm
 from livekit.plugins import openai as lk_openai
 
 from app.services.voice.config import VoiceSettings
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def build_custom_openai_llm(settings: VoiceSettings) -> llm.LLM:
@@ -26,13 +29,18 @@ def build_custom_openai_llm(settings: VoiceSettings) -> llm.LLM:
         )
     sarvam = is_sarvam_endpoint(settings.CUSTOM_LLM_BASE_URL)
     options = {"extra_body": {"max_tokens": settings.VOICE_LLM_MAX_TOKENS, "reasoning_effort": None}} if sarvam else {"max_completion_tokens": settings.VOICE_LLM_MAX_TOKENS}
-    return lk_openai.LLM(
+    model = lk_openai.LLM(
         model=settings.VOICE_LLM_MODEL,
         api_key=settings.CUSTOM_LLM_API_KEY,
         base_url=settings.CUSTOM_LLM_BASE_URL,
         temperature=settings.VOICE_LLM_TEMPERATURE,
         **options,
     )
+    @model.on("metrics_collected")
+    def record_usage(metrics):
+        logger.info("[VOICE TOKENS] model=%s input=%s cached_input=%s output=%s", settings.VOICE_LLM_MODEL,
+                    metrics.prompt_tokens, metrics.prompt_cached_tokens, metrics.completion_tokens)
+    return model
 
 
 def build_sarvam_llm(settings: VoiceSettings) -> llm.LLM:

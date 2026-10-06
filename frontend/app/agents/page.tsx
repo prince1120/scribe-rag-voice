@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { Plus, Sparkles, Bot, Globe, FileText } from "lucide-react";
+import { Plus, Sparkles } from "lucide-react";
 import { OwnerShell } from "../components/owner/OwnerShell";
 import { AgentSwitcher } from "../agent/AgentSwitcher";
 import { useWorkspace } from "../lib/workspaceCache";
@@ -38,7 +38,7 @@ export default function AgentsGalleryPage() {
           <Sparkles size={16} className="text-indigo-600 flex-shrink-0 mt-0.5" />
           <div className="leading-relaxed">
             <span className="font-bold text-gray-800">Pro Tip: </span>
-            You can create multiple agents tailored for different business needs (e.g. Inbound Support vs Appointments). Use <strong>Make Live</strong> to switch which version answers customer calls and chats instantly.
+            Create assistants for different needs, such as support and appointments. Use <strong>Load in Studio</strong> to select a saved agent, then test and publish it. Only one agent is live per workspace.
           </div>
         </footer>
       </main>

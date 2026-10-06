@@ -506,68 +506,29 @@ def _resolve_channel_prompt(
 
 
 async def _collect_pages_for_agent(identity: Identity, url: str) -> tuple[list[dict], str, Optional[str]]:
-    """Fetch site pages and/or creation docs, merged and deduped. Returns (pages, source, source_url)."""
-    from app.services.site_ingest import fetch_site_pages
+    """Collect complete extracted sources; failures must never become fake facts."""
+    from app.services.site_ingest import fetch_site_pages, _dedupe_pages
+    from fastapi.concurrency import run_in_threadpool
 
-    pages: list[dict] = []
-    source = "manual"
-    source_url = None
-    if url:
-        pages = await fetch_site_pages(url)
-        source = "site"
-        source_url = url
-        # Also merge creation docs if present — owner used AND, don't ignore docs
-        try:
-            docs = await repositories.list_documents(identity.tenant_id, purpose="agent")
-            if docs:
-                from app.api.routes import vector_store as _vs
-                from fastapi.concurrency import run_in_threadpool as _rt
-                extra: list[dict] = []
-                for d in docs[:3]:
-                    # avoid duplicating a page that is already the site URL
-                    try:
-                        chunks = await _rt(_vs.get_document_chunks, d.document_id, identity.tenant_id)
-                        text = "\n\n".join(c.get("content", "") for c in chunks)[:4000] if chunks else d.filename
-                        if not text.strip():
-                            text = d.filename
-                        extra.append({"title": d.filename, "text": text, "url": ""})
-                    except Exception:
-                        extra.append({"title": d.filename, "text": d.filename, "url": ""})
-                if extra:
-                    # Dedupe merged list
-                    from app.services.site_ingest import _dedupe_pages as _dedup
-                    pages = _dedup(pages + extra)
-                    if source == "site":
-                        source = "site+upload"
-        except Exception:
-            pass
-    else:
-        source = "upload"
-        try:
-            docs = await repositories.list_documents(identity.tenant_id, purpose="agent")
-            if docs:
-                from app.api.routes import vector_store as _vs
-                from fastapi.concurrency import run_in_threadpool as _rt
-                for d in docs[:3]:
-                    try:
-                        chunks = await _rt(_vs.get_document_chunks, d.document_id, identity.tenant_id)
-                        text = "\n\n".join(c.get("content", "") for c in chunks)[:4000] if chunks else d.filename
-                        if not text.strip():
-                            text = d.filename
-                        pages.append({"title": d.filename, "text": text, "url": ""})
-                    except Exception:
-                        pages.append({"title": d.filename, "text": d.filename, "url": ""})
-        except Exception:
-            pass
-    return pages, source, source_url
-
+    pages = await fetch_site_pages(url) if url else []
+    docs = await repositories.list_documents(identity.tenant_id, purpose="agent")
+    if docs:
+        from app.api.routes import vector_store
+        for doc in docs:
+            chunks = await run_in_threadpool(vector_store.get_document_chunks, doc.document_id, identity.tenant_id)
+            text = "\n\n".join(c.get("content", "") for c in chunks)
+            if not text.strip():
+                raise ValueError("A supplied document has no readable extracted content. Re-upload it before generating.")
+            pages.append({"title": doc.filename, "text": text, "url": ""})
+    source = "site+upload" if url and docs else "site" if url else "upload" if docs else "manual"
+    return _dedupe_pages(pages), source, url or None
 
 @router.post("/agents/generate-preview")
 @limiter.limit("10/minute")
 async def generate_agent_preview(request: Request, body: SiteAgentRequest, identity: Identity = Depends(get_identity)):
     """Extract content from site/docs and generate high-quality Voice & Chat prompts for owner review."""
     _require_workspace_owner(identity)
-    from app.services.site_ingest import build_agent_prompts
+    from app.services.site_ingest import build_agent_prompts, PromptCapacityError
     url = (body.url or "").strip()
     try:
         pages, _, _ = await _collect_pages_for_agent(identity, url)
@@ -579,8 +540,9 @@ async def generate_agent_preview(request: Request, body: SiteAgentRequest, ident
         raise HTTPException(status_code=400, detail="No readable content found at that URL — check the link or upload a PDF instead.")
 
     try:
-        credentials = await owner_service.resolve_credentials(identity.tenant_id)
-        prompt = await build_agent_prompts(pages, {"name": body.name, "business": body.business, "goal": body.goal, "tone": body.tone}, sarvam_api_key=credentials.get("sarvam_api_key", ""))
+        prompt = await build_agent_prompts(pages, {"name": body.name, "business": body.business, "goal": body.goal, "tone": body.tone})
+    except PromptCapacityError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
     except Exception as e:
         logger.warning("generate-preview LLM failed: %s", e)
         raise HTTPException(status_code=502, detail="AI is temporarily unavailable — try again in a moment.")
@@ -603,7 +565,7 @@ async def generate_agent_preview(request: Request, body: SiteAgentRequest, ident
 async def create_from_site(request: Request, body: SiteAgentRequest, identity: Identity = Depends(get_identity)):
     """Create a draft agent from a site link or PDF docs."""
     _require_workspace_owner(identity)
-    from app.services.site_ingest import build_agent_prompts
+    from app.services.site_ingest import build_agent_prompts, PromptCapacityError
     import uuid
     import re as _re
     url = (body.url or "").strip()
@@ -633,8 +595,9 @@ async def create_from_site(request: Request, body: SiteAgentRequest, identity: I
         }
     else:
         try:
-            credentials = await owner_service.resolve_credentials(identity.tenant_id)
-            prompt = await build_agent_prompts(pages, {"name": body.name, "business": body.business, "goal": body.goal, "tone": body.tone}, sarvam_api_key=credentials.get("sarvam_api_key", ""))
+            prompt = await build_agent_prompts(pages, {"name": body.name, "business": body.business, "goal": body.goal, "tone": body.tone})
+        except PromptCapacityError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from None
         except Exception as e:
             logger.warning("from-site LLM failed, using rule builder: %s", e)
             from app.services.site_ingest import build_prompt_from_site
@@ -648,6 +611,11 @@ async def create_from_site(request: Request, body: SiteAgentRequest, identity: I
     from app.services.site_ingest import _truncate_safe as _tsafe
     fallback_raw = (cs if ch == "chat" else vs if ch == "voice" else (cs or vs or "")) or ""
     fallback_script = _tsafe(fallback_raw, 9000)
+    # Archive/address the previous manual agent before replacing the active row.
+    from app.repositories.agent_addresses import ensure_address
+    previous = await repositories.get_agent(identity.tenant_id)
+    if previous:
+        await ensure_address(identity.tenant_id, previous.active_snapshot_id)
     from app.services import owner_service as _svc
     agent_display_name = (body.name or body.business or "Assistant").strip()[:120] or "Assistant"
     cfg = await _svc.save_agent_config(
@@ -657,7 +625,7 @@ async def create_from_site(request: Request, body: SiteAgentRequest, identity: I
         status="draft", published_config="", deployed_at=None,
         llm_model=_svc.SARVAM_VOICE_MODEL, llm_base_url=_svc.SARVAM_LLM_URL, llm_api_key="",
         voice_model="", chat_model="", voice_base_url="", chat_base_url="", voice_api_key="", chat_api_key="",
-        voice_rag_enabled=bool(pages), chat_rag_enabled=bool(pages),
+        rag_enabled=False, voice_rag_enabled=False, chat_rag_enabled=False,
         voice_id=None,
         language=body.language or "unknown",
         script=fallback_script,
@@ -693,31 +661,8 @@ async def create_from_site(request: Request, body: SiteAgentRequest, identity: I
             await session.commit()
     except Exception:
         logger.warning("Failed to save snapshot %s", snapshot_id, exc_info=True)
-    # ONE consolidated fallback RAG doc per agent (full verbatim, not per-page). Linked to snapshot for cascade delete.
-    # New source-based agents use this fallback only when a needed fact is absent from their compact prompt.
-    if pages:
-        try:
-            from app.api.routes import _ingest_file as _ingest_site_file
-            if source == "site":
-                combined = "\n\n---\n\n".join([f"# {p.get('title', '')}\nSource: {p.get('url', '')}\n\n{p.get('text', '')}" for p in pages])
-                # cap ~80k chars for embedding (still detailed for fallback)
-                if len(combined) > 80000:
-                    combined = combined[:80000]
-                md = f"# Fallback knowledge for {snapshot_id} — {source_url or 'upload'}\n\n{combined}"
-                doc_id = uuid.uuid4().hex
-                safe = f"fallback-{snapshot_id}.md"
-                await _ingest_site_file(md.encode("utf-8"), doc_id, safe, identity.tenant_id, len(md.encode("utf-8")), purpose="rag", source_snapshot_id=snapshot_id)
-            else:
-                # PDF/upload fallback: combine retrieved agent doc texts
-                combined = "\n\n---\n\n".join([f"# {p.get('title', '')}\n\n{p.get('text', '')}" for p in pages])
-                if len(combined) > 80000:
-                    combined = combined[:80000]
-                md = f"# Fallback knowledge for {snapshot_id} — upload\n\n{combined}"
-                doc_id = uuid.uuid4().hex
-                safe = f"fallback-{snapshot_id}.md"
-                await _ingest_site_file(md.encode("utf-8"), doc_id, safe, identity.tenant_id, len(md.encode("utf-8")), purpose="rag", source_snapshot_id=snapshot_id)
-        except Exception:
-            logger.warning("Failed to create fallback RAG doc for %s", snapshot_id, exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not save this agent's identity. Please try again.") from None
+    cfg["share_address"] = await ensure_address(identity.tenant_id, snapshot_id)
     return cfg
 
 
@@ -797,14 +742,24 @@ async def delete_snapshot(snapshot_id: str, identity: Identity = Depends(get_ide
     """Delete a past agent snapshot and its linked fallback RAG doc + vectors. Active stays."""
     _require_workspace_owner(identity)
     from app.database import async_session
-    from app.models.db_models import AgentSnapshotRecord
+    from app.models.db_models import AgentSnapshotRecord, AgentRecord
     from sqlalchemy import select, delete
     async with async_session() as session:
         result = await session.execute(select(AgentSnapshotRecord).where(AgentSnapshotRecord.snapshot_id == snapshot_id, AgentSnapshotRecord.tenant_id == identity.tenant_id))
         snap = result.scalar_one_or_none()
         if not snap:
             raise HTTPException(status_code=404, detail="Snapshot not found")
-        await session.execute(delete(AgentSnapshotRecord).where(AgentSnapshotRecord.snapshot_id == snapshot_id))
+        selected = select(AgentRecord.tenant_id).where(
+            AgentRecord.tenant_id == identity.tenant_id,
+            AgentRecord.active_snapshot_id == snapshot_id,
+        ).exists()
+        result = await session.execute(delete(AgentSnapshotRecord).where(
+            AgentSnapshotRecord.snapshot_id == snapshot_id,
+            AgentSnapshotRecord.tenant_id == identity.tenant_id,
+            ~selected,
+        ))
+        if result.rowcount == 0:
+            raise HTTPException(status_code=409, detail="Select another agent before deleting this one.")
         await session.commit()
     # Cascade delete linked fallback RAG doc(s) + vectors/storage (no orphaned many docs)
     try:
@@ -937,12 +892,23 @@ async def duplicate_snapshot(snapshot_id: str, identity: Identity = Depends(get_
 
 @router.get("/directory-handle")
 async def get_directory_handle(identity: Identity = Depends(get_identity)):
-    """This workspace's public directory handle, minted on first request."""
+    """The selected agent's permanent public link and memorable numeric code."""
     _require_workspace_owner(identity)
-    handle = await repositories.ensure_public_handle(identity.tenant_id)
-    if handle is None:
-        raise HTTPException(status_code=404, detail="Workspace not found.")
-    return {"handle": handle}
+    from app.repositories.agent_addresses import ensure_address
+    agent = await repositories.get_agent(identity.tenant_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Create an agent first.")
+    return await ensure_address(identity.tenant_id, agent.active_snapshot_id)
+
+
+@router.get("/agents/{snapshot_id}/address")
+async def get_snapshot_address(snapshot_id: str, identity: Identity = Depends(get_identity)):
+    _require_workspace_owner(identity)
+    from app.repositories.agent_addresses import ensure_address
+    try:
+        return await ensure_address(identity.tenant_id, snapshot_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from None
 
 
 @router.post("/directory-handle/rotate")

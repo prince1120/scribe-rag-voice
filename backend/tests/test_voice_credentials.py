@@ -189,6 +189,8 @@ async def test_business_dispatch_metadata_has_no_credentials(monkeypatch):
 @pytest.mark.asyncio
 async def test_product_dispatch_metadata_has_no_credentials():
     from app.api import product_qr_public_routes
+    from app.database import init_db
+    await init_db()  # ASGITransport does not run application lifespan.
 
     captured = {}
 
@@ -472,6 +474,8 @@ async def test_product_token_503_when_credentials_unresolvable(monkeypatch):
     from unittest.mock import AsyncMock
 
     from app.api import product_qr_public_routes
+    from app.database import init_db
+    await init_db()  # This test must also pass without earlier DB tests.
 
     sess = SimpleNamespace(
         session_id="sess-1",

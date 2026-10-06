@@ -8,6 +8,7 @@ import { NetworkBanner } from "./components/voice/NetworkBanner";
 import { useCallQuality, VOICE_ROOM_OPTIONS } from "./components/voice/useCallQuality";
 import { enableEnhancedMic, stopMicrophone } from "./components/voice/micEnhancement";
 import { useAudioDeviceSwitching } from "./components/voice/useAudioDeviceSwitching";
+import { useCallAttempt } from "./components/voice/useCallAttempt";
 import { personaForVoice } from "./components/voice/voicePersona";
 import { VOICE_DATA_PACKETS } from "./components/voice/voiceEvents";
 import type { RemoteTrack, RemoteAudioTrack, Participant, TranscriptionSegment } from "livekit-client";
@@ -198,6 +199,7 @@ export function VoiceCallModal({
   };
 
   const roomRef = useRef<Room | null>(null);
+  const { beginCall, cancelCall, isCurrentCall } = useCallAttempt();
   const [activeRoom, setActiveRoom] = useState<Room | null>(null);
   const [deviceNotice, setDeviceNotice] = useState<string | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
@@ -247,6 +249,7 @@ export function VoiceCallModal({
   };
 
   const teardown = () => {
+    cancelCall();
     cancelAnimationFrame(rafRef.current);
     clearWatchdog();
     localAnalyserRef.current?.cleanup().catch(() => { });
@@ -266,7 +269,7 @@ export function VoiceCallModal({
     // re-enters teardown or surfaces a spurious "ended unexpectedly".
     const room = roomRef.current;
     roomRef.current = null;
-    if (room) { stopMicrophone(room); void room.disconnect(true); }
+    if (room) { room.removeAllListeners(); stopMicrophone(room); void room.disconnect(true).catch(() => {}); }
     setActiveRoom(null);
     setDeviceNotice(null);
     setActiveSpeaker(null);
@@ -288,7 +291,12 @@ export function VoiceCallModal({
       cancelAnimationFrame(rafRef.current);
       const room = roomRef.current;
       roomRef.current = null;
-      if (room) { stopMicrophone(room); void room.disconnect(true); }
+      if (room) { room.removeAllListeners(); stopMicrophone(room); void room.disconnect(true).catch(() => {}); }
+      clearWatchdog();
+      void localAnalyserRef.current?.cleanup().catch(() => {});
+      void agentAnalyserRef.current?.cleanup().catch(() => {});
+      agentAudioElsRef.current.forEach(el => { el.pause(); el.srcObject = null; el.remove(); });
+      agentAudioElsRef.current = [];
     };
   }, []);
 
@@ -412,6 +420,8 @@ export function VoiceCallModal({
   };
 
   const startCall = async () => {
+    const attempt = beginCall();
+    if (!attempt) return;
     setState("connecting");
     setError(null);
     setTranscript([]);
@@ -423,6 +433,7 @@ export function VoiceCallModal({
       if (clientId) headers["X-Client-Id"] = clientId;
       if (customLlmBaseUrl && customLlmApiKey) headers["X-User-Custom-LLM-Key"] = customLlmApiKey;
       const res = await fetch(`${apiBase}/voice/token`, {
+        signal: attempt.signal,
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -441,6 +452,7 @@ export function VoiceCallModal({
       });
       if (!res.ok) throw new Error(await extractErrorDetail(res));
       const { url, token } = await res.json();
+      if (!isCurrentCall(attempt)) return;
 
       const room = new Room(VOICE_ROOM_OPTIONS);
       roomRef.current = room;
@@ -589,6 +601,9 @@ export function VoiceCallModal({
         teardown();
         setState("idle");
       });
+      room.on(RoomEvent.ParticipantDisconnected, participant => {
+        if (!participant.isLocal) { teardown(); setState("idle"); }
+      });
 
       await room.connect(url, token);
       if (roomRef.current !== room) { await room.disconnect(true); return; }
@@ -649,6 +664,7 @@ export function VoiceCallModal({
       runVolumeLoop();
       setState("connected");
     } catch (e) {
+      if (!isCurrentCall(attempt)) return;
       console.error("Voice call error:", e);
       const msg = e instanceof Error ? e.message : "Failed to start the voice call";
       setError(msg);
@@ -662,8 +678,12 @@ export function VoiceCallModal({
     const room = roomRef.current;
     if (!room) return;
     const next = !muted;
-    await room.localParticipant.setMicrophoneEnabled(!next);
-    setMuted(next);
+    try {
+      await room.localParticipant.setMicrophoneEnabled(!next);
+      if (roomRef.current === room) setMuted(next);
+    } catch {
+      if (roomRef.current === room) notify("Could not change the microphone. Check its permission and connection.", "error");
+    }
   };
 
   // Whichever side is speaking owns the ring. Read through a callback rather

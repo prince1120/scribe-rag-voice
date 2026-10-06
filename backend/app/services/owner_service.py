@@ -553,13 +553,14 @@ def build_agent_prompt(
         identity += ". Answer as that assistant, never as a general-purpose AI."
         parts.append(identity)
 
-    parts.append(current_context_line(timezone_name))
-
     if calendar_summary and calendar_summary.strip():
         parts.append(f"\n\nCALENDAR SERVICES & BOOKING:\n{calendar_summary.strip()}")
 
     if style_rules:
         parts.append(prompt_rules.DELIVERY_RULES.get(channel, prompt_rules.VOICE_DELIVERY))
+    # Keep all stable instructions before the changing clock for provider
+    # prefix-cache reuse across turns and calls. Never cache the clock itself.
+    parts.append(current_context_line(timezone_name))
     return "".join(parts)
 
 
@@ -833,8 +834,8 @@ async def available_channels(tenant_id: str, *, published: bool = False) -> dict
     an assistant with nothing to say, and offering it means someone is sent a
     link to a blank agent.
 
-    Both channels can work from their prompts. Chat needs enabled documents
-    when its RAG setting is on. Model and key readiness use the runtime resolver.
+    Both channels can work from their prompts, including when no documents
+    are attached. Model and key readiness use the runtime resolver.
 
     Used by the test panel, the link-type picker, and link creation, so the
     console can never offer a channel that would not work.
@@ -848,12 +849,8 @@ async def available_channels(tenant_id: str, *, published: bool = False) -> dict
     if published:
         from app.services.agent_configuration import published_agent
         agent = published_agent(agent)
-    # Enabled documents, not all of them. Chat answers from the selection, so an
-    # owner who switched everything off has a chat channel that would reply "I
-    # don't have that" to every question — which is the exact situation this
-    # function exists to refuse to offer.
+    # Document count is informational; a configured prompt can stand alone.
     enabled_ids = await cache.config_cache.get_or_load(("docs", tenant_id), lambda: repositories.list_enabled_document_ids(tenant_id))
-    has_documents = len(enabled_ids) > 0
 
     def has_prompt(channel: str) -> bool:
         return bool((channel_settings(agent, channel) or {}).get("script"))
@@ -863,19 +860,13 @@ async def available_channels(tenant_id: str, *, published: bool = False) -> dict
     from app.services.agent_configuration import published_agent
     published_runtime = runtime_summary(published_agent(agent), stored) if agent and agent.status == DEPLOYED and not published else None
     voice_ready = has_prompt("voice") and runtime["voice"]["ready"]
-    chat_rag = bool(getattr(agent, "chat_rag_enabled", False))
-    chat_ready = has_prompt("chat") and runtime["chat"]["ready"] and (has_documents or not chat_rag)
+    chat_ready = has_prompt("chat") and runtime["chat"]["ready"]
 
     def chat_reason() -> Optional[str]:
         if not has_prompt("chat"):
             return "Write a chat prompt to enable it."
         if not runtime["chat"]["ready"]:
             return "Save the agent's LLM model and matching key."
-        if chat_rag and not has_documents:
-            return (
-                "Chat answers from your documents. Add one — or switch one back "
-                "on — to enable it."
-            )
         return None
 
     return {

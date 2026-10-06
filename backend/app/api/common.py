@@ -149,6 +149,13 @@ async def _chat_overrides(identity: Identity, x_user_groq_key, x_custom_llm_base
         owner_service.cached_agent(identity.tenant_id),
         owner_service.cached_owner(identity.tenant_id),
     )
+    if identity.contact_id:
+        from app import contacts
+        contact = await repositories.get_contact(identity.contact_id, identity.tenant_id)
+        try:
+            contacts.check_agent_available(contact, agent)
+        except contacts.ContactError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from None
     if not identity.is_owner:
         from app.services.agent_configuration import published_agent
         agent = published_agent(agent)

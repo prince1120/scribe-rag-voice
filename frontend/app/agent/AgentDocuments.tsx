@@ -2,6 +2,7 @@
 import { ModalPortal } from "../components/ModalPortal";
 
 import { ownerFetch } from "../lib/ownerFetch";
+import { extractApiErrorMessage } from "../lib/apiErrors";
 
 // Documents for a business agent.
 //
@@ -37,6 +38,11 @@ export function AgentDocuments({
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const uploadInFlight = useRef(false);
+  const deleteInFlight = useRef(false);
+  const [deleting, setDeleting] = useState(false);
+  const togglingIds = useRef(new Set<string>());
+  const [pendingToggles, setPendingToggles] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -44,6 +50,7 @@ export function AgentDocuments({
       if (!response.ok) throw new Error();
       const data: Doc[] = await response.json();
       setDocs(data);
+      setError("");
       onCountChange?.(data.length);
     } catch {
       setError("Could not load your documents.");
@@ -56,7 +63,7 @@ export function AgentDocuments({
 
   const upload = useCallback(
     async (files: FileList | null) => {
-      if (!files?.length) return;
+      if (!files?.length || uploadInFlight.current) return;
 
       // Checked here as well as on the server so the owner is told before
       // waiting through an upload that was always going to be refused.
@@ -65,6 +72,7 @@ export function AgentDocuments({
         return;
       }
 
+      uploadInFlight.current = true;
       setUploading(true);
       setError("");
       try {
@@ -76,23 +84,28 @@ export function AgentDocuments({
             body: form,
           });
           if (!response.ok) {
-            const body = await response.json().catch(() => ({}));
-            throw new Error(body?.detail || `Could not add ${file.name}.`);
+            throw new Error(await extractApiErrorMessage(response, `Could not add ${file.name}.`));
           }
         }
         await load();
       } catch (err) {
+        // Earlier files may have succeeded before a later one failed.
+        await load();
         setError(err instanceof Error ? err.message : "Could not add that file.");
       } finally {
+        uploadInFlight.current = false;
         setUploading(false);
         // Cleared so re-picking the same file fires a change event again.
         if (inputRef.current) inputRef.current.value = "";
       }
     },
-    [docs.length, max, load]
+    [docs.length, max, load, purpose]
   );
 
   async function toggle(documentId: string, enabled: boolean) {
+    if (togglingIds.current.has(documentId)) return;
+    togglingIds.current.add(documentId);
+    setPendingToggles(Array.from(togglingIds.current));
     // Optimistic: the checkbox responds immediately and is reverted if the
     // request fails. A round trip before the tick moves reads as a broken
     // control, and this is a setting people flip while comparing answers.
@@ -119,22 +132,30 @@ export function AgentDocuments({
         )
       );
       setError("Could not change that document. Try again.");
+    } finally {
+      togglingIds.current.delete(documentId);
+      setPendingToggles(Array.from(togglingIds.current));
     }
   }
 
   const [deleteDocTarget, setDeleteDocTarget] = useState<{ id: string; name: string } | null>(null);
 
   async function removeConfirmed() {
-    if (!deleteDocTarget) return;
+    if (!deleteDocTarget || deleteInFlight.current) return;
+    deleteInFlight.current = true;
+    setDeleting(true);
     try {
-      await ownerFetch(`/api/v1/documents/${encodeURIComponent(deleteDocTarget.id)}`, {
+      const response = await ownerFetch(`/api/v1/documents/${encodeURIComponent(deleteDocTarget.id)}`, {
         method: "DELETE",
       });
+      if (!response.ok) throw new Error(await extractApiErrorMessage(response, "Could not remove that document."));
       setDeleteDocTarget(null);
       await load();
-    } catch {
-      setError("Could not remove that document.");
-      setDeleteDocTarget(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove that document.");
+    } finally {
+      deleteInFlight.current = false;
+      setDeleting(false);
     }
   }
 
@@ -165,12 +186,14 @@ export function AgentDocuments({
           }}
           onClick={() => inputRef.current?.click()}
           role="button"
+          aria-disabled={uploading}
           tabIndex={0}
-          onKeyDown={(e) => { if (e.key === "Enter") inputRef.current?.click(); }}
+          onKeyDown={(e) => { if (!uploading && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); inputRef.current?.click(); } }}
         >
           <input
             ref={inputRef}
             type="file"
+            disabled={uploading}
             className="agent-drop-input"
             onChange={(e) => void upload(e.target.files)}
             accept=".pdf,.docx,.pptx,.txt,.csv,.xlsx,.md,.png,.jpg,.jpeg"
@@ -205,6 +228,7 @@ export function AgentDocuments({
                   <input
                     type="checkbox"
                     checked={doc.agent_enabled}
+                    disabled={pendingToggles.includes(doc.document_id)}
                     onChange={(e) => void toggle(doc.document_id, e.target.checked)}
                     aria-label={`Use ${doc.filename} in answers`}
                   />
@@ -234,16 +258,18 @@ export function AgentDocuments({
           )}
 
           {deleteDocTarget && (
-            <ModalPortal label="Agent documents"><div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
+            <ModalPortal label="Agent documents" onClose={deleting ? undefined : () => setDeleteDocTarget(null)}><div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
               <div className="bg-white rounded-2xl w-full max-w-xs p-5 border shadow-2xl flex flex-col gap-3">
                 <h4 className="text-xs font-bold text-gray-900">Remove Document?</h4>
                 <p className="text-[11px] text-gray-500">
                   Are you sure you want to remove <span className="font-semibold text-gray-800">{deleteDocTarget.name}</span> from your knowledge base?
                 </p>
+                {error && <p className="agent-error" role="alert">{error}</p>}
                 <div className="flex items-center justify-end gap-2 mt-2">
                   <button
                     type="button"
                     onClick={() => setDeleteDocTarget(null)}
+                    disabled={deleting}
                     className="h-8 px-3 rounded-lg border text-xs text-gray-600 hover:bg-gray-50"
                   >
                     Cancel
@@ -251,9 +277,10 @@ export function AgentDocuments({
                   <button
                     type="button"
                     onClick={() => void removeConfirmed()}
+                    disabled={deleting}
                     className="h-8 px-3 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-700"
                   >
-                    Remove
+                    {deleting ? "Removing…" : "Remove"}
                   </button>
                 </div>
               </div>

@@ -177,6 +177,7 @@ export function Landing({ keyHistory, onStart, onForgetPair }: LandingProps) {
             </span>
           </Link>
           <div className="flex items-center gap-2">
+            <Link href="/talk" className="text-xs font-semibold px-3 py-2 rounded-full border" style={{ borderColor: "var(--claude-border)", color: "var(--claude-text)" }}>Enter code</Link>
             <button
               type="button"
               onClick={() => setShowPersonalModal(true)}

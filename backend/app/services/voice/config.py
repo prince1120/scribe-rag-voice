@@ -152,8 +152,9 @@ class VoiceSettings(BaseSettings):
     # Ends a call after this much silence with nobody speaking. This is the one
     # that catches a line left open: a caller who connects and walks away costs
     # exactly as much as one who is talking, and never hangs up. The watcher
-    # asks "are you there?" at this mark and ends 10s later if still nothing.
-    VOICE_IDLE_TIMEOUT_SECONDS: int = 45
+    # asks once at this mark, then waits 13s after playback before ending.
+    VOICE_IDLE_TIMEOUT_SECONDS: int = 20
+    VOICE_IDLE_GRACE_SECONDS: int = 13
     LIMITS_ENABLED: bool = True
 
     # ---- Latency / turn-taking tuning ---------------------------------

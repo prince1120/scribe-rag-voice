@@ -621,6 +621,15 @@ async def entrypoint(ctx: JobContext) -> None:
             logger.warning("Error playing greeting: %s", e)
 
 
+async def _say_bounded(session, text: str, *, timeout: float = 10.0, **options) -> None:
+    """A failed/stalled speech provider must not prevent call termination."""
+    async def play():
+        handle = await session.say(text, **options)
+        if handle is not None:
+            await handle
+    await asyncio.wait_for(play(), timeout=timeout)
+
+
 def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> Optional[asyncio.Task]:
     """End a call that has run too long, or gone quiet and stayed quiet.
 
@@ -629,13 +638,14 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> Opti
     caller who never hangs up and a caller who connects and walks away. Neither
     is caught by any per-turn limit, because neither involves any turns.
 
-    If 45s of continuous silence occurs after speech finishes, the agent
-    speaks a check-in reminder. If no answer is received in the next 8s, it
+    After 20s of continuous silence following speech, the agent
+    speaks a check-in reminder. If no answer is received in the next 13s, it
     speaks a closing message, sends an end_call signal to the client, and
     gracefully disconnects the room.
     """
     max_seconds = params.settings.VOICE_MAX_CALL_SECONDS
-    idle_seconds = params.settings.VOICE_IDLE_TIMEOUT_SECONDS
+    idle_seconds = min(params.settings.VOICE_IDLE_TIMEOUT_SECONDS, 20) if params.settings.VOICE_IDLE_TIMEOUT_SECONDS > 0 else 20
+    grace_seconds = params.settings.VOICE_IDLE_GRACE_SECONDS
     if max_seconds <= 0 and idle_seconds <= 0:
         return None
 
@@ -643,6 +653,20 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> Opti
     room_name = getattr(room_or_name, "name", str(room_or_name))
 
     last_activity = time.monotonic()
+    user_activity = 0
+
+    def _user_touch(*_args) -> None:
+        nonlocal user_activity
+        if _args and hasattr(_args[0], "transcript") and not _args[0].transcript.strip():
+            return
+        user_activity += 1
+        _touch()
+
+    def _user_state(event) -> None:
+        if event.new_state == "speaking":
+            _user_touch()
+        else:
+            _touch()
 
     def _touch(*_args) -> None:  # pragma: no cover - needs a live session
         nonlocal last_activity
@@ -653,8 +677,9 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> Opti
         session.on("conversation_item_added", _touch)
         session.on("user_speech_committed", _touch)
         session.on("agent_speech_committed", _touch)
-        session.on("user_input_transcribed", _touch)
-        session.on("user_started_speaking", _touch)
+        session.on("user_input_transcribed", _user_touch)
+        session.on("user_state_changed", _user_state)
+        session.on("user_started_speaking", _user_touch)
         session.on("agent_started_speaking", _touch)
     except Exception:
         pass
@@ -669,6 +694,7 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> Opti
         return True
 
     async def _watch() -> None:
+        nonlocal last_activity
         started = time.monotonic()
         nudged = False
         ended_by_max_duration = False
@@ -679,7 +705,9 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> Opti
                 return
 
             # If the assistant or user is currently speaking, keep resetting the idle timer
-            if getattr(session, "current_speech", None) is not None:
+            if (getattr(session, "current_speech", None) is not None
+                    or getattr(session, "user_state", None) == "speaking"
+                    or getattr(session, "agent_state", None) in ("thinking", "speaking")):
                 last_activity = time.monotonic()
 
             now = time.monotonic()
@@ -697,21 +725,19 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> Opti
                         return
                     # 1. First stage: check in after idle_seconds of continuous silence
                     nudged = True
+                    before_nudge_activity = user_activity
                     logger.info(
                         "[LIMIT %s] %ds silent — asking if caller is there",
                         room_name, idle_seconds,
                     )
                     try:
-                        speech_handle = await session.say(
-                            "Are you there? I'm still on the line.",
+                        await _say_bounded(
+                            session,
+                            "Are you still there? I can't hear you. Could you say that again?",
+                            timeout=min(10.0, max(0.1, max_seconds - (time.monotonic() - started))) if max_seconds > 0 else 10.0,
                             allow_interruptions=True,
                             add_to_chat_ctx=False,
                         )
-                        if speech_handle is not None:
-                            try:
-                                await speech_handle
-                            except Exception:
-                                pass
                     except Exception:
                         logger.debug("Could not speak the nudge", exc_info=True)
 
@@ -719,29 +745,35 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> Opti
                     nudge_finished_at = time.monotonic()
                     last_activity = nudge_finished_at
 
-                    # 2. 8s grace window: wait for user to speak or respond
-                    deadline = nudge_finished_at + 8.0
-                    answered = False
+                    # Count user speech during the nudge too; never mistake
+                    # the assistant's own speech events for a caller response.
+                    deadline = nudge_finished_at + grace_seconds
+                    answered = user_activity > before_nudge_activity
                     while time.monotonic() < deadline:
+                        if answered:
+                            break
                         await asyncio.sleep(0.3)
                         if not _caller_still_present():
                             return
+                        if max_seconds > 0 and time.monotonic() - started >= max_seconds:
+                            ended_by_max_duration = True
+                            break
                         # If user started speaking or any activity registered
-                        if getattr(session, "current_speech", None) is not None or last_activity > nudge_finished_at:
+                        if user_activity > before_nudge_activity or getattr(session, "user_state", None) == "speaking":
                             answered = True
                             break
 
                     if answered:
-                        # User spoke within 8s! Reset state completely so future silences trigger again
+                        # Reset completely for the next silence episode.
                         logger.info("[LIMIT %s] Caller responded after nudge — resetting idle timer", room_name)
                         nudged = False
                         last_activity = time.monotonic()
                         continue
 
-                    # 3. If caller did not reply within 8s, conclude and hang up
+                    # No reply in the grace window: conclude and hang up.
                     logger.info(
-                        "[LIMIT %s] ending call: no answer within 8s of the nudge",
-                        room_name,
+                        "[LIMIT %s] ending call: no answer within %ds of the nudge",
+                        room_name, grace_seconds,
                     )
                 break
 
@@ -760,15 +792,11 @@ def _enforce_call_ceilings(session, params: SessionParams, room_or_name) -> Opti
         )
         try:
             # Spoken before hanging up
-            speech_handle = await session.say(
+            await _say_bounded(
+                session,
                 closing_text,
                 allow_interruptions=False,
             )
-            if speech_handle is not None:
-                try:
-                    await speech_handle
-                except Exception:
-                    pass
         except Exception:
             logger.debug("Could not speak the closing line", exc_info=True)
 

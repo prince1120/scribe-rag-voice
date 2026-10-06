@@ -20,6 +20,7 @@ const REFERENCE_PATHS = new Set([
   "/api/v1/voice/speakers", "/api/v1/voice/languages", "/api/v1/workspace/categories",
 ]);
 let requestGeneration = 0;
+let previousIdentity: string | null = null;
 const PAGE_PATHS = new Set([
   "/api/v1/contacts",
   "/api/v1/contacts/overview",
@@ -96,6 +97,14 @@ export function ownerHeaders(): Record<string, string> {
 export async function ownerFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(ownerHeaders());
   new Headers(init.headers).forEach((value, name) => headers.set(name, value));
+  // Compare privately in memory; never put credential values in reusable keys.
+  const identity = JSON.stringify(Array.from(headers.entries()).filter(([name]) =>
+    name.includes("key") || name.includes("auth") || name.includes("cookie") || name.includes("secret") || name === "x-client-id"
+  ).sort(([a], [b]) => a.localeCompare(b)));
+  if (identity !== previousIdentity) {
+    clearOwnerRequests();
+    previousIdentity = identity;
+  }
   const method = (init.method || "GET").toUpperCase();
   const options: RequestInit = {
     ...init,
