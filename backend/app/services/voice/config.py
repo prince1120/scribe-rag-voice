@@ -48,6 +48,7 @@ class VoiceSettings(BaseSettings):
     VOICE_STT_HIGH_VAD_SENSITIVITY: bool = False
     # 0 preserves Sarvam defaults; one frame is 32 ms at our 16 kHz input.
     VOICE_STT_SILENCE_FRAMES: int = Field(default=0, ge=0, le=64)
+    VOICE_SMART_TURN_HINTS: bool = False
     VOICE_TTS_LANGUAGE: str = "en-IN"
     VOICE_TTS_MODEL: str = "bulbul:v3"
     # Must be compatible with the TTS plugin's default model (bulbul:v3) —

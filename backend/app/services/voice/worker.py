@@ -521,7 +521,17 @@ async def entrypoint(ctx: JobContext) -> None:
                 logger.info("[BACKCHANNEL %s] User acknowledged with '%s' while agent was speaking; continuing speech", ctx.room.name, text)
                 return
 
-            if text.endswith(("?", "!", ".", "।")):
+            if params.settings.VOICE_SMART_TURN_HINTS:
+                from app.services.voice.turn_hints import endpointing_options, punctuation_kind
+                from app.services.voice.latency import emit
+                final = bool(getattr(ev, "is_final", False))
+                options = endpointing_options(text, params.settings, final)
+                session.update_options(endpointing_opts=options)
+                emit("turn_hint", call_id=params.call_id, room_name=ctx.room.name,
+                     punctuation=punctuation_kind(text), final=final,
+                     min_delay_ms=options["min_delay"] * 1000,
+                     max_delay_ms=options["max_delay"] * 1000)
+            elif text.endswith(("?", "!", ".", "।")):
                 session.update_options(endpointing_opts={"min_delay": 0.18, "max_delay": 0.36})
             elif any(text.lower().endswith(conj) for conj in _CONJUNCTION_SUFFIXES):
                 session.update_options(endpointing_opts={"min_delay": 0.55, "max_delay": 0.75})
