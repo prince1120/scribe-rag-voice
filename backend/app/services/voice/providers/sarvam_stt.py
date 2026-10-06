@@ -20,4 +20,8 @@ def build_sarvam_stt(settings: VoiceSettings) -> stt.STT:
         language=settings.VOICE_STT_LANGUAGE,
         model=settings.VOICE_STT_MODEL,
         api_key=settings.SARVAM_API_KEY,
+        **({"high_vad_sensitivity": True} if settings.VOICE_STT_HIGH_VAD_SENSITIVITY else {}),
+        **({"negative_frames_count": settings.VOICE_STT_SILENCE_FRAMES,
+            "negative_frames_window": settings.VOICE_STT_SILENCE_FRAMES}
+           if settings.VOICE_STT_SILENCE_FRAMES else {}),
     )

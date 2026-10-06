@@ -12,6 +12,7 @@ intentional, not duplication-by-accident: each process declares only the
 subset of keys it actually needs.
 """
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 from app.services import prompt_rules
 
@@ -43,6 +44,10 @@ class VoiceSettings(BaseSettings):
     # saaras:v3 supports every listed language plus reliable auto-detect.
     VOICE_STT_LANGUAGE: str = "unknown"
     VOICE_STT_MODEL: str = "saaras:v3"
+    # Opt-in faster provider endpointing; local VAD/turn-taking remain unchanged.
+    VOICE_STT_HIGH_VAD_SENSITIVITY: bool = False
+    # 0 preserves Sarvam defaults; one frame is 32 ms at our 16 kHz input.
+    VOICE_STT_SILENCE_FRAMES: int = Field(default=0, ge=0, le=64)
     VOICE_TTS_LANGUAGE: str = "en-IN"
     VOICE_TTS_MODEL: str = "bulbul:v3"
     # Must be compatible with the TTS plugin's default model (bulbul:v3) —
