@@ -12,15 +12,41 @@ from livekit.plugins import openai as lk_openai
 from openai import AsyncOpenAI
 from app.services.voice.providers.llm_transport import observed_client
 from app.services.voice.latency import emit, milliseconds
+import asyncio
 
 from app.services.voice.config import VoiceSettings
 
 
 
 class ObservedLLM(lk_openai.LLM):
+    def configure_prewarm(self, settings):
+        self._prewarm_enabled = settings.VOICE_LLM_PREWARM
+        self._keepalive_seconds = max(10, settings.VOICE_LLM_KEEPALIVE_SECONDS)
+        self._warm_task = None
+
+    def prewarm(self):
+        if self._prewarm_enabled and self._warm_task is None:
+            self._warm_task = asyncio.create_task(self._keep_warm())
+
+    async def _keep_warm(self):
+        while True:
+            try:
+                response = await self._client._client.head(
+                    self._client.base_url.join("models"), timeout=3)
+                # Any response proves connection setup; never print its body.
+                emit("llm_prewarm", status=response.status_code, http_version=response.http_version)
+            except Exception as exc:
+                emit("llm_prewarm", error_type=type(exc).__name__)
+            await asyncio.sleep(self._keepalive_seconds)
+
     async def aclose(self):
-        await super().aclose()
-        await self._client.close()
+        if self._warm_task:
+            self._warm_task.cancel()
+            await asyncio.gather(self._warm_task, return_exceptions=True)
+        try:
+            await super().aclose()
+        finally:
+            await self._client.close()
 
 
 def build_custom_openai_llm(settings: VoiceSettings) -> llm.LLM:
@@ -35,6 +61,8 @@ def build_custom_openai_llm(settings: VoiceSettings) -> llm.LLM:
             "No custom LLM API key was supplied for this session."
         )
     sarvam = is_sarvam_endpoint(settings.CUSTOM_LLM_BASE_URL)
+    if settings.VOICE_LLM_HEDGE_ENABLED:
+        raise ValueError("Voice hedging is disabled pending validated HTTP/2 RST_STREAM cancellation")
     options = {"extra_body": {"max_tokens": settings.VOICE_LLM_MAX_TOKENS, "reasoning_effort": None}} if sarvam else {"max_completion_tokens": settings.VOICE_LLM_MAX_TOKENS}
     client = AsyncOpenAI(api_key=settings.CUSTOM_LLM_API_KEY,
                          base_url=settings.CUSTOM_LLM_BASE_URL,
@@ -47,6 +75,7 @@ def build_custom_openai_llm(settings: VoiceSettings) -> llm.LLM:
         temperature=settings.VOICE_LLM_TEMPERATURE,
         **options,
     )
+    model.configure_prewarm(settings)
     @model.on("metrics_collected")
     def record_usage(metrics):
         emit("llm_stream", request_id=metrics.request_id, speech_id=metrics.speech_id,

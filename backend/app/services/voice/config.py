@@ -82,7 +82,19 @@ class VoiceSettings(BaseSettings):
     VOICE_LLM_MAX_TOKENS: int = 220
     VOICE_LLM_STYLED_MAX_TOKENS_CAP: int = 240
     VOICE_LLM_MAX_TOKENS_CAP: int = 350
+    # Independent opt-ins; measure each on the deployment before combining.
     VOICE_LLM_HTTP2: bool = False
+    VOICE_LLM_PREWARM: bool = False
+    VOICE_LLM_KEEPALIVE_SECONDS: float = 30.0
+    # Reserved pending a validated RST_STREAM transport. Enabling fails clearly.
+    VOICE_LLM_HEDGE_ENABLED: bool = False
+    VOICE_LLM_HEDGE_THRESHOLD_MS: int = 477
+    VOICE_LLM_HEDGE_MAX_PARALLEL: int = 2
+    VOICE_LLM_FALLBACK_ENABLED: bool = False
+    VOICE_LLM_FALLBACK_PROVIDER: str = "groq"
+    VOICE_LLM_FALLBACK_MODEL: str = "llama-3.1-8b-instant"
+    VOICE_LLM_TTFT_TIMEOUT_SECONDS: float = 1.5
+
 
     # Generic OpenAI-compatible LLM (any provider: Mistral, OpenRouter, a
     # self-hosted server, ...). Set per-session from the token request's
